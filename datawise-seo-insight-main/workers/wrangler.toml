@@ -1,0 +1,24 @@
+name = "datawise-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[vars]
+ENVIRONMENT = "development"
+FRONTEND_URL = "https://datawiseseo.com"
+# Note: For production, change to your actual domain
+# Set these via `wrangler secret put`:
+# GOOGLE_CLIENT_ID
+# GOOGLE_CLIENT_SECRET
+# ENCRYPTION_KEY
+# DATAFORSEO_EMAIL
+# DATAFORSEO_PASSWORD
+
+[[d1_databases]]
+binding = "DB"
+database_name = "datawise-db"
+database_id = "b9355723-e02c-4877-8dce-c57cc1965068"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "2302e0b0369842e799b5f4a144d6dce4"
+preview_id = "30288cb442c84e038406b0e174f90398"

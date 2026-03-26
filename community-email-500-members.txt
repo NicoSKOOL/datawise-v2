@@ -1,0 +1,49 @@
+Subject: We built an SEO platform. You can have it for free.
+
+Hey {first_name},
+
+We just hit 500 members in the community, and to celebrate, we're opening up access to something we've been building together: DataWise SEO.
+
+It's a full SEO platform. Not a lite version. Not a free trial. The real thing.
+
+Here's what you get:
+
+KEYWORD RESEARCH
+Related keywords, keyword suggestions, keyword ideas, difficulty scores, and search volume overview. Everything you need to find and validate targets.
+
+COMPETITOR INTELLIGENCE
+Domain analysis, ranked keyword discovery, keyword gap analysis, and bulk traffic estimation. See exactly what your competitors rank for and where the gaps are.
+
+AI VISIBILITY MONITORING
+Check how your brand shows up in Google AI Mode, ChatGPT, Perplexity, and People Also Ask. This is the GEO (Generative Engine Optimization) side that most tools don't even offer yet.
+
+RANK TRACKING
+Create projects, track keyword positions over time, and monitor movement across your entire portfolio.
+
+CONTENT TOOLS
+Service Page Optimiser that audits your pages against 15+ SEO and GEO factors, with AI-powered recommendations. Blog post analysis with rewrite suggestions. Automatic schema markup generation.
+
+GOOGLE SEARCH CONSOLE INTEGRATION
+Connect your GSC account and pull performance data directly into the platform for deeper analysis.
+
+SEO ASSISTANT (AI CHAT)
+Ask questions about your data, get strategic recommendations, and work through SEO problems with an AI assistant that has full context on your site.
+
+---
+
+People in the community are already using this daily. Some have cancelled their Ahrefs and SEMrush subscriptions entirely. Those tools run $100 to $400+ per month. Per seat. If you're an agency with a team, do the math on what that costs you annually.
+
+This costs you nothing. It's the community's application.
+
+And because we're building it together, it keeps getting better. New features ship based on what members actually need, not what a product team thinks will sell. Every update comes from real feedback, real use cases, and real SEO work.
+
+Don't take our word for it. Try it yourself. You get 5 free uses, no commitment, no credit card. Run a keyword report, audit a page, check your AI visibility. See what you've been missing.
+
+If you want unlimited access, join the community. You'll get full use of DataWise SEO the moment you're in.
+
+[Try It Free] | [Join the Community]
+
+Talk soon,
+{your_name}
+
+P.S. We're not stopping at 500. The bigger the community gets, the faster this platform improves. Get in now while it's early.

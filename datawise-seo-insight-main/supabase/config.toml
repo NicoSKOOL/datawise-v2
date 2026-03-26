@@ -1,0 +1,61 @@
+project_id = "tjizedjqkcnzfnwlejwh"
+
+[functions.geo-analyzer]
+verify_jwt = false
+
+[functions.google-ai-mode]
+verify_jwt = false
+
+[functions.chatgpt-search]
+verify_jwt = false
+
+[functions.perplexity-search]
+verify_jwt = false
+
+[functions.get-user-emails]
+verify_jwt = true
+
+[functions.keyword-gap-analysis]
+verify_jwt = false
+
+[functions.keyword-analysis-ai]
+verify_jwt = false
+
+[functions.html-parser]
+verify_jwt = false
+
+[functions.lighthouse-seo]
+verify_jwt = false
+
+[functions.related-keywords]
+verify_jwt = false
+
+[functions.keyword-suggestions]
+verify_jwt = false
+
+[functions.keyword-ideas]
+verify_jwt = false
+
+[functions.keyword-difficulty]
+verify_jwt = false
+
+[functions.keyword-overview]
+verify_jwt = false
+
+[functions.ranked-keywords]
+verify_jwt = false
+
+[functions.domain-rank-overview]
+verify_jwt = false
+
+[functions.bulk-traffic-estimation]
+verify_jwt = false
+
+[functions.competitors-domain]
+verify_jwt = false
+
+[functions.people-also-ask]
+verify_jwt = false
+
+[functions.historical-rank-overview]
+verify_jwt = false

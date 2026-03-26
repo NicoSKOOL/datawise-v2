@@ -1,0 +1,19 @@
+{
+  "name": "datawise-workers",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "db:migrate": "wrangler d1 execute datawise-db --file=src/db/schema.sql",
+    "db:migrate:staging": "wrangler d1 execute datawise-db-staging --file=src/db/schema.sql",
+    "db:migrate:production": "wrangler d1 execute datawise-db-prod --file=src/db/schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "wrangler": "^3.99.0",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Precision Authority Design System
+   Forest green primary, tonal surface layering, editorial typography.
+   All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Surface Hierarchy (tonal layering, no borders) */
+    --background: 216 33% 97%;       /* #f7f9ff surface */
+    --foreground: 213 10% 11%;       /* #181c20 on-surface */
+
+    --card: 0 0% 100%;               /* #ffffff surface-container-lowest */
+    --card-foreground: 213 10% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 10% 11%;
+
+    /* Forest Green Primary */
+    --primary: 155 100% 16%;         /* #005232 */
+    --primary-foreground: 0 0% 100%;
+
+    /* Surface Container tiers */
+    --secondary: 213 30% 96%;        /* #f1f4fa surface-container-low */
+    --secondary-foreground: 213 10% 11%;
+
+    --muted: 216 20% 94%;            /* #ebeef4 surface-container */
+    --muted-foreground: 150 6% 46%;  /* #6f7a71 outline */
+
+    --accent: 150 30% 91%;           /* light green tint */
+    --accent-foreground: 155 100% 16%;
+
+    --destructive: 0 70% 41%;        /* #94000a tertiary mapped */
+    --destructive-foreground: 0 0% 100%;
+
+    /* No-line rule: borders are ultra-subtle or absent */
+    --border: 216 15% 92%;           /* #e5e8ee surface-container-high */
+    --input: 216 15% 92%;
+    --ring: 155 100% 16%;
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 210 17% 98%;
+    --sidebar-foreground: 213 10% 11%;
+    --sidebar-primary: 155 100% 16%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 150 30% 91%;
+    --sidebar-accent-foreground: 155 100% 16%;
+    --sidebar-border: 216 15% 92%;
+    --sidebar-ring: 155 100% 16%;
+
+    /* Status Colors */
+    --success: 155 100% 21%;         /* #006d44 primary-container */
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    /* Data Visualization */
+    --chart-1: 155 100% 16%;
+    --chart-2: 155 100% 21%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 0 70% 41%;
+    --chart-5: 262 83% 58%;
+
+    /* ChatKit Theme Variables */
+    --chatkit-primary: 155 100% 16%;
+    --chatkit-background: 0 0% 100%;
+    --chatkit-foreground: 213 10% 11%;
+    --chatkit-border: 216 15% 92%;
+    --chatkit-muted: 216 20% 94%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 150 60% 55%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 150 60% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* ChatKit Theme Variables - Dark */
+    --chatkit-primary: 150 60% 55%;
+    --chatkit-background: 222.2 84% 4.9%;
+    --chatkit-foreground: 210 40% 98%;
+    --chatkit-border: 217.2 32.6% 17.5%;
+    --chatkit-muted: 217.2 32.6% 17.5%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, .font-headline {
+    font-family: 'Manrope', system-ui, sans-serif;
+  }
+}
