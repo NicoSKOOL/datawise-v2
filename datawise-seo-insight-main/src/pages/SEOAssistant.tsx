@@ -30,6 +30,7 @@ export default function SEOAssistant() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sparklesRef = useRef<AnimatedIconHandle>(null);
+  const restoredRef = useRef(false);
   const { toast } = useToast();
 
   // Load conversations and GSC properties
@@ -50,6 +51,23 @@ export default function SEOAssistant() {
       })
       .catch(() => {});
   }, []);
+
+  // Restore the last active conversation when the conversation list loads
+  useEffect(() => {
+    if (restoredRef.current || conversations.length === 0) return;
+    restoredRef.current = true;
+    const savedId = sessionStorage.getItem('datawise_active_conversation');
+    if (savedId && conversations.some((c) => c.id === savedId)) {
+      loadConversation(savedId);
+    }
+  }, [conversations]);
+
+  // Persist active conversation id so it survives navigation
+  useEffect(() => {
+    if (conversationId) {
+      sessionStorage.setItem('datawise_active_conversation', conversationId);
+    }
+  }, [conversationId]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -138,6 +156,7 @@ export default function SEOAssistant() {
   const startNewConversation = () => {
     setConversationId(null);
     setMessages([]);
+    sessionStorage.removeItem('datawise_active_conversation');
     inputRef.current?.focus();
   };
 

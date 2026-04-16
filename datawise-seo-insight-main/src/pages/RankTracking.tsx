@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -98,6 +98,7 @@ export default function RankTracking() {
   const [localCity, setLocalCity] = useState<string | null>(null);
   const [localGBPProfile, setLocalGBPProfile] = useState<GBPProfile | null>(null);
   const { toast } = useToast();
+  const filteredOffsetRef = useRef(0);
 
   const availableProperties = gscProperties.filter((property) => property.is_enabled !== 0);
   const selectableProperties = availableProperties.length > 0 ? availableProperties : gscProperties;
@@ -176,7 +177,7 @@ export default function RankTracking() {
     if (!selectedPropertyId || !selectedCard) return;
     setLoadingFiltered(true);
     try {
-      const nextOffset = append ? filteredOffset + 100 : 0;
+      const nextOffset = append ? filteredOffsetRef.current + 100 : 0;
       const data = await getGSCQueries(
         selectedPropertyId,
         selectedCard,
@@ -190,12 +191,17 @@ export default function RankTracking() {
       setFilteredMode(data.mode);
       setFilteredTotal(data.total);
       setFilteredOffset(nextOffset);
+      filteredOffsetRef.current = nextOffset;
+
+      if (append && nextOffset + 100 >= data.total) {
+        toast({ title: 'All loaded', description: 'No more results to show.' });
+      }
     } catch (err) {
       console.error('GSC queries fetch failed:', err);
     } finally {
       setLoadingFiltered(false);
     }
-  }, [selectedPropertyId, selectedCard, querySearch, querySort, filteredOffset]);
+  }, [selectedPropertyId, selectedCard, querySearch, querySort, toast]);
 
   // Fetch filtered queries when card, search, or sort changes
   useEffect(() => {
@@ -208,6 +214,8 @@ export default function RankTracking() {
   useEffect(() => {
     setSelectedCard(null);
     setFilteredRows([]);
+    setFilteredOffset(0);
+    filteredOffsetRef.current = 0;
     setQuerySearch('');
     setTrackedGSCKeywords(new Set());
   }, [selectedPropertyId]);
@@ -810,6 +818,7 @@ export default function RankTracking() {
                             if (!isClickable) return;
                             setSelectedCard((prev) => prev === card.key ? null : card.key);
                             setFilteredOffset(0);
+                            filteredOffsetRef.current = 0;
                             setFilteredRows([]);
                           }}
                         >
@@ -859,6 +868,7 @@ export default function RankTracking() {
                             onClick={() => {
                               setSelectedCard((prev) => prev === 'page2' ? null : 'page2');
                               setFilteredOffset(0);
+                              filteredOffsetRef.current = 0;
                               setFilteredRows([]);
                             }}
                           >
@@ -909,6 +919,7 @@ export default function RankTracking() {
                               onChange={(e) => {
                                 setQuerySearch(e.target.value);
                                 setFilteredOffset(0);
+                                filteredOffsetRef.current = 0;
                                 setFilteredRows([]);
                               }}
                             />
@@ -929,6 +940,7 @@ export default function RankTracking() {
                               order: prev.column === col && prev.order === 'desc' ? 'asc' : 'desc',
                             }));
                             setFilteredOffset(0);
+                            filteredOffsetRef.current = 0;
                             setFilteredRows([]);
                           }}
                           onTrack={handleTrackKeywordFromGSC}
