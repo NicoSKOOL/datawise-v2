@@ -1,0 +1,16 @@
+releaseDate: "2026-04-20"
+title: "Rank tracking pagination and assistant chat persistence fixed"
+summary: "Two bugs that disrupted everyday workflows have been squashed."
+changes:
+  - type: fix
+    title: '"Load More" in rank tracking now reliably loads the next page'
+    description: >
+      Clicking "Load More" in the keyword query table would silently reset the
+      offset, making it appear the button did nothing. Results now append
+      correctly, and a notification appears once all results have been loaded.
+  - type: fix
+    title: "SEO Assistant conversation restores after navigation"
+    description: >
+      Navigating away from the SEO Assistant and back would clear the active
+      conversation, requiring you to re-open it manually. The active chat is now
+      remembered for the duration of your session.
