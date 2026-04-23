@@ -222,13 +222,49 @@ export async function handleGSCPropertyUpdate(request: Request, env: Env, userId
   });
 }
 
-// GET /gsc/disconnect - Remove GSC connection
+// POST /gsc/disconnect - Remove GSC connection
 export async function handleGSCDisconnect(env: Env, userId: string): Promise<Response> {
-  await env.DB.prepare('DELETE FROM gsc_connections WHERE user_id = ?').bind(userId).run();
+  const propRows = await env.DB.prepare(
+    'SELECT id FROM gsc_properties WHERE user_id = ?'
+  ).bind(userId).all();
+  const propIds = (propRows.results || []).map((r: Record<string, unknown>) => r.id as string);
+
+  if (propIds.length > 0) {
+    await env.DB.prepare(
+      `DELETE FROM gsc_search_data WHERE property_id IN (${propIds.map(() => '?').join(',')})`
+    ).bind(...propIds).run();
+
+    await env.DB.prepare(
+      `UPDATE chat_conversations SET property_id = NULL WHERE property_id IN (${propIds.map(() => '?').join(',')})`
+    ).bind(...propIds).run();
+  }
+
   await env.DB.prepare('DELETE FROM gsc_properties WHERE user_id = ?').bind(userId).run();
-  await env.DB.prepare('DELETE FROM gsc_search_data WHERE property_id IN (SELECT id FROM gsc_properties WHERE user_id = ?)').bind(userId).run();
+  await env.DB.prepare('DELETE FROM gsc_connections WHERE user_id = ?').bind(userId).run();
 
   return new Response(JSON.stringify({ success: true }), {
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// POST /gsc/refresh-properties - Re-fetch properties from Google without full disconnect
+export async function handleGSCRefreshProperties(env: Env, userId: string): Promise<Response> {
+  const accessToken = await refreshGSCToken(env, userId);
+  if (!accessToken) {
+    return new Response(JSON.stringify({ error: 'GSC not connected or token expired. Please reconnect.' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  await syncProperties(env, userId, accessToken);
+
+  const properties = await env.DB.prepare(
+    'SELECT id, site_url, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
+  ).bind(userId).all();
+
+  return new Response(JSON.stringify({
+    success: true,
+    properties: properties.results || [],
+  }), { headers: { 'Content-Type': 'application/json' } });
 }

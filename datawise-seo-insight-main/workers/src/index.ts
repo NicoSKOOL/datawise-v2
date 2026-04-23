@@ -21,7 +21,7 @@ export interface Env {
 import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe } from './auth/google';
 import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetPassword } from './auth/email';
 import { authMiddleware } from './middleware/auth';
-import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate } from './gsc/oauth';
+import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCRefreshProperties } from './gsc/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries } from './gsc/sync';
 import { handleChat, handleListConversations, handleGetConversation } from './chat/handler';
 import {
@@ -334,6 +334,9 @@ export default {
       }
       if (path === '/gsc/disconnect' && method === 'POST') {
         return addCors(await handleGSCDisconnect(env, user.id));
+      }
+      if (path === '/gsc/refresh-properties' && method === 'POST') {
+        return addCors(await handleGSCRefreshProperties(env, user.id));
       }
       if (path === '/gsc/sync' && method === 'POST') {
         return addCors(await handleGSCSync(request, env, user.id));

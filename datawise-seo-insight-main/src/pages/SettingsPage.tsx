@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Link2, Loader2, RefreshCw, Trash2, CheckCircle, Key, Eye, EyeOff, Check } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, type GSCProperty } from '@/lib/gsc';
+import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, refreshGSCProperties, type GSCProperty } from '@/lib/gsc';
 import { getLLMConfig, saveLLMConfig, clearLLMConfig, type LLMConfig } from '@/lib/chat';
 import { useToast } from '@/hooks/use-toast';
 
@@ -143,6 +143,21 @@ export default function SettingsPage() {
       toast({ variant: 'destructive', title: 'Sync Failed', description: 'Could not sync GSC data. Try reconnecting.' });
     } finally {
       setSyncing(null);
+    }
+  };
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefreshProperties = async () => {
+    setRefreshing(true);
+    try {
+      const data = await refreshGSCProperties();
+      setProperties(data.properties || []);
+      toast({ title: 'Properties Refreshed', description: 'Your GSC property list has been updated.' });
+    } catch {
+      toast({ variant: 'destructive', title: 'Refresh Failed', description: 'Could not refresh properties. Try reconnecting.' });
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -303,10 +318,20 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDisconnect}>
-              <Trash2 className="h-3 w-3 mr-1.5" />
-              Disconnect GSC
-            </Button>
+            <div className="flex items-center gap-2 pt-2 border-t">
+              <Button variant="outline" size="sm" onClick={handleRefreshProperties} disabled={refreshing}>
+                {refreshing ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : <RefreshCw className="h-3 w-3 mr-1.5" />}
+                {refreshing ? 'Refreshing...' : 'Refresh Properties'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleConnect}>
+                <Link2 className="h-3 w-3 mr-1.5" />
+                Reconnect
+              </Button>
+              <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDisconnect}>
+                <Trash2 className="h-3 w-3 mr-1.5" />
+                Disconnect
+              </Button>
+            </div>
           </>
         ) : (
           <>

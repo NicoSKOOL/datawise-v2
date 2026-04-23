@@ -127,3 +127,7 @@ export async function getGSCQueries(
 export async function disconnectGSC() {
   return api('/gsc/disconnect', { method: 'POST' });
 }
+
+export async function refreshGSCProperties() {
+  return api<{ success: boolean; properties: GSCProperty[] }>('/gsc/refresh-properties', { method: 'POST' });
+}
