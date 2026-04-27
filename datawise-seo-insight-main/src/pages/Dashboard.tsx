@@ -163,20 +163,24 @@ export default function Dashboard() {
       ) : hasData ? (
         <>
           {/* KPI Row */}
-          {summary && (
+          {(summary || gscOverview) && (
             <DashboardKPICards summary={summary} gscOverview={gscOverview} />
           )}
 
           {/* Charts Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {summary && summary.has_projects && (
-              <RankDistributionChart
-                distribution={summary.distribution}
-                rankingCount={summary.distribution.top3 + summary.distribution.top10 + summary.distribution.top20 + summary.distribution.top50 + summary.distribution.above50}
-              />
-            )}
-            <GSCTrendChart data={gscTrendData} />
-          </div>
+          {(summary?.has_projects || gscTrendData.length > 0) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {summary && summary.has_projects && (
+                <RankDistributionChart
+                  distribution={summary.distribution}
+                  rankingCount={summary.distribution.top3 + summary.distribution.top10 + summary.distribution.top20 + summary.distribution.top50 + summary.distribution.above50}
+                />
+              )}
+              {gscTrendData.length > 0 && (
+                <GSCTrendChart data={gscTrendData} />
+              )}
+            </div>
+          )}
 
           {/* Top Movers */}
           {summary && (

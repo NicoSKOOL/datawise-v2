@@ -82,7 +82,7 @@ export async function getGSCData(propertyId: string) {
   return api<GSCOverviewData>(`/gsc/data?property_id=${propertyId}`);
 }
 
-export type GSCQueryFilter = 'all' | 'top10' | 'page2' | 'opportunities';
+export type GSCQueryFilter = 'all' | 'top10' | 'top3pos' | 'top10pos' | 'top30' | 'page2' | 'opportunities';
 export type GSCQuerySort = 'clicks' | 'impressions' | 'avg_position' | 'avg_ctr';
 
 export interface GSCResultRow {

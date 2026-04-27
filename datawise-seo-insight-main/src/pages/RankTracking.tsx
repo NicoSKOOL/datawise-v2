@@ -802,7 +802,7 @@ export default function RankTracking() {
                       { key: 'all' as const, title: 'Total Keywords', value: gscOverview.query_summary.total_queries.toLocaleString(), accent: false },
                       { key: null, title: 'Avg. Position', value: String(gscOverview.query_summary.avg_position ?? '--'), accent: false },
                       { key: 'top10' as const, title: 'Organic Clicks', value: `${((gscOverview.summary.last_30_days.total_clicks || 0) / 1000).toFixed(1)}k`, accent: false },
-                      { key: 'page2' as const, title: 'Visibility Score', value: gscOverview.query_summary.striking_distance.toLocaleString(), accent: true },
+                      { key: 'page2' as const, title: 'Page 2 Opportunities', value: gscOverview.query_summary.striking_distance.toLocaleString(), accent: true },
                     ]).map((card) => {
                       const isClickable = card.key !== null;
                       const isActive = selectedCard === card.key && isClickable;
@@ -816,7 +816,11 @@ export default function RankTracking() {
                           ].join(' ')}
                           onClick={() => {
                             if (!isClickable) return;
-                            setSelectedCard((prev) => prev === card.key ? null : card.key);
+                            const next = selectedCard === card.key ? null : card.key;
+                            setSelectedCard(next);
+                            if (next === 'page2') {
+                              setQuerySort({ column: 'impressions', order: 'desc' });
+                            }
                             setFilteredOffset(0);
                             filteredOffsetRef.current = 0;
                             setFilteredRows([]);
@@ -837,21 +841,34 @@ export default function RankTracking() {
                     <div className="bg-white p-6 rounded-xl shadow-[0_1px_4px_rgba(24,28,32,0.06)]">
                       <h3 className="font-headline font-bold text-sm mb-4 uppercase tracking-widest text-muted-foreground">Distribution</h3>
                       <div className="space-y-4">
-                        {[
-                          { label: 'Top 3', count: gscOverview.query_summary.top_3, pct: Math.round((gscOverview.query_summary.top_3 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary' },
-                          { label: 'Top 10', count: gscOverview.query_summary.top_10, pct: Math.round((gscOverview.query_summary.top_10 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary/60' },
-                          { label: 'Top 100', count: gscOverview.query_summary.total_queries, pct: 100, variant: 'bg-muted-foreground/30' },
-                        ].map((tier) => (
-                          <div key={tier.label} className="space-y-1.5">
-                            <div className="flex justify-between text-xs font-bold">
-                              <span>{tier.label}</span>
-                              <span>{tier.count.toLocaleString()}</span>
+                        {([
+                          { label: 'Top 3', filterKey: 'top3pos' as const, count: gscOverview.query_summary.top_3, pct: Math.round((gscOverview.query_summary.top_3 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary' },
+                          { label: 'Top 10', filterKey: 'top10pos' as const, count: gscOverview.query_summary.top_10, pct: Math.round((gscOverview.query_summary.top_10 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary/60' },
+                          { label: '11 - 30', filterKey: 'top30' as const, count: Math.max(0, (gscOverview.query_summary.top_20 || 0) - (gscOverview.query_summary.top_10 || 0)), pct: Math.round((Math.max(0, (gscOverview.query_summary.top_20 || 0) - (gscOverview.query_summary.top_10 || 0)) / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-orange-400' },
+                          { label: 'All', filterKey: 'all' as const, count: gscOverview.query_summary.total_queries, pct: 100, variant: 'bg-muted-foreground/30' },
+                        ]).map((tier) => {
+                          const isActive = selectedCard === tier.filterKey;
+                          return (
+                            <div
+                              key={tier.label}
+                              className={`space-y-1.5 cursor-pointer rounded-lg px-2 py-1.5 -mx-2 transition-colors ${isActive ? 'bg-primary/10' : 'hover:bg-muted/60'}`}
+                              onClick={() => {
+                                setSelectedCard((prev) => prev === tier.filterKey ? null : tier.filterKey);
+                                setFilteredOffset(0);
+                                filteredOffsetRef.current = 0;
+                                setFilteredRows([]);
+                              }}
+                            >
+                              <div className="flex justify-between text-xs font-bold">
+                                <span>{tier.label}</span>
+                                <span>{tier.count.toLocaleString()}</span>
+                              </div>
+                              <div className="w-full bg-muted h-2 rounded-full overflow-hidden">
+                                <div className={`${tier.variant} h-full rounded-full transition-all`} style={{ width: `${tier.pct}%` }} />
+                              </div>
                             </div>
-                            <div className="w-full bg-muted h-2 rounded-full overflow-hidden">
-                              <div className={`${tier.variant} h-full rounded-full transition-all`} style={{ width: `${tier.pct}%` }} />
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -904,6 +921,9 @@ export default function RankTracking() {
                       <h3 className="font-headline font-extrabold text-xl">
                         {selectedCard === 'all' && 'All Ranking Queries'}
                         {selectedCard === 'top10' && 'Top 10 Queries by Traffic'}
+                        {selectedCard === 'top3pos' && 'Top 3 Keywords'}
+                        {selectedCard === 'top10pos' && 'Top 10 Keywords by Position'}
+                        {selectedCard === 'top30' && 'Keywords Ranked 11 - 30'}
                         {selectedCard === 'page2' && 'Page 2 Opportunities'}
                         {selectedCard === 'opportunities' && 'Striking Distance'}
                         {!selectedCard && 'Keyword Movement'}

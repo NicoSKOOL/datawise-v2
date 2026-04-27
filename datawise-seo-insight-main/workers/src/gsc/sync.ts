@@ -376,6 +376,12 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
   // opportunities: position 5-20 with high impressions
   if (filter === 'opportunities') {
     havingClause = 'HAVING AVG(position) BETWEEN 5 AND 20 AND SUM(impressions) > 100';
+  } else if (filter === 'top3pos') {
+    havingClause = 'HAVING AVG(position) <= 3';
+  } else if (filter === 'top10pos') {
+    havingClause = 'HAVING AVG(position) <= 10';
+  } else if (filter === 'top30') {
+    havingClause = 'HAVING AVG(position) BETWEEN 11 AND 30';
   }
 
   const effectiveLimit = filter === 'top10' ? 10 : limit;
