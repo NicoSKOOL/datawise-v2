@@ -1,0 +1,17 @@
+releaseDate: "2026-04-27"
+title: "Refresh your GSC properties without disconnecting, plus a cleaner disconnect"
+summary: "Two improvements to Google Search Console connection management in Settings."
+changes:
+  - type: feature
+    title: "Refresh GSC properties without disconnecting"
+    description: >
+      A new "Refresh Properties" button in Settings lets you re-fetch your Google
+      Search Console property list without having to disconnect and reconnect your
+      account. Useful when you've added a new property in GSC and want it to appear
+      right away.
+  - type: fix
+    title: "Disconnecting GSC now cleanly removes all associated data"
+    description: >
+      Fixed an issue where disconnecting your Google Search Console account could
+      leave behind orphaned search data or fail silently. Disconnecting now reliably
+      removes all related data in the correct order.
