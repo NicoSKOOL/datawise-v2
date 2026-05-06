@@ -34,6 +34,14 @@ export interface UsageInfo {
   output_tokens: number;
 }
 
+export interface ContentRevivalOptions {
+  include_tldr: boolean;
+  include_tables: boolean;
+  include_faq: boolean;
+  capsule_pct: number;
+  extra_instructions: string;
+}
+
 function requireLLMConfig() {
   const config = getLLMConfig();
   if (!config) throw new Error('NO_LLM_KEY');
@@ -196,10 +204,36 @@ export async function rewritePost(
   audit: AuditResult,
   sitePages: SitePage[],
   domain: string,
+  options?: Partial<ContentRevivalOptions>,
 ): Promise<{ rewritten: string; usage: UsageInfo }> {
   const llmConfig = requireLLMConfig();
   return api<{ rewritten: string; usage: UsageInfo }>('/api/content-tools/rewrite-post', {
     method: 'POST',
-    body: { post, audit, site_pages: sitePages, domain, llm_config: llmConfig },
+    body: { post, audit, site_pages: sitePages, domain, options, llm_config: llmConfig },
+  });
+}
+
+export async function refinePost(
+  post: { title: string; body_text: string },
+  audit: AuditResult,
+  sitePages: SitePage[],
+  domain: string,
+  currentMarkdown: string,
+  changeRequest: string,
+  options?: Partial<ContentRevivalOptions>,
+): Promise<{ rewritten: string; usage: UsageInfo }> {
+  const llmConfig = requireLLMConfig();
+  return api<{ rewritten: string; usage: UsageInfo }>('/api/content-tools/refine-post', {
+    method: 'POST',
+    body: {
+      post,
+      audit,
+      site_pages: sitePages,
+      domain,
+      current_markdown: currentMarkdown,
+      change_request: changeRequest,
+      options,
+      llm_config: llmConfig,
+    },
   });
 }

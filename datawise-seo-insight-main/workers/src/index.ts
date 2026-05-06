@@ -51,7 +51,7 @@ import {
   handleGeoGridScan, handleGeoGridHistory, handleGeoGridScanDetail, handleGeoGridInsights,
 } from './routes/local-seo';
 import {
-  handleFetchPost, handleDiscoverSitemap, handleAnalyzePost, handleRewritePost,
+  handleFetchPost, handleDiscoverSitemap, handleAnalyzePost, handleRewritePost, handleRefinePost,
   handleFetchServicePage, handleAnalyzeServicePage, handleGenerateSection,
 } from './routes/content-tools';
 import {
@@ -388,6 +388,9 @@ export default {
       }
       if (path === '/api/content-tools/rewrite-post' && method === 'POST') {
         return addCors(await handleRewritePost(request, env));
+      }
+      if (path === '/api/content-tools/refine-post' && method === 'POST') {
+        return addCors(await handleRefinePost(request, env));
       }
       if (path === '/api/content-tools/fetch-service-page' && method === 'POST') {
         return addCors(await handleFetchServicePage(request));

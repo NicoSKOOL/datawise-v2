@@ -1,5 +1,10 @@
 import type { Env } from '../index';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
+import {
+  buildContentRevivalRefineInstructions,
+  buildContentRevivalRewriteInstructions,
+  type ContentRevivalOptions,
+} from '../content-tools/revival-options';
 
 // ---------------------------------------------------------------------------
 // Prompts (ported from blog-revival-agent/rewriter.py)
@@ -39,10 +44,8 @@ TONE & VOICE (critical, do this first):
 - Preserve any recurring phrases, stylistic quirks, or structural habits the author uses
 - NEVER use em dashes anywhere in the post. Replace them with a colon, comma, parentheses, or split into two sentences instead
 
-CAPSULE CONTENT STRUCTURE (apply to 60% of H2 sections):
-- H2 heading must be phrased as a question
-- Immediately after the H2, write a 30-60 word direct answer in **bold** - self-contained enough to be a Google featured snippet
-- Follow with 2-3 supporting paragraphs (depth, examples, data)
+OUTPUT SETTINGS:
+{OUTPUT_INSTRUCTIONS}
 
 CONTENT REQUIREMENTS:
 - Update any outdated facts with accurate 2024-2025 information
@@ -61,13 +64,6 @@ INTERNAL LINKS (important):
 - Format: [contextual anchor text](https://full-url-from-sitemap)
 - Anchor text must be natural and contextual, never "click here"
 
-FAQ SECTION (required, append at the very end of the post):
-- Add a ## Frequently Asked Questions section as the final section
-- Include 3 to 5 questions that readers of this topic are likely to ask
-- The questions MUST be different from any question already answered or addressed in the post body, look at the H2 headings and content and avoid duplicating those topics
-- Format each as: ### Question text? followed by a concise 2-4 sentence answer
-- Questions should be genuinely useful and reflect real search intent around the topic
-
 OUTPUT FORMAT:
 - Clean markdown only, start directly with the # title, no preamble or commentary
 - Do not add any text before or after the post content
@@ -82,6 +78,30 @@ AVAILABLE SITE PAGES FOR INTERNAL LINKS (use these full URLs):
 
 ORIGINAL POST TO REWRITE:
 {BODY_TEXT}`;
+
+const REFINE_PROMPT = `You are an expert SEO content editor. Revise the current rewritten blog post using the requested changes below.
+
+TONE & VOICE:
+- Keep the same tone and voice as the current rewritten post unless the user explicitly asks for a tone change
+- Preserve useful internal links, external citations, headings, and audit fixes
+- NEVER use em dashes anywhere in the post. Replace them with a colon, comma, parentheses, or split into two sentences instead
+
+OUTPUT SETTINGS AND CHANGE REQUEST:
+{REFINE_INSTRUCTIONS}
+
+ORIGINAL TITLE: {TITLE}
+
+AUDIT FINDINGS:
+{AUDIT}
+
+AVAILABLE SITE PAGES FOR INTERNAL LINKS (use these full URLs when adding internal links):
+{SITE_PAGES}
+
+ORIGINAL POST CONTEXT:
+{BODY_TEXT}
+
+CURRENT REWRITTEN MARKDOWN TO REVISE:
+{CURRENT_MARKDOWN}`;
 
 // ---------------------------------------------------------------------------
 // Content selectors for HTML parsing
@@ -275,6 +295,11 @@ const FETCH_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
+type WpPostResponse = {
+  title?: { rendered?: string };
+  content?: { rendered?: string };
+};
+
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -357,7 +382,7 @@ async function tryWpApi(url: string, domain: string, slug: string): Promise<Reco
     });
     if (!resp.ok) return null;
 
-    const posts = await resp.json() as any[];
+    const posts = await resp.json() as WpPostResponse[];
     if (!posts?.length) return null;
 
     const wpPost = posts[0];
@@ -1138,6 +1163,7 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
     site_pages: Array<{ url: string; slug: string; title: string }>;
     domain: string;
     llm_config: UserLLMConfig;
+    options?: Partial<ContentRevivalOptions>;
   };
 
   if (!body.post?.body_text) return json({ error: 'post.body_text is required' }, 400);
@@ -1145,9 +1171,44 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
 
   const prompt = REWRITE_PROMPT
     .replace('{TITLE}', body.post.title || 'Untitled')
+    .replace('{OUTPUT_INSTRUCTIONS}', buildContentRevivalRewriteInstructions(body.options))
     .replace('{AUDIT}', JSON.stringify(body.audit || {}, null, 2))
     .replace('{SITE_PAGES}', formatSitePages(body.site_pages || [], body.domain || ''))
     .replace('{BODY_TEXT}', (body.post.body_text || '').substring(0, 8000));
+
+  const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
+  const provider = getLLMProvider(env, body.llm_config);
+
+  try {
+    const result = await provider.chatComplete(messages, env, body.llm_config, 4096);
+    return json({ rewritten: result.text.trim(), usage: result.usage });
+  } catch (err) {
+    return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
+  }
+}
+
+export async function handleRefinePost(request: Request, env: Env): Promise<Response> {
+  const body = await request.json() as {
+    post: { title: string; body_text: string };
+    audit: Record<string, unknown>;
+    site_pages: Array<{ url: string; slug: string; title: string }>;
+    domain: string;
+    current_markdown: string;
+    change_request: string;
+    llm_config: UserLLMConfig;
+    options?: Partial<ContentRevivalOptions>;
+  };
+
+  if (!body.current_markdown?.trim()) return json({ error: 'current_markdown is required' }, 400);
+  if (!body.llm_config?.api_key) return json({ error: 'llm_config.api_key is required' }, 400);
+
+  const prompt = REFINE_PROMPT
+    .replace('{TITLE}', body.post?.title || 'Untitled')
+    .replace('{REFINE_INSTRUCTIONS}', buildContentRevivalRefineInstructions(body.change_request || '', body.options))
+    .replace('{AUDIT}', JSON.stringify(body.audit || {}, null, 2))
+    .replace('{SITE_PAGES}', formatSitePages(body.site_pages || [], body.domain || ''))
+    .replace('{BODY_TEXT}', (body.post?.body_text || '').substring(0, 6000))
+    .replace('{CURRENT_MARKDOWN}', body.current_markdown.substring(0, 16000));
 
   const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
   const provider = getLLMProvider(env, body.llm_config);

@@ -6,21 +6,23 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
+import { Slider } from '@/components/ui/slider';
 import {
   Globe, Upload, Play, Square, Copy, Download, ChevronDown, ChevronUp,
   CheckCircle, XCircle, Loader2, AlertCircle, FileText, Search,
   Clock, LinkIcon, ExternalLink, AlignLeft, Shield, MousePointerClick,
-  Heading, MapPin, Tag, Code, MessageSquare, Lightbulb,
+  Heading, MapPin, Tag, Code, MessageSquare, Lightbulb, Sparkles, RotateCcw,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useToast } from '@/hooks/use-toast';
 import { getLLMConfig } from '@/lib/chat';
 import {
-  discoverSitemap, fetchPost, analyzePost, rewritePost,
+  discoverSitemap, fetchPost, analyzePost, rewritePost, refinePost,
   fetchServicePage, analyzeServicePage, generateSection,
   type SitePage, type PostData, type AuditResult, type UsageInfo,
-  type ServicePageData, type ServicePageAnalysis,
+  type ServicePageData, type ServicePageAnalysis, type ContentRevivalOptions,
 } from '@/lib/content-tools';
 
 // ---------------------------------------------------------------------------
@@ -35,9 +37,13 @@ interface ProcessedPost {
   statusMessage: string;
   post?: PostData;
   audit?: AuditResult;
+  generated?: string;
   rewritten?: string;
   usageAudit?: UsageInfo;
   usageRewrite?: UsageInfo;
+  usageRefine?: UsageInfo;
+  refining?: boolean;
+  refineInstruction?: string;
   error?: string;
   wordCountAfter?: number;
 }
@@ -156,8 +162,20 @@ function parseGSCCsv(text: string): string[] {
 }
 
 function countMarkdownWords(md: string): number {
-  const text = md.replace(/[#*\[\]()_`>-]/g, ' ').replace(/https?:\/\/\S+/g, '');
+  const text = md.replace(/[#*[\]()_`>-]/g, ' ').replace(/https?:\/\/\S+/g, '');
   return text.split(/\s+/).filter(Boolean).length;
+}
+
+const DEFAULT_REVIVAL_OPTIONS: ContentRevivalOptions = {
+  include_tldr: true,
+  include_tables: true,
+  include_faq: true,
+  capsule_pct: 65,
+  extra_instructions: '',
+};
+
+function getCurrentContent(post: ProcessedPost): string {
+  return post.rewritten || post.generated || '';
 }
 
 function verdictColor(verdict: string): string {
@@ -201,12 +219,13 @@ function ContentRevival() {
   const [posts, setPosts] = useState<ProcessedPost[]>([]);
   const [processing, setProcessing] = useState(false);
   const [expandedPosts, setExpandedPosts] = useState<Set<number>>(new Set());
+  const [revivalOptions, setRevivalOptions] = useState<ContentRevivalOptions>(DEFAULT_REVIVAL_OPTIONS);
   const stopRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const totalUsage = posts.reduce((acc, p) => ({
-    input: acc.input + (p.usageAudit?.input_tokens || 0) + (p.usageRewrite?.input_tokens || 0),
-    output: acc.output + (p.usageAudit?.output_tokens || 0) + (p.usageRewrite?.output_tokens || 0),
+    input: acc.input + (p.usageAudit?.input_tokens || 0) + (p.usageRewrite?.input_tokens || 0) + (p.usageRefine?.input_tokens || 0),
+    output: acc.output + (p.usageAudit?.output_tokens || 0) + (p.usageRewrite?.output_tokens || 0) + (p.usageRefine?.output_tokens || 0),
   }), { input: 0, output: 0 });
 
   const donePosts = posts.filter(p => p.status === 'done').length;
@@ -242,6 +261,10 @@ function ContentRevival() {
   const updatePost = useCallback((index: number, update: Partial<ProcessedPost>) => {
     setPosts(prev => prev.map((p, i) => i === index ? { ...p, ...update } : p));
   }, []);
+
+  function updateRevivalOption<K extends keyof ContentRevivalOptions>(key: K, value: ContentRevivalOptions[K]) {
+    setRevivalOptions(prev => ({ ...prev, [key]: value }));
+  }
 
   const handleRun = async () => {
     const config = getLLMConfig();
@@ -325,12 +348,14 @@ function ContentRevival() {
           currentAudit,
           sitePages,
           domainStr,
+          revivalOptions,
         );
 
         const wordCountAfter = countMarkdownWords(rewriteResult.rewritten);
         updatePost(i, {
           status: 'done',
           statusMessage: 'Complete',
+          generated: rewriteResult.rewritten,
           rewritten: rewriteResult.rewritten,
           usageRewrite: rewriteResult.usage,
           wordCountAfter,
@@ -346,6 +371,56 @@ function ContentRevival() {
 
   const handleStop = () => {
     stopRef.current = true;
+  };
+
+  const handleContentChange = (index: number, content: string) => {
+    updatePost(index, {
+      rewritten: content,
+      wordCountAfter: countMarkdownWords(content),
+    });
+  };
+
+  const handleResetContent = (index: number) => {
+    const post = posts[index];
+    if (!post?.generated) return;
+    updatePost(index, {
+      rewritten: post.generated,
+      wordCountAfter: countMarkdownWords(post.generated),
+    });
+  };
+
+  const handleRefine = async (index: number, presetInstruction?: string) => {
+    const target = posts[index];
+    if (!target?.post || !target.audit) return;
+    const changeRequest = (presetInstruction || target.refineInstruction || '').trim();
+    if (!changeRequest) {
+      toast({ variant: 'destructive', title: 'Request needed', description: 'Describe what to change first.' });
+      return;
+    }
+
+    updatePost(index, { refining: true });
+    try {
+      const result = await refinePost(
+        { title: target.post.title, body_text: target.post.body_text },
+        target.audit,
+        sitePages,
+        domain.trim(),
+        getCurrentContent(target),
+        changeRequest,
+        revivalOptions,
+      );
+      updatePost(index, {
+        rewritten: result.rewritten,
+        usageRefine: result.usage,
+        refining: false,
+        refineInstruction: '',
+        wordCountAfter: countMarkdownWords(result.rewritten),
+      });
+      toast({ title: 'Changes applied', description: 'The rewritten content was updated.' });
+    } catch (err) {
+      updatePost(index, { refining: false });
+      toast({ variant: 'destructive', title: 'Changes failed', description: err instanceof Error ? err.message : 'Failed' });
+    }
   };
 
   const toggleExpanded = (index: number) => {
@@ -372,11 +447,11 @@ function ContentRevival() {
   };
 
   const handleDownloadAll = () => {
-    const donePosts2 = posts.filter(p => p.status === 'done' && p.rewritten);
+    const donePosts2 = posts.filter(p => p.status === 'done' && getCurrentContent(p));
     if (donePosts2.length === 0) return;
     for (const p of donePosts2) {
       const slug = p.post?.slug || 'post';
-      handleDownload(`${slug}-rewritten.md`, p.rewritten!);
+      handleDownload(`${slug}-rewritten.md`, getCurrentContent(p));
     }
   };
 
@@ -465,6 +540,76 @@ function ContentRevival() {
           </p>
         </div>
 
+        <div className="rounded-lg border bg-background p-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Revival output settings</p>
+              <p className="text-xs text-muted-foreground">These apply to every rewrite in this run.</p>
+            </div>
+            <Badge variant="secondary" className="text-xs">
+              {revivalOptions.capsule_pct}% capsule
+            </Badge>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <Label htmlFor="revival-tldr" className="text-sm">TL;DR</Label>
+              <Switch
+                id="revival-tldr"
+                checked={revivalOptions.include_tldr}
+                onCheckedChange={(checked) => updateRevivalOption('include_tldr', checked)}
+                disabled={processing}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <Label htmlFor="revival-tables" className="text-sm">Tables</Label>
+              <Switch
+                id="revival-tables"
+                checked={revivalOptions.include_tables}
+                onCheckedChange={(checked) => updateRevivalOption('include_tables', checked)}
+                disabled={processing}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <Label htmlFor="revival-faq" className="text-sm">FAQ</Label>
+              <Switch
+                id="revival-faq"
+                checked={revivalOptions.include_faq}
+                onCheckedChange={(checked) => updateRevivalOption('include_faq', checked)}
+                disabled={processing}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="revival-capsule" className="text-sm">Content capsule percentage</Label>
+              <span className="text-sm font-medium tabular-nums">{revivalOptions.capsule_pct}%</span>
+            </div>
+            <Slider
+              id="revival-capsule"
+              value={[revivalOptions.capsule_pct]}
+              min={0}
+              max={100}
+              step={5}
+              onValueChange={(value) => updateRevivalOption('capsule_pct', value[0] ?? 0)}
+              disabled={processing}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="revival-extra">Extra instructions</Label>
+            <Textarea
+              id="revival-extra"
+              value={revivalOptions.extra_instructions}
+              onChange={(e) => updateRevivalOption('extra_instructions', e.target.value)}
+              placeholder="Example: include a short comparison table and keep the intro under 120 words."
+              rows={2}
+              disabled={processing}
+            />
+          </div>
+        </div>
+
         <div className="flex gap-2">
           {!processing ? (
             <Button onClick={handleRun} disabled={!urlsText.trim()}>
@@ -539,7 +684,8 @@ function ContentRevival() {
                       const after = p.wordCountAfter || 0;
                       const delta = after - before;
                       const totalTokens = (p.usageAudit?.input_tokens || 0) + (p.usageAudit?.output_tokens || 0)
-                        + (p.usageRewrite?.input_tokens || 0) + (p.usageRewrite?.output_tokens || 0);
+                        + (p.usageRewrite?.input_tokens || 0) + (p.usageRewrite?.output_tokens || 0)
+                        + (p.usageRefine?.input_tokens || 0) + (p.usageRefine?.output_tokens || 0);
 
                       return (
                         <tr key={i} className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => toggleExpanded(i)}>
@@ -567,6 +713,8 @@ function ContentRevival() {
 
               {posts.map((p, i) => {
                 if (!expandedPosts.has(i) || p.status !== 'done') return null;
+                const currentContent = getCurrentContent(p);
+                const hasContentChanges = !!p.generated && currentContent !== p.generated;
                 return (
                   <div key={`detail-${i}`} className="space-y-4">
                     {/* Audit findings */}
@@ -648,41 +796,101 @@ function ContentRevival() {
 
                     {/* Rewritten content with actions */}
                     <div className="rounded-xl border bg-card p-5">
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                         <p className="font-semibold text-sm">Rewritten Content</p>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleCopy(p.rewritten || '')}>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleResetContent(i)}
+                            disabled={!hasContentChanges || p.refining}
+                          >
+                            <RotateCcw className="h-3 w-3 mr-1.5" />
+                            Reset
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleCopy(currentContent)}>
                             <Copy className="h-3 w-3 mr-1.5" />
                             Copy
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleDownload(`${p.post?.slug || 'post'}-rewritten.md`, p.rewritten || '')}
+                            onClick={() => handleDownload(`${p.post?.slug || 'post'}-rewritten.md`, currentContent)}
                           >
                             <Download className="h-3 w-3 mr-1.5" />
                             Download
                           </Button>
                         </div>
                       </div>
-                      <div className={[
-                        'prose prose-sm dark:prose-invert max-w-none bg-background rounded-lg border p-6 max-h-[600px] overflow-y-auto',
-                        'prose-h1:text-2xl prose-h1:font-bold prose-h1:mt-6 prose-h1:mb-4',
-                        'prose-h2:text-xl prose-h2:font-semibold prose-h2:mt-8 prose-h2:mb-3 prose-h2:pb-2 prose-h2:border-b',
-                        'prose-h3:text-base prose-h3:font-semibold prose-h3:mt-6 prose-h3:mb-2',
-                        'prose-p:leading-relaxed prose-p:mb-4',
-                        'prose-ul:my-3 prose-ul:space-y-1 prose-ol:my-3 prose-ol:space-y-1',
-                        'prose-li:leading-relaxed',
-                        'prose-a:text-primary prose-a:underline prose-a:underline-offset-2 prose-a:decoration-primary/40 hover:prose-a:decoration-primary',
-                        'prose-strong:font-semibold',
-                        '[&_table]:w-full [&_table]:border-collapse [&_table]:my-4 [&_table]:text-sm',
-                        '[&_th]:border [&_th]:border-border [&_th]:px-3 [&_th]:py-2 [&_th]:bg-muted [&_th]:font-medium [&_th]:text-left',
-                        '[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2',
-                        'prose-blockquote:border-l-primary prose-blockquote:bg-muted/30 prose-blockquote:py-1 prose-blockquote:px-4 prose-blockquote:rounded-r-lg',
-                      ].join(' ')}>
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {p.rewritten || ''}
-                        </ReactMarkdown>
+                      <Tabs defaultValue="preview" className="space-y-3">
+                        <TabsList>
+                          <TabsTrigger value="preview">Preview</TabsTrigger>
+                          <TabsTrigger value="edit">Edit</TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="preview">
+                          <div className={[
+                            'prose prose-sm dark:prose-invert max-w-none bg-background rounded-lg border p-6 max-h-[600px] overflow-y-auto',
+                            'prose-h1:text-2xl prose-h1:font-bold prose-h1:mt-6 prose-h1:mb-4',
+                            'prose-h2:text-xl prose-h2:font-semibold prose-h2:mt-8 prose-h2:mb-3 prose-h2:pb-2 prose-h2:border-b',
+                            'prose-h3:text-base prose-h3:font-semibold prose-h3:mt-6 prose-h3:mb-2',
+                            'prose-p:leading-relaxed prose-p:mb-4',
+                            'prose-ul:my-3 prose-ul:space-y-1 prose-ol:my-3 prose-ol:space-y-1',
+                            'prose-li:leading-relaxed',
+                            'prose-a:text-primary prose-a:underline prose-a:underline-offset-2 prose-a:decoration-primary/40 hover:prose-a:decoration-primary',
+                            'prose-strong:font-semibold',
+                            '[&_table]:w-full [&_table]:border-collapse [&_table]:my-4 [&_table]:text-sm',
+                            '[&_th]:border [&_th]:border-border [&_th]:px-3 [&_th]:py-2 [&_th]:bg-muted [&_th]:font-medium [&_th]:text-left',
+                            '[&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2',
+                            'prose-blockquote:border-l-primary prose-blockquote:bg-muted/30 prose-blockquote:py-1 prose-blockquote:px-4 prose-blockquote:rounded-r-lg',
+                          ].join(' ')}>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {currentContent}
+                            </ReactMarkdown>
+                          </div>
+                        </TabsContent>
+                        <TabsContent value="edit">
+                          <Textarea
+                            value={currentContent}
+                            onChange={(e) => handleContentChange(i, e.target.value)}
+                            rows={22}
+                            className="font-mono text-sm leading-relaxed"
+                          />
+                        </TabsContent>
+                      </Tabs>
+
+                      <div className="mt-4 rounded-lg border bg-background p-4 space-y-3">
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" variant="outline" onClick={() => handleRefine(i, 'Add a concise TL;DR directly below the title.')} disabled={p.refining}>
+                            TL;DR
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleRefine(i, 'Add one genuinely useful markdown table under the most relevant H2 section.')} disabled={p.refining}>
+                            Table
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleRefine(i, 'Add a Frequently Asked Questions section at the end with useful, non-duplicative questions.')} disabled={p.refining}>
+                            FAQ
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => handleRefine(i, 'Rewrite more H2 sections as concise answer capsules while preserving the current article structure.')} disabled={p.refining}>
+                            Capsules
+                          </Button>
+                        </div>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <Textarea
+                            value={p.refineInstruction || ''}
+                            onChange={(e) => updatePost(i, { refineInstruction: e.target.value })}
+                            placeholder="Ask for changes to this rewritten version."
+                            rows={2}
+                            className="text-sm"
+                            disabled={p.refining}
+                          />
+                          <Button
+                            className="shrink-0 gap-1.5"
+                            onClick={() => handleRefine(i)}
+                            disabled={p.refining || !(p.refineInstruction || '').trim()}
+                          >
+                            {p.refining ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            Request changes
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>
