@@ -88,6 +88,8 @@ interface LighthouseResult {
   };
   url: string;
   timestamp: string;
+  partial?: boolean;
+  warning?: string;
 }
 
 interface Project {
@@ -160,8 +162,10 @@ export default function OnPageSEO() {
 
       setResults(data);
       toast({
-        title: "Success",
-        description: "SEO analysis completed successfully",
+        title: data.partial ? "Partial audit completed" : "Success",
+        description: data.partial
+          ? data.warning || "Lighthouse timed out, but page metadata was audited."
+          : "SEO analysis completed successfully",
       });
     } catch (error) {
       console.error('Error running analysis:', error);

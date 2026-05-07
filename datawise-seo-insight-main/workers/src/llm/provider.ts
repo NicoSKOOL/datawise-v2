@@ -8,7 +8,7 @@ export interface ChatMessage {
 // User-provided LLM config (BYOK)
 export interface UserLLMConfig {
   provider: 'openai' | 'claude' | 'gemini' | 'openrouter';
-  api_key: string;
+  api_key?: string;
   model?: string;
 }
 
@@ -191,7 +191,7 @@ class ClaudeProvider implements LLMProvider {
 
 class GeminiProvider implements LLMProvider {
   async chat(messages: ChatMessage[], env: Env, config?: UserLLMConfig): Promise<ReadableStream> {
-    const apiKey = config?.api_key;
+    const apiKey = config?.api_key || env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('No Gemini API key configured. Add your key in Settings.');
 
     const model = config?.model || 'gemini-2.0-flash';
@@ -229,7 +229,7 @@ class GeminiProvider implements LLMProvider {
   }
 
   async chatComplete(messages: ChatMessage[], env: Env, config?: UserLLMConfig, maxTokens = 4096): Promise<ChatCompleteResult> {
-    const apiKey = config?.api_key;
+    const apiKey = config?.api_key || env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('No Gemini API key configured. Add your key in Settings.');
 
     const model = config?.model || 'gemini-2.0-flash';
@@ -276,7 +276,7 @@ class GeminiProvider implements LLMProvider {
 
 class OpenRouterProvider implements LLMProvider {
   async chat(messages: ChatMessage[], env: Env, config?: UserLLMConfig): Promise<ReadableStream> {
-    const apiKey = config?.api_key;
+    const apiKey = config?.api_key || env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error('No OpenRouter API key configured. Add your key in Settings.');
 
     const model = config?.model || 'anthropic/claude-sonnet-4';
@@ -307,7 +307,7 @@ class OpenRouterProvider implements LLMProvider {
   }
 
   async chatComplete(messages: ChatMessage[], env: Env, config?: UserLLMConfig, maxTokens = 4096): Promise<ChatCompleteResult> {
-    const apiKey = config?.api_key;
+    const apiKey = config?.api_key || env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error('No OpenRouter API key configured. Add your key in Settings.');
 
     const model = config?.model || 'anthropic/claude-sonnet-4';

@@ -1,6 +1,64 @@
 import type { Env } from '../index';
 import { dataforseoRequest } from '../dataforseo/client';
 
+const LIGHTHOUSE_SEO_TIMEOUT_MS = 55_000;
+const LIGHTHOUSE_HTML_TIMEOUT_MS = 15_000;
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function isTimeoutError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err || '');
+  return /timed out|timeout|abort/i.test(message);
+}
+
+function extractHtmlData(htmlResponse: any): any | null {
+  const page = htmlResponse?.tasks?.[0]?.result?.[0]?.items?.[0];
+  if (!page) return null;
+  return {
+    title: {
+      content: page.meta?.title || '',
+      length: (page.meta?.title || '').length,
+      exists: !!page.meta?.title,
+    },
+    metaDescription: {
+      content: page.meta?.description || '',
+      length: (page.meta?.description || '').length,
+      exists: !!page.meta?.description,
+    },
+    h1Tags: {
+      content: page.meta?.htags?.h1 || [],
+      count: (page.meta?.htags?.h1 || []).length,
+    },
+    url: page.url,
+  };
+}
+
+function buildLighthouseTimeoutFallback(): any {
+  return {
+    categories: {
+      performance: { title: 'Performance', score: 0 },
+      seo: { title: 'SEO', score: 0 },
+      accessibility: { title: 'Accessibility', score: 0 },
+      'best-practices': { title: 'Best Practices', score: 0 },
+    },
+    audits: {
+      'lighthouse-timeout': {
+        id: 'lighthouse-timeout',
+        title: 'Lighthouse timed out',
+        description:
+          'The page metadata was fetched, but the full Lighthouse render did not complete before the audit timeout.',
+        score: 0,
+        displayValue: 'Full Lighthouse data unavailable',
+      },
+    },
+  };
+}
+
 // POST /api/ai/google-ai-mode
 export async function handleGoogleAIMode(request: Request, env: Env): Promise<Response> {
   const { keyword, location_name = 'United States', device = 'desktop', os = 'windows' } = await request.json() as any;
@@ -422,42 +480,74 @@ export async function handleVisibilityCheck(request: Request, env: Env, userId: 
 // POST /api/ai/lighthouse-seo (On-Page SEO)
 export async function handleLighthouseSEO(request: Request, env: Env): Promise<Response> {
   const { url } = await request.json() as any;
-  if (!url) return new Response(JSON.stringify({ error: 'URL is required' }), { status: 400 });
+  if (!url) return json({ error: 'URL is required' }, 400);
 
-  const data = await dataforseoRequest(env, '/on_page/lighthouse/live/json', [{
-    url,
-    for_mobile: false,
-    categories: ['seo', 'performance', 'accessibility', 'best-practices'],
-  }]);
-
-  // Also fetch HTML content for meta tag analysis
-  let htmlData = null;
-  try {
-    const htmlResponse = await dataforseoRequest(env, '/on_page/instant_pages', [{
+  const lighthouseRequest = dataforseoRequest(env, '/on_page/lighthouse/live/json', [
+    {
+      url,
+      for_mobile: false,
+      categories: ['seo', 'performance', 'accessibility', 'best-practices'],
+    },
+  ], LIGHTHOUSE_SEO_TIMEOUT_MS);
+  const htmlRequest = dataforseoRequest(env, '/on_page/instant_pages', [
+    {
       url,
       load_resources: false,
-    }]);
-    const page = htmlResponse?.tasks?.[0]?.result?.[0]?.items?.[0];
-    if (page) {
-      htmlData = {
-        title: { content: page.meta?.title || '', length: (page.meta?.title || '').length, exists: !!page.meta?.title },
-        metaDescription: { content: page.meta?.description || '', length: (page.meta?.description || '').length, exists: !!page.meta?.description },
-        h1Tags: { content: page.meta?.htags?.h1 || [], count: (page.meta?.htags?.h1 || []).length },
-        url: page.url,
-      };
-    }
-  } catch {
-    // HTML data is optional
+    },
+  ], LIGHTHOUSE_HTML_TIMEOUT_MS);
+
+  const [lighthouseSettled, htmlSettled] = await Promise.allSettled([
+    lighthouseRequest,
+    htmlRequest,
+  ]);
+
+  let htmlData = null;
+  if (htmlSettled.status === 'fulfilled') {
+    htmlData = extractHtmlData(htmlSettled.value);
+  } else {
+    console.warn('[lighthouse-seo] Optional HTML fetch failed:', {
+      url,
+      error: htmlSettled.reason instanceof Error
+        ? htmlSettled.reason.message
+        : String(htmlSettled.reason),
+    });
   }
 
+  if (lighthouseSettled.status === 'rejected') {
+    const err = lighthouseSettled.reason;
+    console.error('[lighthouse-seo] Lighthouse request failed:', {
+      url,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    if (htmlData) {
+      return json({
+        lighthouse: buildLighthouseTimeoutFallback(),
+        htmlData,
+        url,
+        timestamp: new Date().toISOString(),
+        partial: true,
+        warning: 'Full Lighthouse data timed out, so this audit is based on page metadata only.',
+      });
+    }
+    return json(
+      {
+        error: isTimeoutError(err)
+          ? 'Website audit timed out while waiting for Lighthouse. Please try again in a minute.'
+          : 'Website audit failed while running Lighthouse. Please try again.',
+      },
+      isTimeoutError(err) ? 504 : 502
+    );
+  }
+
+  const data = lighthouseSettled.value;
   const lighthouseResult = data?.tasks?.[0]?.result?.[0];
 
-  return new Response(JSON.stringify({
+  return json({
     lighthouse: lighthouseResult || {},
     htmlData,
     url,
     timestamp: new Date().toISOString(),
-  }), { headers: { 'Content-Type': 'application/json' } });
+  });
 }
 
 // POST /api/ai/geo-analyzer

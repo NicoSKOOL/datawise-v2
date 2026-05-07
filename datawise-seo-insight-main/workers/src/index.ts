@@ -9,6 +9,13 @@ export interface Env {
   DATAFORSEO_EMAIL: string;
   DATAFORSEO_PASSWORD: string;
   RESEND_API_KEY: string;
+  WORKER_URL: string;
+  BWT_CLIENT_ID: string;
+  BWT_CLIENT_SECRET: string;
+  OPENROUTER_API_KEY: string;
+  GEMINI_API_KEY: string;
+  SKOOL_WEBHOOK_SECRET: string;
+  TASK_ATTACHMENTS: R2Bucket;
   // LLM config
   LLM_PROVIDER: string;
   LLM_MODEL: string;

@@ -104,6 +104,57 @@ export async function sendCreditsExhaustedEmail(
   }
 }
 
+export async function sendWelcomeEmail(
+  env: Env,
+  to: string,
+  name: string | null
+): Promise<boolean> {
+  const displayName = name || 'there';
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+      <div style="text-align: center; margin-bottom: 32px;">
+        <div style="display: inline-block; width: 48px; height: 48px; background: #6366f1; border-radius: 12px; line-height: 48px; color: white; font-weight: bold; font-size: 18px;">DW</div>
+        <h1 style="margin: 16px 0 0; font-size: 24px; color: #111;">DataWise</h1>
+      </div>
+      <p style="color: #333; font-size: 16px; line-height: 1.5;">Hi ${displayName},</p>
+      <p style="color: #333; font-size: 16px; line-height: 1.5;">Welcome to DataWise. Your community access is active and your SEO tools are ready.</p>
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="https://datawiseseo.com" style="display: inline-block; background: #6366f1; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 16px;">Open DataWise</a>
+      </div>
+      <p style="color: #666; font-size: 14px; line-height: 1.5;">You can now use DataWise to run audits, research keywords, monitor visibility, and track rankings.</p>
+      <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0;" />
+      <p style="color: #999; font-size: 12px; text-align: center;">DataWise SEO by AI Ranking Skool</p>
+    </div>
+  `;
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'DataWise <noreply@datawiseseo.com>',
+        to: [to],
+        subject: 'Welcome to DataWise',
+        html,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('Resend welcome email error:', err);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to send welcome email:', err);
+    return false;
+  }
+}
+
 export async function sendInviteEmail(
   env: Env,
   to: string,
