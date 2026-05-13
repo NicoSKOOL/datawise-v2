@@ -307,10 +307,15 @@ CREATE TABLE IF NOT EXISTS site_audits (
   seo_analysis TEXT,
   error_message TEXT,
   last_polled_at TEXT,
+  next_poll_at TEXT,
+  retry_count INTEGER DEFAULT 0,
+  processing_locked_until TEXT,
+  crawl_diagnostics TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_site_audits_user ON site_audits(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_site_audits_queue ON site_audits(status, next_poll_at, processing_locked_until);
 
 CREATE TABLE IF NOT EXISTS audit_findings (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

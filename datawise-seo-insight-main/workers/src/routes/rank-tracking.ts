@@ -406,7 +406,7 @@ export async function handleProjectReport(request: Request, env: Env, userId: st
 }
 
 // GET /api/rank-tracking/dashboard-summary
-export async function handleDashboardSummary(env: Env, userId: string): Promise<Response> {
+export async function handleDashboardSummary(env: Env, userId: string, domain?: string): Promise<Response> {
   // Check if user has any projects
   const { results: projects } = await env.DB.prepare(
     'SELECT id, name FROM seo_projects WHERE user_id = ? ORDER BY created_at DESC'

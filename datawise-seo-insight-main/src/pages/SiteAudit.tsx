@@ -14,6 +14,7 @@ import {
   Zap,
   Target,
   ArrowRight,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,6 +65,23 @@ function formatDate(s: string): string {
 }
 
 const DETAIL_VIEWS = new Set(['audit', 'overview', 'findings', 'board']);
+const ACCESS_ISSUE_CODES = new Set([
+  'forbidden_robots',
+  'forbidden_meta_tag',
+  'forbidden_http_header',
+  'invalid_page_status_code',
+  'site_unreachable',
+  'too_many_redirects',
+  'unknown_zero_page_crawl',
+]);
+
+function diagnosticMessage(audit: Pick<SiteAuditListItem, 'crawl_diagnostics' | 'error_message'>): string | null {
+  return audit.crawl_diagnostics?.user_message || audit.error_message || null;
+}
+
+function isAccessIssue(audit: Pick<SiteAuditListItem, 'crawl_diagnostics' | 'status'>): boolean {
+  return audit.status === 'failed' && ACCESS_ISSUE_CODES.has(audit.crawl_diagnostics?.reason_code || '');
+}
 
 export default function SiteAudit() {
   return (
@@ -183,7 +201,7 @@ function AuditListView() {
             </Button>
           </form>
           <p className="text-xs text-muted-foreground mt-2">
-            Real Lighthouse audit via Google's PageSpeed engine. Takes 20–40 seconds and uses 1 credit.
+            Runs in the background via DataForSEO OnPage. Most audits finish in a few minutes; protected or staging URLs may need crawler access first. Uses 1 credit.
           </p>
         </CardContent>
       </Card>
@@ -203,6 +221,8 @@ function AuditListView() {
               audit={a}
               onOpen={() => setParams({ view: 'audit', id: a.id })}
               onDelete={() => deleteMutation.mutate(a.id)}
+              onRetry={() => createMutation.mutate(a.domain)}
+              isRetrying={createMutation.isPending}
             />
           ))}
         </div>
@@ -215,24 +235,29 @@ function AuditRow({
   audit,
   onOpen,
   onDelete,
+  onRetry,
+  isRetrying,
 }: {
   audit: SiteAuditListItem;
   onOpen: () => void;
   onDelete: () => void;
+  onRetry: () => void;
+  isRetrying: boolean;
 }) {
   const progress =
     audit.total_items > 0 ? Math.round((audit.done_items / audit.total_items) * 100) : 0;
+  const message = diagnosticMessage(audit);
   return (
     <Card className="hover:border-primary/50 transition-colors cursor-pointer" onClick={onOpen}>
       <CardContent className="p-4 flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <p className="font-medium truncate">{audit.domain}</p>
-            <StatusBadge status={audit.status} />
+            <StatusBadge status={audit.status} accessIssue={isAccessIssue(audit)} />
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">{formatDate(audit.created_at)}</p>
-          {audit.status === 'failed' && audit.error_message && (
-            <p className="text-xs text-red-600 mt-1 line-clamp-1">{audit.error_message}</p>
+          {audit.status === 'failed' && message && (
+            <p className="text-xs text-red-600 mt-1 line-clamp-2">{message}</p>
           )}
         </div>
 
@@ -253,6 +278,26 @@ function AuditRow({
           </div>
         )}
 
+        {audit.status === 'failed' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 flex-shrink-0"
+            disabled={isRetrying}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRetry();
+            }}
+          >
+            {isRetrying ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Retry
+          </Button>
+        )}
+
         <Button
           variant="ghost"
           size="sm"
@@ -269,7 +314,7 @@ function AuditRow({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, accessIssue = false }: { status: string; accessIssue?: boolean }) {
   if (status === 'completed') {
     return (
       <Badge variant="outline" className="border-green-500/40 text-green-600">
@@ -280,7 +325,7 @@ function StatusBadge({ status }: { status: string }) {
   if (status === 'failed') {
     return (
       <Badge variant="outline" className="border-red-500/40 text-red-600">
-        Failed
+        {accessIssue ? 'Needs access' : 'Failed'}
       </Badge>
     );
   }
@@ -288,7 +333,7 @@ function StatusBadge({ status }: { status: string }) {
     return (
       <Badge variant="outline" className="border-amber-500/40 text-amber-600">
         <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-        {status === 'analyzing' ? 'Analyzing' : 'Running'}
+        {status === 'pending' ? 'Queued' : status === 'analyzing' ? 'Analyzing' : 'Crawling'}
       </Badge>
     );
   }
@@ -306,6 +351,8 @@ function AuditDetailView({
   onBack: () => void;
 }) {
   const [, setParams] = useSearchParams();
+  const qc = useQueryClient();
+  const { toast } = useToast();
   const { selectedPropertyId } = useProperty();
 
   const auditQuery = useQuery({
@@ -320,6 +367,20 @@ function AuditDetailView({
 
   const audit = auditQuery.data?.audit;
   const findings = useMemo(() => auditQuery.data?.findings || [], [auditQuery.data]);
+  const retryMutation = useMutation({
+    mutationFn: createAudit,
+    onSuccess: (newAudit) => {
+      qc.invalidateQueries({ queryKey: ['site-audits'] });
+      setParams({ view: 'audit', id: newAudit.id });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: 'Could not restart audit',
+        description: err.message || 'Please try again in a moment.',
+        variant: 'destructive',
+      });
+    },
+  });
 
   // Drive the Action Board tab count using the same query the kanban uses,
   // so manual tasks are included.
@@ -435,7 +496,7 @@ function AuditDetailView({
             >
               <ExternalLink className="h-4 w-4" />
             </a>
-            <StatusBadge status={audit.status} />
+            <StatusBadge status={audit.status} accessIssue={isAccessIssue(audit)} />
           </div>
           <p className="text-sm text-muted-foreground mt-1">{formatDate(audit.created_at)}</p>
         </div>
@@ -458,11 +519,20 @@ function AuditDetailView({
               <Loader2 className="h-8 w-8 animate-spin text-primary flex-shrink-0" />
               <div>
                 <p className="font-medium">
-                  {audit.status === 'analyzing' ? 'Analyzing results…' : 'Running Lighthouse audit…'}
+                  {audit.status === 'pending'
+                    ? 'Queued for crawling...'
+                    : audit.status === 'analyzing'
+                      ? 'Analyzing crawl data...'
+                      : 'Crawling site...'}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Google's PageSpeed engine is rendering your homepage in a real Chromium browser. This usually takes 20–40 seconds.
+                  DataForSEO is crawling in the background. You can leave this page open or come back later; completion no longer depends on browser polling.
                 </p>
+                {audit.pages_crawled > 0 && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {audit.pages_crawled} page{audit.pages_crawled === 1 ? '' : 's'} crawled so far.
+                  </p>
+                )}
               </div>
             </div>
           </CardContent>
@@ -472,14 +542,35 @@ function AuditDetailView({
       {/* FAILED STATE */}
       {audit.status === 'failed' && (
         <Card className="border-red-500/40">
-          <CardContent className="p-6 flex items-start gap-3">
+          <CardContent className="p-6 flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium">Audit failed</p>
+              <p className="font-medium">{isAccessIssue(audit) ? 'Needs crawler access' : 'Audit failed'}</p>
               <p className="text-sm text-muted-foreground mt-1">
-                {audit.error_message || 'Something went wrong. Try running another audit.'}
+                {diagnosticMessage(audit) || 'Something went wrong. Try running another audit.'}
               </p>
+              {audit.crawl_diagnostics?.extended_crawl_status && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  DataForSEO status: {audit.crawl_diagnostics.extended_crawl_status}
+                </p>
+              )}
             </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1 flex-shrink-0"
+              disabled={retryMutation.isPending}
+              onClick={() => retryMutation.mutate(audit.domain)}
+            >
+              {retryMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Retry
+            </Button>
           </CardContent>
         </Card>
       )}

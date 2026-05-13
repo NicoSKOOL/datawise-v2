@@ -46,7 +46,7 @@ export async function authMiddleware(request: Request, env: Env): Promise<AuthUs
 
   // Fetch user
   const user = await env.DB.prepare(
-    'SELECT id, google_id, email, name, avatar_url, subscription_tier, is_community_member, credits_used FROM users WHERE id = ?'
+    'SELECT id, google_id, email, name, avatar_url, subscription_tier, is_community_member, is_admin, credits_used, default_location_code, default_language_code FROM users WHERE id = ?'
   ).bind(userId).first();
 
   if (!user) return null;
@@ -59,6 +59,9 @@ export async function authMiddleware(request: Request, env: Env): Promise<AuthUs
     avatar_url: user.avatar_url as string,
     subscription_tier: user.subscription_tier as string,
     is_community_member: Boolean(user.is_community_member),
+    is_admin: Boolean(user.is_admin),
     credits_used: (user.credits_used as number) || 0,
+    default_location_code: Number(user.default_location_code || 2840),
+    default_language_code: (user.default_language_code as string) || 'en',
   };
 }

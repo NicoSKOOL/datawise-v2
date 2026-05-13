@@ -24,7 +24,10 @@ export interface AuthUser {
   avatar_url: string;
   subscription_tier: string;
   is_community_member: boolean;
+  is_admin?: boolean;
   credits_used: number;
+  default_location_code?: number;
+  default_language_code?: string;
 }
 
 // Generate a random session token
@@ -181,4 +184,37 @@ export async function handleMe(user: AuthUser): Promise<Response> {
   return new Response(JSON.stringify({ user }), {
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// PATCH /auth/defaults - Update user-level location/language defaults
+export async function handleUpdateDefaults(
+  request: Request,
+  env: Env,
+  user: AuthUser
+): Promise<Response> {
+  const body = await request.json().catch(() => ({})) as {
+    default_location_code?: number;
+    default_language_code?: string;
+  };
+  const locationCode = Number(body.default_location_code || 2840);
+  const languageCode = String(body.default_language_code || 'en').slice(0, 16);
+
+  await env.DB.prepare(
+    `UPDATE users
+     SET default_location_code = ?, default_language_code = ?, updated_at = datetime('now')
+     WHERE id = ?`
+  )
+    .bind(locationCode, languageCode, user.id)
+    .run();
+
+  return new Response(
+    JSON.stringify({
+      user: {
+        ...user,
+        default_location_code: locationCode,
+        default_language_code: languageCode,
+      },
+    }),
+    { headers: { 'Content-Type': 'application/json' } }
+  );
 }

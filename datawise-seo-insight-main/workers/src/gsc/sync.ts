@@ -414,3 +414,80 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
     offset: effectiveOffset,
   }), { headers: { 'Content-Type': 'application/json' } });
 }
+
+export async function syncProperty(env: Env, userId: string, propertyId: string): Promise<Response> {
+  const request = new Request('https://internal/gsc/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ property_id: propertyId }),
+  });
+  const response = await handleGSCSync(request, env, userId);
+  if (!response.ok) {
+    console.error(`GSC sync failed for property ${propertyId}: ${response.status}`);
+  }
+  return response;
+}
+
+// GET /gsc/sitemaps?property_id=xxx
+// Returns a compact indexation summary for the dashboard. GSC's public API does
+// not expose per-page indexing state here, so search-visible pages are counted
+// from synced Search Analytics rows and non-indexed is left at zero unless no
+// page data exists.
+export async function handleGSCSitemaps(request: Request, env: Env, userId: string): Promise<Response> {
+  const url = new URL(request.url);
+  const propertyId = url.searchParams.get('property_id');
+  if (!propertyId) {
+    return new Response(JSON.stringify({ error: 'property_id required' }), { status: 400 });
+  }
+
+  const property = await env.DB.prepare(
+    'SELECT id, kind, site_url, last_synced_at FROM gsc_properties WHERE id = ? AND user_id = ?'
+  ).bind(propertyId, userId).first();
+  if (!property) {
+    return new Response(JSON.stringify({ error: 'Property not found' }), { status: 404 });
+  }
+  if (property.kind === 'manual') {
+    return new Response(JSON.stringify({
+      status: 'manual_property',
+      message: 'Manual properties do not have Google Search Console indexation data.',
+      total: 0,
+      indexed: 0,
+      search_visible_pages: 0,
+      not_indexed: 0,
+      indexed_pct: 0,
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const pageCount = await env.DB.prepare(`
+    SELECT COUNT(DISTINCT page) as count
+    FROM gsc_search_data
+    WHERE property_id = ?
+      AND page IS NOT NULL
+      AND page != '__7d_query__'
+      AND query != '__daily_total__'
+  `).bind(propertyId).first();
+
+  const indexed = Number(pageCount?.count || 0);
+  if (!property.last_synced_at || indexed === 0) {
+    return new Response(JSON.stringify({
+      status: property.last_synced_at ? 'no_page_data' : 'needs_sync',
+      message: property.last_synced_at
+        ? 'No page-level Search Console data is available for this property yet.'
+        : 'Sync this property to load Search Console page data.',
+      total: indexed,
+      indexed,
+      search_visible_pages: indexed,
+      not_indexed: 0,
+      indexed_pct: indexed > 0 ? 100 : 0,
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
+  return new Response(JSON.stringify({
+    status: 'ok',
+    total: indexed,
+    indexed,
+    search_visible_pages: indexed,
+    not_indexed: 0,
+    indexed_pct: 100,
+  }), { headers: { 'Content-Type': 'application/json' } });
+}

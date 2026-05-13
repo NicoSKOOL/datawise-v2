@@ -173,6 +173,22 @@ export interface StructuredSEO {
   data_sources?: DataSourceStatus | null;
 }
 
+export interface CrawlDiagnostics {
+  reason_code: string;
+  user_message: string;
+  technical_message?: string | null;
+  task_status_message?: string | null;
+  crawl_progress?: string | null;
+  crawl_stop_reason?: string | null;
+  extended_crawl_status?: string | null;
+  crawl_gateway_address?: string | null;
+  pages_crawled?: number | null;
+  max_crawl_pages?: number | null;
+  domain_server?: string | null;
+  domain_ip?: string | null;
+  checks?: Record<string, unknown> | null;
+}
+
 export interface SiteAudit {
   id: string;
   user_id: string;
@@ -189,6 +205,7 @@ export interface SiteAudit {
   ai_analysis: AIAnalysis | null;
   seo_analysis: StructuredSEO | null;
   error_message: string | null;
+  crawl_diagnostics?: CrawlDiagnostics | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -205,6 +222,7 @@ export interface SiteAuditListItem {
   best_practices_score: number | null;
   pages_crawled: number;
   error_message: string | null;
+  crawl_diagnostics?: CrawlDiagnostics | null;
   created_at: string;
   completed_at: string | null;
   total_items: number;

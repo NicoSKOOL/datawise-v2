@@ -373,6 +373,240 @@ export async function handleListUsers(request: Request, env: Env, user: AuthUser
   });
 }
 
+export async function handleListPromoCodes(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT pc.*,
+      COUNT(pr.id) AS redemption_count,
+      0 AS conversion_count,
+      0 AS total_ltv,
+      NULL AS avg_days_to_convert
+    FROM promo_codes pc
+    LEFT JOIN promo_redemptions pr ON pr.promo_code_id = pc.id
+    GROUP BY pc.id
+    ORDER BY pc.created_at DESC
+  `).all();
+
+  return new Response(JSON.stringify({
+    promo_codes: results || [],
+    organic: { conversion_count: 0, total_ltv: 0 },
+    promo_total: { conversion_count: 0, total_ltv: 0 },
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+export async function handleCreatePromoCode(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  const body = await request.json().catch(() => ({})) as {
+    code?: string;
+    label?: string;
+    duration_hours?: number;
+    max_redemptions?: number | null;
+    expires_at?: string | null;
+  };
+  const code = body.code?.trim().toUpperCase();
+  const label = body.label?.trim();
+  if (!code || !label) {
+    return new Response(JSON.stringify({ error: 'code and label are required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const id = crypto.randomUUID().replace(/-/g, '');
+  await env.DB.prepare(`
+    INSERT INTO promo_codes (id, code, label, duration_hours, max_redemptions, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    code,
+    label,
+    Number(body.duration_hours || 48),
+    body.max_redemptions ?? null,
+    body.expires_at || null
+  ).run();
+
+  const promoCode = await env.DB.prepare('SELECT * FROM promo_codes WHERE id = ?').bind(id).first();
+  return new Response(JSON.stringify({ promo_code: promoCode }), {
+    status: 201,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function handleTogglePromoCode(
+  request: Request,
+  env: Env,
+  user: AuthUser,
+  codeId: string
+): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  await env.DB.prepare('UPDATE promo_codes SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?')
+    .bind(codeId)
+    .run();
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function handlePromoRedemptions(
+  request: Request,
+  env: Env,
+  user: AuthUser,
+  codeId: string
+): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  const { results } = await env.DB.prepare(`
+    SELECT pr.id,
+      u.email AS user_email,
+      u.name AS user_name,
+      pr.activated_at,
+      pr.expires_at,
+      CASE WHEN datetime(pr.expires_at) < datetime('now') THEN 1 ELSE 0 END AS is_expired,
+      0 AS converted,
+      NULL AS converted_at
+    FROM promo_redemptions pr
+    JOIN users u ON u.id = pr.user_id
+    WHERE pr.promo_code_id = ?
+    ORDER BY pr.activated_at DESC
+  `).bind(codeId).all();
+  return new Response(JSON.stringify({ redemptions: results || [] }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+export async function handleConversionAnalytics(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  const total = await env.DB.prepare('SELECT COUNT(*) AS count FROM users').first();
+  const paid = await env.DB.prepare("SELECT COUNT(*) AS count FROM users WHERE subscription_tier IN ('pro','community')").first();
+  const tiers = await env.DB.prepare('SELECT subscription_tier, COUNT(*) AS count FROM users GROUP BY subscription_tier').all();
+  return new Response(JSON.stringify({
+    overview: {
+      free_to_paid: Number(paid?.count || 0),
+      churned_back: 0,
+      converted_users: Number(paid?.count || 0),
+      total_users: Number(total?.count || 0),
+      conversion_rate: Number(total?.count || 0) ? ((Number(paid?.count || 0) / Number(total?.count || 0)) * 100).toFixed(1) : '0.0',
+    },
+    promo_funnel: { total_promo_users: 0, promo_then_converted: 0, promo_conversion_rate: '0.0' },
+    tier_distribution: tiers.results || [],
+    monthly_conversions: [],
+    conversions_by_source: [],
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+function analyticsRange(request: Request): { from: string; to: string } {
+  const url = new URL(request.url);
+  const to = url.searchParams.get('to') || new Date().toISOString().slice(0, 10);
+  const from = url.searchParams.get('from') || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return { from, to };
+}
+
+export async function handleTrafficAnalytics(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  const range = analyticsRange(request);
+  const totals = await env.DB.prepare(`
+    SELECT COUNT(*) AS pageviews, COUNT(DISTINCT session_id) AS sessions, COUNT(DISTINCT user_id) AS logged_in_users
+    FROM pageviews WHERE date(created_at) BETWEEN ? AND ?
+  `).bind(range.from, range.to).first();
+  const sources = await env.DB.prepare(`
+    SELECT COALESCE(utm_source, referrer_host, 'direct') AS source, COUNT(*) AS pageviews, COUNT(DISTINCT session_id) AS sessions
+    FROM pageviews WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY source ORDER BY pageviews DESC LIMIT 20
+  `).bind(range.from, range.to).all();
+  const daily = await env.DB.prepare(`
+    SELECT date(created_at) AS day, COUNT(*) AS pageviews, COUNT(DISTINCT session_id) AS sessions
+    FROM pageviews WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY day ORDER BY day ASC
+  `).bind(range.from, range.to).all();
+  const topPaths = await env.DB.prepare(`
+    SELECT path, COUNT(*) AS pageviews, COUNT(DISTINCT session_id) AS sessions
+    FROM pageviews WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY path ORDER BY pageviews DESC LIMIT 20
+  `).bind(range.from, range.to).all();
+  const countries = await env.DB.prepare(`
+    SELECT COALESCE(country, 'unknown') AS country, COUNT(DISTINCT session_id) AS sessions
+    FROM pageviews WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY country ORDER BY sessions DESC LIMIT 20
+  `).bind(range.from, range.to).all();
+
+  return new Response(JSON.stringify({
+    range,
+    totals: {
+      pageviews: Number(totals?.pageviews || 0),
+      sessions: Number(totals?.sessions || 0),
+      logged_in_users: Number(totals?.logged_in_users || 0),
+    },
+    sources: sources.results || [],
+    daily: daily.results || [],
+    top_paths: topPaths.results || [],
+    countries: countries.results || [],
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+export async function handleSignupAnalytics(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  const range = analyticsRange(request);
+  const totals = await env.DB.prepare(`
+    SELECT COUNT(*) AS total_signups,
+      SUM(CASE WHEN subscription_tier IN ('pro','community') THEN 1 ELSE 0 END) AS paid_signups,
+      SUM(CASE WHEN signup_utm_source IS NULL AND signup_referrer IS NULL THEN 1 ELSE 0 END) AS unattributed
+    FROM users WHERE date(created_at) BETWEEN ? AND ?
+  `).bind(range.from, range.to).first();
+  const bySource = await env.DB.prepare(`
+    SELECT signup_utm_source AS utm_source, signup_referrer AS referrer, COUNT(*) AS signups,
+      SUM(CASE WHEN subscription_tier IN ('pro','community') THEN 1 ELSE 0 END) AS paid
+    FROM users WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY signup_utm_source, signup_referrer ORDER BY signups DESC LIMIT 20
+  `).bind(range.from, range.to).all();
+  const byCampaign = await env.DB.prepare(`
+    SELECT COALESCE(signup_utm_campaign, 'none') AS campaign, COUNT(*) AS signups,
+      SUM(CASE WHEN subscription_tier IN ('pro','community') THEN 1 ELSE 0 END) AS paid
+    FROM users WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY campaign ORDER BY signups DESC LIMIT 20
+  `).bind(range.from, range.to).all();
+  const byMedium = await env.DB.prepare(`
+    SELECT COALESCE(signup_utm_medium, 'none') AS medium, COUNT(*) AS signups
+    FROM users WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY medium ORDER BY signups DESC LIMIT 20
+  `).bind(range.from, range.to).all();
+  const daily = await env.DB.prepare(`
+    SELECT date(created_at) AS day, COUNT(*) AS signups
+    FROM users WHERE date(created_at) BETWEEN ? AND ?
+    GROUP BY day ORDER BY day ASC
+  `).bind(range.from, range.to).all();
+  const recent = await env.DB.prepare(`
+    SELECT email, name, subscription_tier, signup_utm_source, signup_utm_medium,
+      signup_utm_campaign, signup_referrer, signup_landing_path, created_at
+    FROM users WHERE date(created_at) BETWEEN ? AND ?
+    ORDER BY created_at DESC LIMIT 25
+  `).bind(range.from, range.to).all();
+
+  return new Response(JSON.stringify({
+    range,
+    totals: {
+      total_signups: Number(totals?.total_signups || 0),
+      paid_signups: Number(totals?.paid_signups || 0),
+      unattributed: Number(totals?.unattributed || 0),
+    },
+    by_source: bySource.results || [],
+    by_campaign: byCampaign.results || [],
+    by_medium: byMedium.results || [],
+    daily: daily.results || [],
+    recent_signups: recent.results || [],
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
 // Simple CSV line parser that handles quoted fields
 function parseCSVLine(line: string): string[] {
   const result: string[] = [];

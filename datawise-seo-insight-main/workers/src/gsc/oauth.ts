@@ -145,12 +145,12 @@ export async function refreshGSCToken(env: Env, userId: string): Promise<string 
 }
 
 // Fetch user's GSC properties and store in D1
-async function syncProperties(env: Env, userId: string, accessToken: string): Promise<void> {
+async function syncProperties(env: Env, userId: string, accessToken: string): Promise<number> {
   const response = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (!response.ok) return;
+  if (!response.ok) return 0;
 
   const data = await response.json() as { siteEntry?: Array<{ siteUrl: string; permissionLevel: string }> };
   const sites = data.siteEntry || [];
@@ -167,6 +167,7 @@ async function syncProperties(env: Env, userId: string, accessToken: string): Pr
       site.permissionLevel
     ).run();
   }
+  return sites.length;
 }
 
 // GET /gsc/properties - List user's connected GSC properties
@@ -183,6 +184,24 @@ export async function handleGSCProperties(env: Env, userId: string): Promise<Res
     connected: !!connection,
     properties: properties.results || [],
   }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// POST /gsc/properties/refresh - Refresh the property list from Google
+export async function handleGSCPropertiesRefresh(env: Env, userId: string): Promise<Response> {
+  const accessToken = await refreshGSCToken(env, userId);
+  if (!accessToken) {
+    return new Response(JSON.stringify({ error: 'GSC not connected or token expired. Please reconnect.' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const count = await syncProperties(env, userId, accessToken);
+  const properties = await env.DB.prepare(
+    'SELECT id, site_url, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
+  ).bind(userId).all();
+  return new Response(JSON.stringify({ success: true, count, properties: properties.results || [] }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 // PATCH /gsc/properties/:id - Update property color/enabled status

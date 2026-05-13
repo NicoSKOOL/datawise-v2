@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
+import { getChatOutputLanguageInstruction } from '../llm/output-language';
 import { detectPageUrl, fetchPageData, classifyPageType, analyzeBlogContent, analyzeServicePage, formatPageAnalysis, getTopPageUrls, getPageQueries } from './page-analyzer';
 
 const SYSTEM_PROMPT = `You are a concise SEO analyst. The user's Google Search Console data is provided below. You have COMPLETE data. Answer every question directly from this data.
@@ -26,11 +27,12 @@ GLOSSARY: query = search term, clicks = site visits from Google, impressions = t
 
 // POST /chat - Stream a chat response with GSC context
 export async function handleChat(request: Request, env: Env, userId: string): Promise<Response> {
-  const { message, conversation_id, property_id, llm_config } = await request.json() as {
+  const { message, conversation_id, property_id, llm_config, output_language } = await request.json() as {
     message: string;
     conversation_id?: string;
     property_id?: string;
     llm_config?: UserLLMConfig;
+    output_language?: unknown;
   };
 
   if (!message) {
@@ -59,7 +61,7 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
   ).bind(convId).all();
 
   // Build the combined system prompt with GSC data inline
-  let fullSystemPrompt = SYSTEM_PROMPT;
+  let fullSystemPrompt = `${SYSTEM_PROMPT}\n\n${getChatOutputLanguageInstruction(output_language)}`;
 
   if (property_id) {
     const gscContext = await buildGSCContext(env, userId, property_id);
@@ -306,7 +308,7 @@ async function buildGSCContext(env: Env, userId: string, propertyId: string): Pr
 }
 
 // GET /chat/conversations - List user's conversations
-export async function handleListConversations(env: Env, userId: string): Promise<Response> {
+export async function handleListConversations(request: Request, env: Env, userId: string): Promise<Response> {
   const conversations = await env.DB.prepare(`
     SELECT c.id, c.title, c.property_id, c.updated_at, p.site_url as property_url
     FROM chat_conversations c
@@ -338,4 +340,51 @@ export async function handleGetConversation(env: Env, userId: string, conversati
     conversation,
     messages: messages.results,
   }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// PATCH /chat/conversations/:id - Rename a conversation
+export async function handleRenameConversation(
+  request: Request,
+  env: Env,
+  userId: string,
+  conversationId: string
+): Promise<Response> {
+  const body = await request.json().catch(() => ({})) as { title?: string };
+  const title = body.title?.trim();
+  if (!title) {
+    return new Response(JSON.stringify({ error: 'Title required' }), { status: 400 });
+  }
+
+  const result = await env.DB.prepare(
+    `UPDATE chat_conversations
+     SET title = ?, updated_at = datetime('now')
+     WHERE id = ? AND user_id = ?`
+  ).bind(title.slice(0, 120), conversationId, userId).run();
+
+  if (!((result.meta as any)?.changes > 0)) {
+    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+  }
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// DELETE /chat/conversations/:id - Delete a conversation and its messages
+export async function handleDeleteConversation(
+  env: Env,
+  userId: string,
+  conversationId: string
+): Promise<Response> {
+  const conversation = await env.DB.prepare(
+    'SELECT id FROM chat_conversations WHERE id = ? AND user_id = ?'
+  ).bind(conversationId, userId).first();
+  if (!conversation) {
+    return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+  }
+
+  await env.DB.prepare('DELETE FROM chat_messages WHERE conversation_id = ?').bind(conversationId).run();
+  await env.DB.prepare('DELETE FROM chat_conversations WHERE id = ?').bind(conversationId).run();
+  return new Response(JSON.stringify({ success: true }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
 }

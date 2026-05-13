@@ -146,3 +146,30 @@ export async function handleCompetitorsDomain(request: Request, env: Env): Promi
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
+
+// POST /api/competitors/gap-analysis-ai
+// Lightweight companion endpoint that returns deterministic priority guidance
+// from the same gap-analysis inputs. It avoids blocking the Worker on an LLM
+// while still supporting the frontend route.
+export async function handleGapAnalysisAI(request: Request, env: Env): Promise<Response> {
+  const clone = request.clone();
+  const baseResponse = await handleKeywordGapAnalysis(clone, env);
+  if (!baseResponse.ok) return baseResponse;
+
+  const data = await baseResponse.json() as any;
+  const topGaps = (data.gaps || []).slice(0, 10);
+  return new Response(JSON.stringify({
+    ...data,
+    ai_summary: {
+      headline: topGaps.length
+        ? `Prioritize ${topGaps.length} competitor keywords with visible demand.`
+        : 'No major missing competitor keyword gaps found.',
+      priorities: topGaps.map((item: any) => ({
+        keyword: item.keyword,
+        search_volume: item.search_volume,
+        competitor_position: item.competitor_position,
+        action: 'Create or improve a page that directly targets this query and covers the matching search intent.',
+      })),
+    },
+  }), { headers: { 'Content-Type': 'application/json' } });
+}

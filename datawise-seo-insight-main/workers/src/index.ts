@@ -111,6 +111,7 @@ import {
   handleListActionItems, handleUpdateActionItem, handleDeleteActionItem,
   handleListPropertyTasks, handleCreateTask,
   handleUploadTaskAttachment, handleServeAttachment,
+  processSiteAuditQueue,
 } from './routes/site-audit';
 import { handleMetaCheck, handleFetchSitemap } from './routes/meta-checker';
 import {
@@ -134,6 +135,13 @@ import { handlePageview, prunePageviews } from './routes/track';
 
 export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    const auditQueue = await processSiteAuditQueue(env, { batchSize: 5 });
+    if (auditQueue.processed || auditQueue.timed_out) {
+      console.log(
+        `Site audit queue processed: ${auditQueue.processed} processed, ${auditQueue.completed} completed, ${auditQueue.failed} failed, ${auditQueue.timed_out} timed out`
+      );
+    }
+
     // Daily GSC re-sync (runs once a day, separate from the 6h email cron).
     if (event.cron === '0 11 * * *') {
       await runDailyGSCSync(env);
@@ -141,6 +149,8 @@ export default {
     }
 
     // Default cron (every 6h): email sequences + pageview pruning.
+    if (event.cron !== '0 */6 * * *') return;
+
     const result = await processEmailSequences(env);
     console.log(`Email sequences processed: ${result.sent} sent, ${result.errors} errors`);
     try {
@@ -906,7 +916,7 @@ export default {
 
       // --- Chat ---
       if (path === '/chat' && method === 'POST') {
-        return addCors(await handleChat(request, env, ctx, user.id));
+        return addCors(await handleChat(request, env, user.id));
       }
       if (path === '/chat/conversations' && method === 'GET') {
         return addCors(await handleListConversations(request, env, user.id));
