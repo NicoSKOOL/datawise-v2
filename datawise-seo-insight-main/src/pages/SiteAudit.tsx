@@ -40,6 +40,7 @@ import { CategorySection } from '@/components/site-audit/CategorySection';
 import { SEODashboard } from '@/components/site-audit/SEODashboard';
 import { SiteAuditErrorBoundary } from '@/components/site-audit/ErrorBoundary';
 import { MetaChecker } from '@/components/site-audit/MetaChecker';
+import DotLottieLoader from '@/components/DotLottieLoader';
 import { useProperty } from '@/contexts/PropertyContext';
 import { sanitizeDomain } from '@/lib/utils';
 
@@ -515,9 +516,9 @@ function AuditDetailView({
       {isRunning && (
         <Card>
           <CardContent className="p-8">
-            <div className="flex items-center gap-4">
-              <Loader2 className="h-8 w-8 animate-spin text-primary flex-shrink-0" />
-              <div>
+            <div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:items-center sm:text-left">
+              <DotLottieLoader size={112} className="flex-shrink-0" />
+              <div className="max-w-2xl">
                 <p className="font-medium">
                   {audit.status === 'pending'
                     ? 'Queued for crawling...'
@@ -526,7 +527,7 @@ function AuditDetailView({
                       : 'Crawling site...'}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  DataForSEO is crawling in the background. You can leave this page open or come back later; completion no longer depends on browser polling.
+                  DataForSEO is crawling in the background. You can leave this page open or come back later.
                 </p>
                 {audit.pages_crawled > 0 && (
                   <p className="text-xs text-muted-foreground mt-2">

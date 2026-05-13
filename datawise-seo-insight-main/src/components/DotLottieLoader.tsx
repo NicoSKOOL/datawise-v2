@@ -28,7 +28,7 @@ export default function DotLottieLoader({ className = "", size = 100 }: DotLotti
       containerRef.current.textContent = '';
       
       const dotlottieElement = document.createElement('dotlottie-wc');
-      dotlottieElement.setAttribute('src', 'https://lottie.host/80b5bd1a-bb00-4ea6-b321-f13311c6bb04/Ty4VAFal7W.lottie');
+      dotlottieElement.setAttribute('src', '/loading.lottie');
       dotlottieElement.style.width = `${validatedSize}px`;
       dotlottieElement.style.height = `${validatedSize}px`;
       dotlottieElement.setAttribute('autoplay', '');

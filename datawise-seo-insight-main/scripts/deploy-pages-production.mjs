@@ -18,6 +18,7 @@ const EXPECTED_BRANCH = 'production';
 const EXPECTED_API_URL = 'https://datawise-api.nico-510.workers.dev';
 const FORBIDDEN_BUNDLE_MARKERS = [
   ['Local development API URL', 'http://localhost:8787'],
+  ['Removed Site Audit browser-polling wording', 'completion no longer depends on browser polling'],
 ];
 const REQUIRED_BUNDLE_MARKERS = [
   ['Content Writer route', '/content-writer'],
@@ -53,10 +54,14 @@ const REQUIRED_SOURCE_MARKERS = [
   ['AI Visibility syncs sidebar tab params', 'src/pages/AIVisibility.tsx', 'useTabParam'],
   ['AI Visibility Brand Tracker tab trigger', 'src/pages/AIVisibility.tsx', '<TabsTrigger value="brand-tracker">Brand Tracker</TabsTrigger>'],
   ['AI Visibility Brand Tracker tab panel', 'src/pages/AIVisibility.tsx', '<BrandTracker />'],
+  ['Site Audit imports Lottie loader', 'src/pages/SiteAudit.tsx', "import DotLottieLoader from '@/components/DotLottieLoader';"],
+  ['Site Audit running state renders Lottie loader', 'src/pages/SiteAudit.tsx', '<DotLottieLoader size={112}'],
+  ['DotLottie loader uses bundled asset', 'src/components/DotLottieLoader.tsx', "dotlottieElement.setAttribute('src', '/loading.lottie');"],
 ];
 const FORBIDDEN_SOURCE_MARKERS = [
   ['Dashboard must not render rank position distribution', 'src/pages/Dashboard.tsx', '<RankDistributionChart'],
   ['Dashboard must not import rank distribution chart', 'src/pages/Dashboard.tsx', "import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';"],
+  ['Site Audit must not mention browser polling in user copy', 'src/pages/SiteAudit.tsx', 'completion no longer depends on browser polling'],
 ];
 
 function run(command, commandArgs, options = {}) {
