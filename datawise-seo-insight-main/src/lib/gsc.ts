@@ -61,6 +61,16 @@ export interface GSCOverviewData {
   }>;
 }
 
+export interface IndexationData {
+  status?: 'ok' | 'needs_sync' | 'manual_property' | 'no_page_data' | 'sitemap_unavailable';
+  message?: string;
+  total: number;
+  indexed: number;
+  search_visible_pages?: number;
+  not_indexed: number;
+  indexed_pct: number;
+}
+
 export async function getGSCProperties() {
   return api<{ connected: boolean; properties: GSCProperty[] }>('/gsc/properties');
 }
@@ -100,6 +110,10 @@ export async function syncGSCProperty(propertyId: string) {
 
 export async function getGSCData(propertyId: string) {
   return api<GSCOverviewData>(`/gsc/data?property_id=${propertyId}`);
+}
+
+export async function getGSCSitemaps(propertyId: string) {
+  return api<IndexationData>(`/gsc/sitemaps?property_id=${propertyId}`);
 }
 
 export type GSCQueryFilter = 'all' | 'top10' | 'page2' | 'opportunities';

@@ -43,7 +43,7 @@ export default function KeywordResearch() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList className="flex h-auto flex-wrap justify-start">
+        <TabsList className="inline-flex h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="related">Related</TabsTrigger>
           <TabsTrigger value="suggestions">Suggestions</TabsTrigger>

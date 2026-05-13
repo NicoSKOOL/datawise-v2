@@ -31,15 +31,26 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric green state', 'bg-emerald-50'],
   ['Keyword metric amber state', 'bg-amber-50'],
   ['Keyword metric red state', 'bg-red-50'],
+  ['Dashboard indexation chart title', 'Search-visible pages'],
+  ['Dashboard sitemap-only legend', 'Sitemap-only'],
 ];
 const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
   ['Keyword Research imports Fan-out Queries', 'src/pages/KeywordResearch.tsx', "import FanOutQueries from './FanOutQueries';"],
+  ['Keyword Research tabs stay inline sized', 'src/pages/KeywordResearch.tsx', 'inline-flex h-auto max-w-full flex-wrap justify-start'],
   ['Keyword Research People Also Ask tab trigger', 'src/pages/KeywordResearch.tsx', '<TabsTrigger value="people-also-ask">People Also Ask</TabsTrigger>'],
   ['Keyword Research Fan-out Queries tab trigger', 'src/pages/KeywordResearch.tsx', '<TabsTrigger value="fan-out">Fan-out Queries</TabsTrigger>'],
   ['Keyword Research People Also Ask tab panel', 'src/pages/KeywordResearch.tsx', '<PeopleAlsoAsk />'],
   ['Keyword Research Fan-out Queries tab panel', 'src/pages/KeywordResearch.tsx', '<FanOutQueries />'],
   ['Keyword Research sidebar tab sync', 'src/pages/KeywordResearch.tsx', 'useSearchParams'],
+  ['Dashboard uses indexation chart', 'src/pages/Dashboard.tsx', "import IndexationChart from '@/components/dashboard/IndexationChart';"],
+  ['Dashboard fetches sitemap indexation data', 'src/pages/Dashboard.tsx', 'getGSCSitemaps'],
+  ['Dashboard renders indexation chart', 'src/pages/Dashboard.tsx', '<IndexationChart'],
+  ['GSC lib exposes sitemap indexation API', 'src/lib/gsc.ts', 'getGSCSitemaps'],
+];
+const FORBIDDEN_SOURCE_MARKERS = [
+  ['Dashboard must not render rank position distribution', 'src/pages/Dashboard.tsx', '<RankDistributionChart'],
+  ['Dashboard must not import rank distribution chart', 'src/pages/Dashboard.tsx', "import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';"],
 ];
 
 function run(command, commandArgs, options = {}) {
@@ -131,6 +142,7 @@ async function validateDist(distDir) {
 
 async function validateSourceMarkers() {
   const missing = [];
+  const forbidden = [];
 
   for (const [name, relativePath, marker] of REQUIRED_SOURCE_MARKERS) {
     const source = await readFile(path.join(appRoot, relativePath), 'utf8');
@@ -139,13 +151,22 @@ async function validateSourceMarkers() {
     }
   }
 
-  if (missing.length > 0) {
+  for (const [name, relativePath, marker] of FORBIDDEN_SOURCE_MARKERS) {
+    const source = await readFile(path.join(appRoot, relativePath), 'utf8');
+    if (source.includes(marker)) {
+      forbidden.push(`${name}: ${relativePath} must not include ${marker}`);
+    }
+  }
+
+  if (missing.length > 0 || forbidden.length > 0) {
     throw new Error(
       [
         'Production deploy guard failed.',
-        'Missing required source markers:',
+        missing.length ? 'Missing required source markers:' : '',
         ...missing.map((item) => `- ${item}`),
-      ].join('\n'),
+        forbidden.length ? 'Forbidden source markers found:' : '',
+        ...forbidden.map((item) => `- ${item}`),
+      ].filter(Boolean).join('\n'),
     );
   }
 }
@@ -179,6 +200,7 @@ async function archiveDist({ distDir, branch, commit, appStatus }) {
       deploymentUrl: 'https://079cdbe3.datawise-118.pages.dev',
     },
     requiredSourceMarkers: REQUIRED_SOURCE_MARKERS.map(([name, file, marker]) => ({ name, file, marker })),
+    forbiddenSourceMarkers: FORBIDDEN_SOURCE_MARKERS.map(([name, file, marker]) => ({ name, file, marker })),
     requiredBundleMarkers: REQUIRED_BUNDLE_MARKERS.map(([name, marker]) => ({ name, marker })),
     forbiddenBundleMarkers: FORBIDDEN_BUNDLE_MARKERS.map(([name, marker]) => ({ name, marker })),
     archiveDistDir,

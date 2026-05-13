@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProperty } from '@/contexts/PropertyContext';
 import { fetchDashboardSummary } from '@/lib/dataforseo';
-import { getGSCData, type GSCOverviewData } from '@/lib/gsc';
+import { getGSCData, getGSCSitemaps, syncGSCProperty, type GSCOverviewData, type IndexationData } from '@/lib/gsc';
 import type { DashboardSummary } from '@/types/rank-tracking';
 import type { AnimatedIconHandle } from '@/components/icons/types';
 import MessageCircleIcon from '@/components/icons/message-circle-icon';
@@ -18,7 +18,7 @@ import CheckedIcon from '@/components/icons/checked-icon';
 import DashboardKPICards from '@/components/dashboard/DashboardKPICards';
 import TopMoversTable from '@/components/dashboard/TopMoversTable';
 import GSCTrendChart from '@/components/dashboard/GSCTrendChart';
-import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';
+import IndexationChart from '@/components/dashboard/IndexationChart';
 
 const quickActions = [
   {
@@ -114,7 +114,9 @@ export default function Dashboard() {
   const { selectedProperty, connected: gscConnected } = useProperty();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [gscOverview, setGscOverview] = useState<GSCOverviewData | null>(null);
+  const [indexation, setIndexation] = useState<IndexationData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
   const loadDashboardData = useCallback(async () => {
     setLoading(true);
@@ -124,12 +126,20 @@ export default function Dashboard() {
 
       if (selectedProperty) {
         try {
-          const overview = await getGSCData(selectedProperty.id);
+          const [overview, indexationData] = await Promise.all([
+            getGSCData(selectedProperty.id).catch(() => null),
+            getGSCSitemaps(selectedProperty.id).catch(() => null),
+          ]);
           if (overview?.query_summary) setGscOverview(overview);
           else setGscOverview(null);
-        } catch { setGscOverview(null); }
+          setIndexation(indexationData);
+        } catch {
+          setGscOverview(null);
+          setIndexation(null);
+        }
       } else {
         setGscOverview(null);
+        setIndexation(null);
       }
     } finally {
       setLoading(false);
@@ -143,6 +153,18 @@ export default function Dashboard() {
   const hasData = summary?.has_projects || gscConnected;
 
   const gscTrendData = gscOverview?.daily_trend || [];
+
+  const handleSyncGSC = async () => {
+    if (!selectedProperty || syncing) return;
+
+    setSyncing(true);
+    try {
+      await syncGSCProperty(selectedProperty.id);
+      await loadDashboardData();
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -169,10 +191,11 @@ export default function Dashboard() {
 
           {/* Charts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {summary && summary.has_projects && (
-              <RankDistributionChart
-                distribution={summary.distribution}
-                rankingCount={summary.distribution.top3 + summary.distribution.top10 + summary.distribution.top20 + summary.distribution.top50 + summary.distribution.above50}
+            {gscConnected && (
+              <IndexationChart
+                data={indexation}
+                onSync={selectedProperty ? handleSyncGSC : undefined}
+                syncing={syncing}
               />
             )}
             <GSCTrendChart data={gscTrendData} />
