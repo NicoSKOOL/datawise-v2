@@ -11,6 +11,7 @@
 - Do not verify feature preservation with global bundle text alone. For Keyword Research specifically, the production deploy guard must verify `src/pages/KeywordResearch.tsx` renders the `People Also Ask` and `Fan-out Queries` tabs/panels and syncs sidebar `?tab=` links before deploy.
 - When adding tabs to Keyword Research, keep the tab list inline-sized (`inline-flex`), not row-filling (`flex`), or the muted tab background stretches across the whole content area. The deploy guard should check this class.
 - Dashboard must keep the GSC indexation chart (`Search-visible pages` / `Sitemap-only`) in the main chart row, not the rank-tracking `Position Distribution` chart. The deploy guard should block `RankDistributionChart` in `src/pages/Dashboard.tsx`.
+- AI Visibility must keep the newer Brand Tracker surface wired into `/ai-visibility?tab=brand-tracker`. The deploy guard must verify `AIVisibility.tsx` imports `BrandTracker`, renders the `brand-tracker` tab/panel, and syncs tab state with `useTabParam`; sidebar labels alone are not proof the page still renders the feature.
 
 ## Architecture
 - Project lives in `datawise-seo-insight-main/` subdirectory

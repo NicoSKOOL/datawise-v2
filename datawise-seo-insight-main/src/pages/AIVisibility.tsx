@@ -1,9 +1,13 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useTabParam } from '@/hooks/use-tab-param';
 import AIOverview from './AIOverview';
+import BrandTracker from './BrandTracker';
 import PeopleAlsoAsk from './PeopleAlsoAsk';
 import OnPageSEO from './OnPageSEO';
 
 export default function AIVisibility() {
+  const [activeTab, setActiveTab] = useTabParam('ai-overview');
+
   return (
     <div className="space-y-6">
       <div>
@@ -11,15 +15,19 @@ export default function AIVisibility() {
         <p className="text-muted-foreground">Monitor your presence in AI search results and audit your pages</p>
       </div>
 
-      <Tabs defaultValue="ai-overview" className="w-full">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList>
           <TabsTrigger value="ai-overview">AI Search Tracker</TabsTrigger>
+          <TabsTrigger value="brand-tracker">Brand Tracker</TabsTrigger>
           <TabsTrigger value="people-also-ask">People Also Ask</TabsTrigger>
           <TabsTrigger value="onpage-seo">On-Page SEO</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ai-overview" className="mt-6">
           <AIOverview />
+        </TabsContent>
+        <TabsContent value="brand-tracker" className="mt-6">
+          <BrandTracker />
         </TabsContent>
         <TabsContent value="people-also-ask" className="mt-6">
           <PeopleAlsoAsk />

@@ -26,6 +26,8 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Fan-out Queries surface', 'Fan-out Queries'],
   ['Content Planner surface', 'Content Planner'],
   ['Content Tools surface', 'Content Tools'],
+  ['AI Visibility Brand Tracker tab', 'Brand Tracker'],
+  ['AI Visibility Brand Tracker answer table', 'LLM answers mentioning you'],
   ['Production Worker API URL', EXPECTED_API_URL],
   ['Keyword CPC tooltip text', 'Green means higher CPC and stronger commercial value.'],
   ['Keyword metric green state', 'bg-emerald-50'],
@@ -47,6 +49,10 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Dashboard fetches sitemap indexation data', 'src/pages/Dashboard.tsx', 'getGSCSitemaps'],
   ['Dashboard renders indexation chart', 'src/pages/Dashboard.tsx', '<IndexationChart'],
   ['GSC lib exposes sitemap indexation API', 'src/lib/gsc.ts', 'getGSCSitemaps'],
+  ['AI Visibility imports Brand Tracker', 'src/pages/AIVisibility.tsx', "import BrandTracker from './BrandTracker';"],
+  ['AI Visibility syncs sidebar tab params', 'src/pages/AIVisibility.tsx', 'useTabParam'],
+  ['AI Visibility Brand Tracker tab trigger', 'src/pages/AIVisibility.tsx', '<TabsTrigger value="brand-tracker">Brand Tracker</TabsTrigger>'],
+  ['AI Visibility Brand Tracker tab panel', 'src/pages/AIVisibility.tsx', '<BrandTracker />'],
 ];
 const FORBIDDEN_SOURCE_MARKERS = [
   ['Dashboard must not render rank position distribution', 'src/pages/Dashboard.tsx', '<RankDistributionChart'],
