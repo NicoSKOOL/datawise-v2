@@ -14,6 +14,7 @@
 - AI Visibility must keep the newer Brand Tracker surface wired into `/ai-visibility?tab=brand-tracker`. The deploy guard must verify `AIVisibility.tsx` imports `BrandTracker`, renders the `brand-tracker` tab/panel, and syncs tab state with `useTabParam`; sidebar labels alone are not proof the page still renders the feature.
 - Site Audit running states should keep the bundled `/loading.lottie` animation visible. When changing async audit copy, avoid exposing implementation phrases such as "browser polling" in user-facing text, and guard both the Lottie loader and forbidden wording before deploy.
 - After a Pages deploy, an already-open SPA tab can keep running the old hashed JS bundle even when live HTML points at the new bundle. Keep the deploy refresh guard in `App.tsx`, and if a user is checking immediately after deploy, tell them to hard refresh or open the cache-busted URL before assuming production still has old copy.
+- Admin access must bypass the free credit gate in both places: Worker `checkAndDeductCredit` and frontend `AuthContext` credit display. An admin row can still have `subscription_tier='free'` and `credits_used >= 5`, so checking only pro/community status will incorrectly block admin tools.
 
 ## Architecture
 - Project lives in `datawise-seo-insight-main/` subdirectory

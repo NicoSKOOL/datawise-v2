@@ -22,15 +22,17 @@ export function creditCostForRoute(path: string): number {
 
 export async function checkAndDeductCredit(env: Env, userId: string, cost = 1): Promise<CreditCheckResult> {
   const user = await env.DB.prepare(
-    'SELECT credits_used, is_community_member, subscription_tier, email, name, credits_exhausted_email_sent FROM users WHERE id = ?'
+    'SELECT credits_used, is_community_member, is_admin, subscription_tier, email, name, credits_exhausted_email_sent FROM users WHERE id = ?'
   ).bind(userId).first();
 
   if (!user) {
     return { allowed: false, credits_used: 0, credits_limit: FREE_CREDITS_LIMIT, unlimited: false };
   }
 
-  // Community members and pro users get unlimited access
+  // Admins, community members, and pro users get unlimited access.
   if (
+    user.is_admin === 1 ||
+    String(user.email || '').toLowerCase() === 'nico@airankingskool.com' ||
     user.is_community_member === 1 ||
     user.subscription_tier === 'pro' ||
     user.subscription_tier === 'community'

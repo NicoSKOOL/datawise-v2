@@ -3,9 +3,9 @@ import { Badge } from '@/components/ui/badge';
 import { Sparkles } from 'lucide-react';
 
 export function CreditsDisplay() {
-  const { isPro, isCommunityMember, creditsRemaining, creditsLimit } = useAuth();
+  const { isAdmin, isPro, isCommunityMember, creditsRemaining, creditsLimit } = useAuth();
 
-  if (isCommunityMember || isPro) {
+  if (isAdmin || isCommunityMember || isPro) {
     return (
       <Badge variant="secondary" className="gap-1.5">
         <Sparkles className="h-3.5 w-3.5" />

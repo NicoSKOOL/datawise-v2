@@ -250,7 +250,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const isCommunityMember = user?.is_community_member ?? false;
   const isPro = user?.subscription_tier === 'pro' || user?.subscription_tier === 'community';
-  const unlimited = isCommunityMember || isPro || promoActive;
+  const isAdmin = user?.is_admin === true || user?.email === 'nico@airankingskool.com';
+  const unlimited = isCommunityMember || isPro || isAdmin || promoActive;
   const creditsRemaining = unlimited ? FREE_CREDITS_LIMIT : Math.max(0, FREE_CREDITS_LIMIT - (user?.credits_used ?? 0));
 
   const value: AuthContextType = {
@@ -264,7 +265,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signOut,
     refreshUser,
     refreshPromoStatus,
-    isAdmin: user?.is_admin === true || user?.email === 'nico@airankingskool.com',
+    isAdmin,
     isCommunityMember,
     isPro,
     creditsRemaining,
