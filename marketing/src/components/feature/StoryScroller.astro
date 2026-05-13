@@ -1,0 +1,192 @@
+---
+interface StoryStep {
+  caption: string;
+  highlight: string;
+}
+
+interface Props {
+  steps: StoryStep[];
+  image: string;
+  imageAlt: string;
+  eyebrow?: string;
+  title?: string;
+}
+
+const { steps, image, imageAlt, eyebrow = 'How it works', title = 'Three steps from question to answer' } = Astro.props;
+---
+
+<section class="story-scroller" data-story-scroller>
+  <div class="story-inner">
+    <div class="story-header">
+      <span class="story-eyebrow">{eyebrow}</span>
+      <h2 class="story-title">{title}</h2>
+    </div>
+
+    <div class="story-stage">
+      <!-- Progress rail -->
+      <div class="story-rail" aria-hidden="true">
+        <div class="story-progress"></div>
+      </div>
+
+      <!-- Captions column -->
+      <div class="story-captions">
+        {steps.map((step, i) => (
+          <div class="story-step">
+            <div class="story-step-number">0{i + 1}</div>
+            <div>
+              <h3 class="story-step-caption">{step.caption}</h3>
+              <p class="story-step-highlight">{step.highlight}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <!-- Image column -->
+      <div class="story-image-wrap">
+        <img class="story-image" src={image} alt={imageAlt} loading="lazy" decoding="async" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .story-scroller {
+    position: relative;
+    background: var(--dw-bg);
+    overflow: hidden;
+  }
+
+  .story-inner {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 6rem 1rem;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  @media (min-width: 640px) {
+    .story-inner { padding: 6rem 1.5rem; }
+  }
+
+  .story-header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+  }
+
+  .story-eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dw-primary-highlight, #005232);
+    padding: 0.35rem 0.85rem;
+    border: 1px solid var(--dw-border);
+    border-radius: 999px;
+    background: var(--dw-accent-bg);
+  }
+
+  .story-title {
+    margin-top: 1rem;
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+    font-weight: 800;
+    line-height: 1.2;
+    color: var(--dw-text);
+  }
+
+  .story-stage {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2rem;
+    align-items: center;
+    flex: 1;
+    min-height: 0;
+  }
+
+  @media (min-width: 1024px) {
+    .story-stage {
+      grid-template-columns: auto minmax(300px, 0.9fr) minmax(0, 1.3fr);
+      gap: 3rem;
+    }
+  }
+
+  .story-rail {
+    width: 3px;
+    height: 70%;
+    max-height: 420px;
+    background: var(--dw-border);
+    border-radius: 999px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .story-progress {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, var(--dw-primary-highlight, #005232), rgba(46, 204, 113, 0.8));
+    transform-origin: top;
+    transform: scaleY(0);
+  }
+
+  .story-captions {
+    position: relative;
+    display: grid;
+    grid-template-rows: repeat(3, auto);
+    gap: 1.25rem;
+    align-content: center;
+  }
+
+  .story-step {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .story-step-number {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 2.25rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--dw-primary-highlight, #005232);
+    opacity: 0.6;
+    min-width: 3.25rem;
+  }
+
+  .story-step-caption {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--dw-text);
+    line-height: 1.25;
+  }
+
+  .story-step-highlight {
+    margin-top: 0.4rem;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: var(--dw-text-secondary);
+  }
+
+  .story-image-wrap {
+    display: none;
+    position: relative;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: var(--shadow-elevated, 0 20px 40px rgba(0, 0, 0, 0.12));
+    border: 1px solid var(--dw-border);
+    background: var(--dw-surface);
+  }
+
+  @media (min-width: 1024px) {
+    .story-image-wrap { display: block; }
+  }
+
+  .story-image {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+</style>

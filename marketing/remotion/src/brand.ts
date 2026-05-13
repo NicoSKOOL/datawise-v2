@@ -1,0 +1,15 @@
+export const brand = {
+  forest: '#005232',
+  forestLight: '#00653d',
+  forestGlow: 'rgba(0, 101, 61, 0.35)',
+  bg: '#0a0f0c',
+  bgElevated: '#101814',
+  surface: '#142019',
+  border: 'rgba(245, 247, 246, 0.08)',
+  text: '#f5f7f6',
+  textMuted: '#9ba3a0',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  fontHead: 'Manrope',
+  fontBody: 'Inter',
+} as const;

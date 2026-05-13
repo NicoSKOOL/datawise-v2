@@ -1,0 +1,128 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Badge from '../components/ui/Badge.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  date: Date;
+  author: string;
+  tags: string[];
+  image?: string;
+}
+
+const { title, description, date, author, tags, image } = Astro.props;
+
+const formattedDate = date.toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+---
+
+<BaseLayout title={title} description={description} ogImage={image}>
+  <!-- JSON-LD: Article -->
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": title,
+    "description": description,
+    "datePublished": date.toISOString(),
+    "author": {
+      "@type": "Person",
+      "name": author,
+      "url": "https://www.datawiseseo.com/about",
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "DataWise SEO",
+      "url": "https://www.datawiseseo.com",
+    },
+  })} />
+
+  <!-- Breadcrumb -->
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.datawiseseo.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Blog", "item": "https://www.datawiseseo.com/blog" },
+      { "@type": "ListItem", "position": 3, "name": title },
+    ],
+  })} />
+
+  <article class="pt-24 pb-16 lg:pt-32">
+    <div class="mx-auto max-w-3xl px-4">
+      <!-- Breadcrumb -->
+      <nav class="mb-6 text-sm text-[var(--color-text-muted)]">
+        <a href="/" class="hover:text-[var(--color-primary)] transition-colors">Home</a>
+        <span class="mx-2">/</span>
+        <a href="/blog" class="hover:text-[var(--color-primary)] transition-colors">Blog</a>
+        <span class="mx-2">/</span>
+        <span class="text-[var(--color-text-primary)]">{title}</span>
+      </nav>
+
+      <!-- Header -->
+      <header id="post-header" class="mb-10">
+        <div class="flex flex-wrap gap-2 mb-4">
+          {tags.map((tag) => (
+            <Badge variant="accent" size="sm">{tag}</Badge>
+          ))}
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold leading-tight">
+          {title}
+        </h1>
+        <div class="mt-4 flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
+          <span class="font-medium text-[var(--color-text-secondary)]">{author}</span>
+          <span>&middot;</span>
+          <time datetime={date.toISOString()}>{formattedDate}</time>
+        </div>
+      </header>
+
+      <!-- Content -->
+      <div class="prose max-w-none">
+        <slot />
+      </div>
+
+      <!-- Author bio -->
+      <div class="mt-12 p-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-elevated)] flex gap-4 items-start">
+        <div class="h-12 w-12 rounded-full bg-[var(--color-indigo)] flex items-center justify-center shrink-0">
+          <span class="text-white font-bold text-sm">NG</span>
+        </div>
+        <div>
+          <p class="font-semibold text-[var(--color-text-primary)]">{author}</p>
+          <p class="text-sm text-[var(--color-text-secondary)] mt-1">
+            Founder of DataWise SEO and the AI Ranking community. Writing about SEO, AI search, and data-driven optimization.
+          </p>
+        </div>
+      </div>
+
+      <!-- Footer CTA -->
+      <div class="mt-12 p-8 rounded-2xl bg-[var(--color-primary-50)] text-center post-cta">
+        <h2 class="text-2xl font-bold mb-3">
+          Put these insights into action
+        </h2>
+        <p class="text-sm text-[var(--color-text-secondary)] mb-6 max-w-lg mx-auto">
+          Join the AI Ranking community to get unlimited DataWise access, included with your membership. 7-day risk-free trial.
+        </p>
+        <a
+          href="https://www.skool.com/ai-ranking"
+          class="inline-flex items-center rounded-lg bg-[var(--color-primary)] px-6 py-3 text-base font-semibold text-white hover:bg-[var(--color-primary-light)] transition-all duration-200 hover:shadow-lg hover:shadow-[var(--color-primary)]/20"
+        >
+          Join AI Ranking
+        </a>
+      </div>
+    </div>
+  </article>
+</BaseLayout>
+
+<script>
+  import { gsap } from 'gsap';
+  import { fadeUp } from '../scripts/animations';
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!prefersReducedMotion) {
+    gsap.from('#post-header', { y: 20, opacity: 0, duration: 0.5, ease: 'power3.out' });
+  }
+  fadeUp('.post-cta');
+</script>

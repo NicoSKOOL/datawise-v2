@@ -1,0 +1,493 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Section from '../components/ui/Section.astro';
+import Button from '../components/ui/Button.astro';
+import Card from '../components/ui/Card.astro';
+import Icon from '../components/ui/Icon.astro';
+import Accordion from '../components/ui/Accordion.astro';
+
+// Reused from src/pages/pricing.astro — canonical answers about the community
+// and trial mechanics. Changes to those answers should be made in pricing.astro
+// and then copied here so the two pages stay aligned.
+const faqs = [
+  {
+    question: 'Is DataWise free?',
+    answer: 'DataWise itself is not sold separately. It is included at no extra cost inside the AI Ranking community on Skool. The community is $27/month. Skool does not offer true free trials, so you pay upfront at signup, but it is risk-free: if the community and the tool are not a fit in the first 7 days, DM Nico and he personally refunds you 100%, no questions asked. DataWise is the included perk, the community is the product.',
+  },
+  {
+    question: 'What exactly am I paying for?',
+    answer: 'The $27/month AI Ranking membership covers three things: (1) unlimited access to every DataWise tool for your whole team, (2) weekly strategy content and case studies from a decade of SEO practice, and (3) access to a community of SEO professionals plus direct access to the founder.',
+  },
+  {
+    question: 'How does the 7-day risk-free trial work?',
+    answer: 'Skool does not run true free trials, so when you join AI Ranking you pay the $27 upfront at signup and get full community access plus every DataWise tool immediately. If the community and the tool are not a fit for you in the first 7 days, send Nico a DM and he personally refunds you 100%, no questions asked. That is why we call it risk-free, not free.',
+  },
+  {
+    question: 'Can I use DataWise without joining the community?',
+    answer: 'DataWise is currently a community-member-only product. The AI Ranking community membership is the only way to get full access. This keeps the tool funded sustainably and the community engaged.',
+  },
+];
+
+const cultureValues = [
+  {
+    icon: 'shield',
+    title: 'No upsells, ever',
+    description: 'One membership unlocks everything. No pro tier hiding the good features, no investor pressure to monetize members, no drip funnels.',
+  },
+  {
+    icon: 'message-circle',
+    title: 'Direct founder access',
+    description: 'Ask questions, request features, and get support directly from the person who built the tool. No tickets, no bots, no account managers.',
+  },
+  {
+    icon: 'target',
+    title: 'Built for AI-era SEO',
+    description: 'We focus on the things generic SEO courses do not teach: Google AI Mode, ChatGPT citations, Perplexity visibility, and GEO strategy.',
+  },
+  {
+    icon: 'users',
+    title: 'Practitioners only',
+    description: 'The room is made up of people actually shipping SEO work. Agencies, in-house teams, and solo operators sharing what is working right now.',
+  },
+];
+
+const onboardingSteps = [
+  {
+    n: '01',
+    title: 'Join risk-free through Skool',
+    body: 'Sign up on Skool and pay the $27 upfront (Skool does not offer true free trials). If the community or the tool is not a fit within the first 7 days, DM Nico for a full personal refund, no questions asked.',
+  },
+  {
+    n: '02',
+    title: 'Book your 1:1 onboarding call with Nico',
+    body: 'Every new member gets a personal onboarding session with the founder. We map your site, your goals, and your first wins, then point you at the exact workflows that will move the needle.',
+  },
+  {
+    n: '03',
+    title: 'Unlock the full DataWise toolkit',
+    body: 'The moment you join, your AI Ranking login unlocks unlimited access to keyword research, competitor analysis, rank tracking, AI visibility, and the SEO Assistant. No seat limits.',
+  },
+  {
+    n: '04',
+    title: 'Show up to two weekly live Q&As',
+    body: 'Two live Q&A sessions every week with Nico and the rest of the community. Bring your site, your rankings, your AI visibility problems, and get real answers from people actually shipping SEO work.',
+  },
+  {
+    n: '05',
+    title: 'Get complete support to rank in AI search',
+    body: 'Weekly strategy content, an always-updated classroom, and direct founder access. The whole community exists to help you rank your business in the new AI search layer: Google AI Mode, ChatGPT, Perplexity, and the overviews.',
+  },
+];
+---
+
+<BaseLayout
+  title="AI SEO Community"
+  description="AI Ranking is a community for SEOs working in the age of AI search. $27/month includes unlimited DataWise tools, a 1:1 onboarding call, and two weekly Q&As. Risk-free: 7-day personal refund from Nico if it is not a fit."
+>
+  <!-- AboutPage + Organization relationship schema -->
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "AboutPage",
+    "name": "What is AI Ranking?",
+    "url": "https://www.datawiseseo.com/community",
+    "description": "AI Ranking is the paid Skool community that DataWise is built for. Members get unlimited DataWise tools, weekly AI-era SEO strategy content, and direct founder access for $27/month.",
+    "mainEntity": {
+      "@type": "Organization",
+      "name": "AI Ranking",
+      "url": "https://www.skool.com/ai-ranking",
+      "description": "A paid community for SEO practitioners working in the age of AI search.",
+      "founder": {
+        "@type": "Person",
+        "name": "Nicolas Gorrono",
+        "url": "https://www.datawiseseo.com/about",
+      },
+    },
+  })} />
+
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.datawiseseo.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Community", "item": "https://www.datawiseseo.com/community" },
+    ],
+  })} />
+
+  <!-- ============================================= -->
+  <!-- HERO                                           -->
+  <!-- ============================================= -->
+  <section class="community-hero">
+    <div class="community-hero-bg" aria-hidden="true"></div>
+    <div class="community-hero-container">
+      <div class="community-hero-eyebrow">
+        <span class="community-eyebrow-dot" aria-hidden="true"></span>
+        <span>AI Ranking Community</span>
+      </div>
+      <h1 class="community-hero-title">What is AI Ranking?</h1>
+      <p class="community-hero-sub">
+        AI Ranking is a paid Skool community for SEO practitioners working in the age of AI search.
+        Membership includes a 1:1 onboarding call with the founder, two weekly live Q&As, the full DataWise toolkit,
+        and complete support to rank your business in AI search engines.
+      </p>
+      <div class="community-hero-ctas">
+        <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+          Join risk-free
+        </Button>
+        <Button href="#inside" variant="ghost" size="lg">
+          See what is inside
+        </Button>
+      </div>
+      <p class="community-hero-fine">
+        $27/month. 7-day personal refund from Nico if it is not a fit, no questions asked.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- MISSION                                        -->
+  <!-- ============================================= -->
+  <Section id="inside">
+    <div class="max-w-3xl mx-auto text-center">
+      <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">Our thesis</span>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        SEO is changing. The tools and the playbooks have to change with it.
+      </h2>
+      <p class="mt-5 text-lg text-[var(--dw-text-secondary)] leading-relaxed">
+        Google AI Mode, ChatGPT citations, and Perplexity answers are already eating traditional search traffic.
+        Most SEO tools still behave like it is 2019. AI Ranking exists to build both the tools and the shared
+        knowledge base for how to rank in the new search layer, and to do it at a price that does not require
+        stacking $400 a month in enterprise subscriptions.
+      </p>
+      <p class="mt-4 text-lg text-[var(--dw-text-secondary)] leading-relaxed">
+        The community is the product. DataWise is the toolkit that membership unlocks.
+      </p>
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- ORIGIN                                         -->
+  <!-- ============================================= -->
+  <Section bg="accent">
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-10 items-center max-w-6xl mx-auto">
+      <div class="lg:col-span-2">
+        <div class="rounded-2xl overflow-hidden border border-[var(--dw-border)] shadow-lg">
+          <img
+            src="/images/about/nico-headshot.png"
+            alt="Nicolas Gorrono, founder of AI Ranking and DataWise"
+            width="780"
+            height="975"
+            loading="lazy"
+          />
+        </div>
+      </div>
+      <div class="lg:col-span-3">
+        <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">Origin</span>
+        <h2 class="mt-3 text-3xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+          Started by a decade-long SEO practitioner
+        </h2>
+        <p class="mt-5 text-[var(--dw-text-secondary)] leading-relaxed">
+          AI Ranking was founded by Nicolas Gorrono after a decade in SEO across agencies and in-house roles.
+          The community started as a place to share what was actually working as search shifted from ten blue
+          links to AI-generated answers. DataWise came next: the tool stack Nico needed that did not exist at
+          a price a solo operator or small agency could justify.
+        </p>
+        <div class="mt-6">
+          <a href="/about" class="inline-flex items-center gap-2 text-[var(--color-primary)] font-medium hover:gap-3 transition-all">
+            Read the full story
+            <Icon name="arrow-right" size={16} />
+          </a>
+        </div>
+      </div>
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- CULTURE                                        -->
+  <!-- ============================================= -->
+  <Section>
+    <div class="text-center mb-12">
+      <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">What makes it different</span>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        Not another generic SEO group
+      </h2>
+      <p class="mt-4 text-lg text-[var(--dw-text-secondary)] max-w-2xl mx-auto">
+        Four principles shape how the community runs and how the tool is built.
+      </p>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+      {cultureValues.map((value) => (
+        <Card variant="elevated">
+          <div class="flex gap-4 items-start">
+            <div class="shrink-0 h-11 w-11 rounded-xl bg-[var(--dw-accent-bg)] text-[var(--color-primary)] flex items-center justify-center">
+              <Icon name={value.icon} size={22} />
+            </div>
+            <div>
+              <h3 class="font-bold mb-1" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+                {value.title}
+              </h3>
+              <p class="text-sm text-[var(--dw-text-secondary)] leading-relaxed">{value.description}</p>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- LIVE Q&A BANNER                                -->
+  <!-- ============================================= -->
+  <Section>
+    <div class="max-w-5xl mx-auto">
+      <div class="text-center mb-8">
+        <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">Twice a week, live</span>
+        <h2 class="mt-3 text-3xl sm:text-4xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+          Weekly live Q&As with Nico
+        </h2>
+        <p class="mt-4 text-lg text-[var(--dw-text-secondary)] max-w-2xl mx-auto">
+          Two live sessions every week. Bring your site, your rankings, your AI visibility problems, and get real answers from the founder and the room.
+        </p>
+      </div>
+      <figure class="rounded-2xl overflow-hidden border border-[var(--dw-border)] shadow-lg">
+        <img
+          src="/images/community/live-qa.jpg"
+          alt="A live AI Ranking community Q&A session in progress, with members on video and a real SEO site audit on screen"
+          width="960"
+          height="540"
+          loading="lazy"
+        />
+      </figure>
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- FIRST 7 DAYS                                   -->
+  <!-- ============================================= -->
+  <Section bg="accent">
+    <div class="text-center mb-12">
+      <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">Your first week</span>
+      <h2 class="mt-3 text-3xl sm:text-4xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        What happens when you join
+      </h2>
+      <p class="mt-4 text-lg text-[var(--dw-text-secondary)] max-w-2xl mx-auto">
+        A personal onboarding call, the full toolkit, and two weekly Q&As to keep you moving.
+      </p>
+    </div>
+
+    <div class="max-w-5xl mx-auto mb-12">
+      <figure class="rounded-2xl overflow-hidden border border-[var(--dw-border)] shadow-lg">
+        <img
+          src="/images/community/skool-classroom.jpg"
+          alt="Inside the AI Ranking Skool classroom: Start Here, Onboarding Session, 7-Day SEO Action Plan, AI SEO Masterclass, AI Fundamentals, and Content Automation courses"
+          width="1161"
+          height="700"
+          loading="lazy"
+        />
+        <figcaption class="px-5 py-3 text-center text-sm text-[var(--dw-text-secondary)] bg-[var(--dw-surface)] border-t border-[var(--dw-border)]">
+          Inside the AI Ranking classroom: onboarding, the 7-Day Action Plan, and full courses on AI SEO, AI Fundamentals, and Content Automation.
+        </figcaption>
+      </figure>
+    </div>
+
+    <ol class="max-w-3xl mx-auto space-y-4">
+      {onboardingSteps.map((step) => (
+        <li class="onboarding-step flex gap-5 p-5 rounded-xl border border-[var(--dw-border)] bg-[var(--dw-surface)]">
+          <div class="shrink-0 text-2xl font-bold text-[var(--color-primary)]" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+            {step.n}
+          </div>
+          <div>
+            <h3 class="text-lg font-bold mb-1" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+              {step.title}
+            </h3>
+            <p class="text-sm text-[var(--dw-text-secondary)] leading-relaxed">{step.body}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+    <div class="mt-10 text-center">
+      <a href="/features" class="inline-flex items-center gap-2 text-[var(--color-primary)] font-medium hover:gap-3 transition-all">
+        See every tool included with membership
+        <Icon name="arrow-right" size={16} />
+      </a>
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- TESTIMONIALS (Senja widget)                    -->
+  <!-- ============================================= -->
+  <Section bg="accent">
+    <div class="max-w-5xl mx-auto">
+      <div class="text-center mb-10">
+        <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">What members say</span>
+        <h2 class="mt-3 text-3xl sm:text-4xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+          From practitioners actually shipping SEO work
+        </h2>
+      </div>
+      <script
+        is:inline
+        src="https://widget.senja.io/widget/c8261a82-f703-4a7a-8e0b-194ea7a6d636/platform.js"
+        type="text/javascript"
+        async></script>
+      <div
+        class="senja-embed"
+        data-id="c8261a82-f703-4a7a-8e0b-194ea7a6d636"
+        data-mode="shadow"
+        data-lazyload="false"
+        style="display: block; width: 100%;"></div>
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- FAQ                                            -->
+  <!-- ============================================= -->
+  <Section>
+    <div class="max-w-3xl mx-auto">
+      <div class="text-center mb-10">
+        <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">FAQ</span>
+        <h2 class="mt-3 text-3xl sm:text-4xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+          Common questions
+        </h2>
+      </div>
+      <Accordion items={faqs} />
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- FINAL CTA                                      -->
+  <!-- ============================================= -->
+  <Section bg="dark">
+    <div class="text-center max-w-2xl mx-auto">
+      <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        Join AI Ranking
+      </h2>
+      <p class="text-lg text-white/70 mb-8">
+        Join risk-free. Get every DataWise tool, a 1:1 onboarding call, and two weekly Q&As the moment you join.
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <Button href="https://www.skool.com/ai-ranking" variant="accent" size="lg" magnetic>
+          Join risk-free
+        </Button>
+        <Button href="/pricing" variant="ghost" size="lg" class="text-white/80 hover:text-white hover:bg-white/10">
+          See pricing details
+        </Button>
+      </div>
+      <p class="mt-6 text-sm text-white/50">
+        $27/month. 7-day personal refund from Nico if it is not a fit, no questions asked.
+      </p>
+    </div>
+  </Section>
+</BaseLayout>
+
+<style>
+  .community-hero {
+    position: relative;
+    padding: 8rem 0 5rem;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  @media (min-width: 1024px) {
+    .community-hero { padding: 10rem 0 6rem; }
+  }
+
+  .community-hero-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(180deg, var(--dw-accent-bg) 0%, var(--dw-bg) 100%);
+  }
+
+  .community-hero-container {
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    text-align: center;
+  }
+
+  .community-hero-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--color-primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+  }
+
+  .community-eyebrow-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--color-primary);
+  }
+
+  .community-hero-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(2.75rem, 6vw, 4.5rem);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--dw-text);
+  }
+
+  .community-hero-sub {
+    margin-top: 1.5rem;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+  }
+
+  .community-hero-ctas {
+    margin-top: 2.25rem;
+    display: flex;
+    gap: 0.85rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .community-hero-fine {
+    margin-top: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--dw-text-muted);
+  }
+
+  .onboarding-step {
+    transition: transform 0.2s ease, border-color 0.2s ease;
+  }
+
+  .onboarding-step:hover {
+    transform: translateY(-2px);
+    border-color: var(--color-primary);
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.from('.community-hero-eyebrow', { y: 12, opacity: 0, duration: 0.4 })
+      .from('.community-hero-title', { y: 30, opacity: 0, duration: 0.6 }, '-=0.2')
+      .from('.community-hero-sub', { y: 20, opacity: 0, duration: 0.5 }, '-=0.3')
+      .from('.community-hero-ctas', { y: 16, opacity: 0, duration: 0.4 }, '-=0.25')
+      .from('.community-hero-fine', { opacity: 0, duration: 0.4 }, '-=0.2');
+
+    gsap.utils.toArray<HTMLElement>('.onboarding-step').forEach((el, i) => {
+      gsap.from(el, {
+        y: 24,
+        opacity: 0,
+        duration: 0.5,
+        delay: i * 0.05,
+        scrollTrigger: { trigger: el, start: 'top 88%', once: true },
+      });
+    });
+  }
+</script>

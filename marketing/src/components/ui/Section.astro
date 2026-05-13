@@ -1,0 +1,24 @@
+---
+interface Props {
+  id?: string;
+  class?: string;
+  bg?: 'default' | 'white' | 'accent' | 'gradient' | 'dark';
+  narrow?: boolean;
+}
+
+const { id, class: className = '', bg = 'default', narrow = false } = Astro.props;
+
+const bgClasses = {
+  default: '',
+  white: 'bg-[var(--dw-surface)]',
+  accent: 'bg-[var(--dw-accent-bg)]',
+  gradient: 'bg-gradient-to-b from-[var(--dw-gradient-from)] to-[var(--dw-bg)]',
+  dark: 'bg-[var(--color-primary-800)] text-white',
+};
+---
+
+<section id={id} class:list={['py-16 lg:py-24', bgClasses[bg], className]} data-animate>
+  <div class:list={['mx-auto px-4 sm:px-6 lg:px-8', narrow ? 'max-w-4xl' : 'max-w-7xl']}>
+    <slot />
+  </div>
+</section>

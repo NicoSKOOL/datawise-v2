@@ -1,0 +1,90 @@
+title: Keyword Research Tool
+description: Discover high-value keywords with difficulty scores, search volume, CPC data, and AI-generated suggestions to fuel your SEO strategy.
+metaDescription: Find profitable keywords with DataWise's AI-powered keyword research tools. Get difficulty scores, search volume, related keywords, and smart suggestions.
+icon: "🔍"
+heroTagline: Find the keywords that matter
+benefits:
+  - title: Data-driven decisions
+    description: Every keyword comes with search volume, CPC, competition level, and difficulty score so you can prioritize with confidence.
+  - title: AI-generated ideas
+    description: Go beyond basic keyword suggestions. Our AI analyzes your niche and surfaces keyword opportunities you would miss manually.
+  - title: Competitive edge
+    description: See keyword difficulty at a glance and find low-competition opportunities that your competitors overlook.
+subTools:
+  - name: Keyword Overview
+    description: Get a complete snapshot of any keyword including search volume, CPC, difficulty score, and SERP features.
+  - name: Related Keywords
+    description: Discover semantically related keywords to expand your content clusters and topical authority.
+  - name: Keyword Suggestions
+    description: AI-powered suggestions based on your seed keywords, tailored to your niche and search intent.
+  - name: Keyword Ideas
+    description: Broader keyword discovery across your topic area to uncover untapped content opportunities.
+  - name: Keyword Difficulty
+    description: Assess how hard it is to rank for any keyword with our difficulty scoring algorithm.
+stats:
+  - value: 10
+    suffix: M+
+    label: Keywords in database
+  - value: 200
+    suffix: +
+    label: Countries supported
+  - value: 99
+    suffix: "%"
+    label: Data freshness
+  - value: 0
+    suffix: $
+    label: Cost to start
+story:
+  - caption: Start with a seed keyword
+    highlight: Enter any topic, brand, or competitor URL and we will pull the full landscape.
+  - caption: See the full picture
+    highlight: Volume, difficulty, CPC, intent, and SERP features side-by-side, all on one screen.
+  - caption: Export and rank
+    highlight: Save to projects, track rankings weekly, and beat competitors with data-backed decisions.
+opportunities:
+  - icon: target
+    title: Low-hanging fruit keywords
+    description: "Find keywords with real search volume but weak competition: the opportunities your domain can actually rank for in weeks, not years."
+  - icon: search
+    title: Long-tail goldmines
+    description: "Surface dozens of specific, high-intent phrases around every seed keyword: the long-tail queries that convert at 2-3x the rate of head terms."
+  - icon: trending-up
+    title: Competitor keyword gaps
+    description: See exactly which keywords your rivals rank for that you do not, then prioritize the ones with the best effort-to-reward ratio.
+  - icon: message-circle
+    title: Question-based content ideas
+    description: "Pull the real questions your audience asks (how-to, what-is, why-does) to build topic clusters Google rewards with featured snippets and AI overviews."
+  - icon: zap
+    title: Seasonal and trending surges
+    description: Spot keywords gaining momentum before your competitors do. Time your content to capture traffic spikes around seasonal demand.
+  - icon: star
+    title: Commercial-intent buyers
+    description: "Filter for keywords with buyer signals (best, review, alternative, pricing) to target the searches closest to a purchase decision."
+useCases:
+  - icon: pen-tool
+    audience: Bloggers and creators
+    scenario: Build editorial calendars around topic clusters your audience is already searching for, and stop guessing what to write next.
+  - icon: users
+    audience: SEO agencies
+    scenario: Deliver keyword strategies at scale with exportable reports, client-ready difficulty scores, and competitor gap analysis in minutes.
+  - icon: shield
+    audience: Ecommerce brands
+    scenario: Find product-intent keywords that convert, target category pages for commercial terms, and outrank marketplaces on long-tail phrases.
+  - icon: robot
+    audience: SaaS founders
+    scenario: Discover the exact pain points your tool solves, then build landing pages around the keywords prospects already type into Google.
+faqs:
+  - question: What is a keyword research tool and how does it work?
+    answer: "A keyword research tool pulls search data (monthly volume, cost-per-click, competition, SERP features) for any query you enter, then suggests related terms your audience is already searching for. DataWise connects directly to DataForSEO's live index, so every metric is fresh and covers 200+ countries. You enter a seed keyword, URL, or competitor, and in seconds you get the full landscape: what people search, how hard it is to rank, and which angles your competitors already cover."
+  - question: Are free keyword research tools accurate?
+    answer: "Most free tools cap you at a handful of lookups, show stale data, or hide search volume behind a paywall. DataWise is different: it is included with your AI Ranking community membership (from $27/mo, 7-day risk-free trial) and uses the same enterprise-grade data source (DataForSEO) that paid platforms charge $99+/month for. You get unlimited keyword lookups, real monthly search volume, and live SERP data, all for a single community membership instead of a stacked tool bill."
+  - question: What metrics should I look at when doing keyword research?
+    answer: "The five that matter most: (1) Search volume — how many people search it each month, (2) Keyword difficulty — how hard it is to rank on page one, (3) CPC — what advertisers pay, a proxy for commercial intent, (4) Search intent — informational, navigational, commercial, or transactional, and (5) SERP features — whether Google shows featured snippets, People Also Ask, local packs, or AI overviews that may steal clicks. DataWise surfaces all five in a single view so you can judge opportunity at a glance."
+  - question: How is keyword difficulty calculated?
+    answer: "Keyword difficulty estimates how competitive the top 10 results are by analyzing the authority, backlink profile, and content depth of the pages currently ranking. DataWise scores every keyword from 0 to 100: below 30 is usually achievable for newer sites, 30-60 takes solid content and some backlinks, and 60+ typically requires a strong domain. Use difficulty together with search volume — a low-volume, low-difficulty keyword you can actually rank for beats a high-volume one you will never crack."
+  - question: What is the difference between short-tail and long-tail keywords?
+    answer: "Short-tail keywords are 1-2 word queries like 'running shoes' — huge volume, huge competition, often vague intent. Long-tail keywords are longer, more specific phrases like 'best running shoes for flat feet under $100' — lower volume but far higher intent and easier to rank. A healthy SEO strategy targets a mix: a few short-tail pillars for authority and dozens of long-tail pages that actually convert. DataWise's Keyword Ideas and Keyword Suggestions tools are built specifically to surface long-tail opportunities at scale."
+  - question: How often should I do keyword research?
+    answer: "Do a deep research session once per quarter to refresh your content roadmap, plus a quick 10-minute check before every new article or landing page. Search behavior shifts constantly — new trends emerge, competitors publish, and Google changes what it rewards. Tracking rankings inside DataWise between research sessions tells you when it is time to refresh old content or go after a new cluster."
+  - question: Can I use DataWise for competitor keyword research?
+    answer: "Yes. Enter any competitor's domain into the Competitor Analysis tool and you will see every keyword they rank for, where they rank, estimated traffic, and the keyword gap between your site and theirs. Combine this with Keyword Research to find the keywords your competitors missed entirely — that is where the easiest wins live."

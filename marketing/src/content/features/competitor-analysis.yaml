@@ -1,0 +1,98 @@
+# Primary keyword: seo competitor analysis tool
+# LSI keywords: competitor keyword research, domain authority checker, keyword gap analysis tool, SERP overlap, backlink gap analysis, content gap discovery, organic traffic estimator, competitor benchmarking, SEO competitive intelligence, domain rating comparison, rank tracking by domain, competitor discovery tool
+
+title: Competitor Analysis
+description: Benchmark against competitors with domain authority scores, ranked keywords, traffic estimates, and content gap analysis.
+metaDescription: "DataWise is a full SEO competitor analysis tool: see rival keywords, traffic estimates, domain authority scores, and content gaps you can exploit."
+icon: "📊"
+heroTagline: "Steal what's working, close every gap"
+benefits:
+  - title: Full competitor visibility
+    description: See every keyword your competitors rank for, their estimated traffic, and domain authority at a glance.
+  - title: Gap analysis
+    description: Find keywords your competitors rank for that you do not. Turn their wins into your opportunities.
+  - title: Traffic intelligence
+    description: Estimate competitor traffic by keyword and page to understand where their organic value comes from.
+subTools:
+  - name: Domain Rank Overview
+    description: Get authority scores and ranking metrics for any domain to assess competitive strength.
+  - name: Ranked Keywords
+    description: See the full list of keywords any domain ranks for, with positions and search volumes.
+  - name: Keyword Gap Analysis
+    description: Compare your keyword profile against competitors to find opportunities you are missing.
+  - name: Bulk Traffic Estimation
+    description: Estimate organic traffic for multiple domains or URLs simultaneously.
+  - name: Competitor Discovery
+    description: Automatically identify your top SEO competitors based on keyword overlap.
+
+stats:
+  - value: 500
+    suffix: "M+"
+    label: "Domains in competitive index"
+  - value: 48
+    suffix: "h"
+    label: "Competitive data refresh cycle"
+  - value: 200
+    suffix: "+"
+    label: "Ranking signals per domain"
+  - value: 10
+    suffix: ""
+    label: "Competitors analyzed simultaneously"
+
+story:
+  - caption: "Enter any competitor's domain"
+    highlight: "Paste a rival URL and instantly pull their authority scores, traffic estimates, and full ranked keyword list."
+  - caption: "Map their keyword and traffic profile"
+    highlight: "See which keywords drive their organic traffic, which pages rank, and where their domain authority stands versus yours."
+  - caption: "Prioritize gaps and act"
+    highlight: "Filter the keyword gap report by volume and difficulty, pick your best opportunities, and build content that takes their rankings."
+
+opportunities:
+  - icon: target
+    title: "Competitor keyword theft"
+    description: "Identify high-value keywords your rivals rank for in positions 1-10 that your domain has never targeted."
+  - icon: shield
+    title: "Backlink gap mapping"
+    description: "Find referring domains that point to your competitors but not to you, revealing untapped link-building targets."
+  - icon: bar-chart
+    title: "Content gap discovery"
+    description: "Uncover entire topic clusters your competitors cover that are absent from your site, exposing clear content priorities."
+  - icon: star
+    title: "Domain authority benchmarking"
+    description: "Score your domain against each rival to understand exactly how much authority gap you need to close to outrank them."
+  - icon: globe
+    title: "SERP overlap mapping"
+    description: "Determine which competitors actually share query space with you versus those who only compete on paper."
+  - icon: trending-up
+    title: "Market share visibility tracking"
+    description: "Monitor how your organic visibility shifts against rivals over time to measure whether your SEO investments are compounding."
+
+useCases:
+  - icon: zap
+    audience: "Growth marketers"
+    scenario: "Validate positioning by mapping your keyword profile against direct rivals and identifying where competitors are winning search share you should own."
+  - icon: users
+    audience: "SEO agencies"
+    scenario: "Deliver client competitive audits in minutes: pull ranked keywords, traffic estimates, and domain authority for every rival in one report."
+  - icon: search
+    audience: "Founders sizing markets"
+    scenario: "Assess competitive moats before investing in SEO by measuring how many domains share keyword space and how strong their authority scores are."
+  - icon: bar-chart
+    audience: "PPC teams"
+    scenario: "Cross-reference paid keyword targets against organic competitor rankings to find terms where buying traffic is cheaper than outranking strong domains."
+
+faqs:
+  - question: "How accurate is competitor traffic estimation data?"
+    answer: "Traffic estimates in any SEO competitor analysis tool are modeled from click-through rate curves applied to ranking positions and search volumes. They are directionally accurate rather than exact. DataWise's Bulk Traffic Estimation uses DataForSEO data to give reliable relative comparisons: if Site A shows 3x the estimated traffic of Site B, that ratio is trustworthy for prioritization, even if the absolute number varies from actual analytics data."
+  - question: "Can I analyze any website with a competitor analysis tool?"
+    answer: "Yes. DataWise's Domain Rank Overview and Ranked Keywords tools work on any publicly indexed domain, not just your direct business rivals. You can analyze large e-commerce sites, niche blogs, or local competitors equally. The only constraint is indexation: very new sites or domains with minimal backlink profiles may return sparse data simply because search engines have not accumulated enough ranking signals yet."
+  - question: "What is the difference between domain authority and domain rating?"
+    answer: "Domain authority is a score (typically 0-100) predicting how likely a domain is to rank in search results, calculated from backlink quantity, quality, and diversity. Domain rating is a specific implementation of that concept popularized by Ahrefs. DataWise uses domain-level ranking metrics sourced from DataForSEO, blending multiple signals including referring domains and organic keyword footprint to produce a composite competitive strength score."
+  - question: "How often should I check on my SEO competitors?"
+    answer: "For most teams, a monthly competitive review is sufficient to catch meaningful shifts. Run a deeper audit quarterly using Keyword Gap Analysis and Ranked Keywords to spot new content investments by rivals. Set up weekly checks only if you operate in a highly volatile SERP environment, such as news, finance, or fast-moving SaaS markets where competitors publish aggressively and rankings shift week over week."
+  - question: "Is competitor keyword analysis ethical or legal?"
+    answer: "Completely. All data used in SEO competitor analysis tools comes from public search engine results, publicly accessible web pages, and aggregated clickstream data. No private data is accessed. Analyzing which keywords a competitor ranks for is no different from reading their published content. DataWise queries DataForSEO's APIs, which comply with search engine terms of service using legitimate crawling and aggregation methods."
+  - question: "What is the difference between keyword gap analysis and content gap analysis?"
+    answer: "Keyword gap analysis compares raw keyword rankings between two domains and surfaces specific queries one site ranks for that the other does not. Content gap analysis is broader: it identifies entire topic areas, formats, or funnel stages a competitor addresses that you have not covered at all. DataWise's Keyword Gap Analysis tool handles the former. Use the results to infer content gaps by grouping missing keywords into topic clusters."
+  - question: "How do I find my real SEO competitors (not just my business rivals)?"
+    answer: "Your real SEO competitors are the domains that rank for the same queries you target, regardless of whether they sell the same product. DataWise's Competitor Discovery tool identifies these automatically by analyzing keyword overlap: it pulls your ranked keywords, finds domains appearing most frequently in the same SERPs, and ranks them by overlap score. A blog or publisher may turn out to be a bigger SERP rival than any direct business competitor."

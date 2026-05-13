@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { useTabParam } from '@/hooks/use-tab-param';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -46,16 +47,21 @@ import GBPProfileCard from '@/components/local-seo/GBPProfileCard';
 import ReviewsSection from '@/components/local-seo/ReviewsSection';
 import LocalCompetitorGrid from '@/components/local-seo/LocalCompetitorGrid';
 import GeoGridPanel from '@/components/local-seo/GeoGridPanel';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildRankTrackingReport } from '@/lib/export/adapters/rankTracking';
+import { captureElementPng } from '@/lib/export/chartCapture';
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
 export default function RankTracking() {
-  const [activeTab, setActiveTab] = useState<'gsc' | 'tracked' | 'local'>('gsc');
+  const [activeTab, setActiveTab] = useTabParam('gsc') as [string, (tab: string) => void];
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [keywords, setKeywords] = useState<TrackedKeyword[]>([]);
+  const distributionChartRef = useRef<HTMLDivElement | null>(null);
+  const trendChartRef = useRef<HTMLDivElement | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loadingKeywords, setLoadingKeywords] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -98,7 +104,6 @@ export default function RankTracking() {
   const [localCity, setLocalCity] = useState<string | null>(null);
   const [localGBPProfile, setLocalGBPProfile] = useState<GBPProfile | null>(null);
   const { toast } = useToast();
-  const filteredOffsetRef = useRef(0);
 
   const availableProperties = gscProperties.filter((property) => property.is_enabled !== 0);
   const selectableProperties = availableProperties.length > 0 ? availableProperties : gscProperties;
@@ -108,6 +113,12 @@ export default function RankTracking() {
     try {
       const data = await fetchRankProjects() as Project[];
       setProjects(data);
+      // Keep selectedProject in sync with fresh data (e.g. updated keyword_count)
+      setSelectedProject((prev) => {
+        if (!prev) return prev;
+        const updated = data.find((p) => p.id === prev.id);
+        return updated ?? prev;
+      });
     } catch (err: unknown) {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
     } finally {
@@ -177,7 +188,7 @@ export default function RankTracking() {
     if (!selectedPropertyId || !selectedCard) return;
     setLoadingFiltered(true);
     try {
-      const nextOffset = append ? filteredOffsetRef.current + 100 : 0;
+      const nextOffset = append ? filteredOffset + 100 : 0;
       const data = await getGSCQueries(
         selectedPropertyId,
         selectedCard,
@@ -191,17 +202,12 @@ export default function RankTracking() {
       setFilteredMode(data.mode);
       setFilteredTotal(data.total);
       setFilteredOffset(nextOffset);
-      filteredOffsetRef.current = nextOffset;
-
-      if (append && nextOffset + 100 >= data.total) {
-        toast({ title: 'All loaded', description: 'No more results to show.' });
-      }
     } catch (err) {
       console.error('GSC queries fetch failed:', err);
     } finally {
       setLoadingFiltered(false);
     }
-  }, [selectedPropertyId, selectedCard, querySearch, querySort, toast]);
+  }, [selectedPropertyId, selectedCard, querySearch, querySort, filteredOffset]);
 
   // Fetch filtered queries when card, search, or sort changes
   useEffect(() => {
@@ -214,8 +220,6 @@ export default function RankTracking() {
   useEffect(() => {
     setSelectedCard(null);
     setFilteredRows([]);
-    setFilteredOffset(0);
-    filteredOffsetRef.current = 0;
     setQuerySearch('');
     setTrackedGSCKeywords(new Set());
   }, [selectedPropertyId]);
@@ -346,10 +350,13 @@ export default function RankTracking() {
     if (!selectedProject) return;
     setChecking(true);
     try {
-      const result = await checkProjectRankings(selectedProject.id) as { checked: number; found: number; not_ranking: number };
+      const result = await checkProjectRankings(selectedProject.id) as { checked: number; found: number; not_ranking: number; errors?: number };
+      const parts = [`${result.found} found in Google`, `${result.not_ranking} not in top 100`];
+      if (result.errors) parts.push(`${result.errors} failed`);
       toast({
         title: 'Rankings checked',
-        description: `${result.found} found in Google, ${result.not_ranking} not found in the top results`,
+        description: parts.join(', '),
+        variant: result.errors ? 'destructive' : 'default',
       });
       loadKeywords(selectedProject.id);
       loadReport(selectedProject.id, reportPeriod);
@@ -529,6 +536,10 @@ export default function RankTracking() {
       });
       setTrackedGSCKeywords(prev => new Set(prev).add(keyword));
       loadProjects();
+      // Refresh keyword list if tracking to the currently selected project
+      if (selectedProject?.id === projectId && result.added > 0) {
+        loadKeywords(projectId);
+      }
     } catch (err: unknown) {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
     }
@@ -666,6 +677,26 @@ export default function RankTracking() {
           onBack={() => { setSelectedProject(null); setKeywords([]); loadProjects(); }}
           onAddKeywords={() => setAddKeywordsOpen(true)}
           onCheckRankings={handleCheckRankings}
+          extraActions={
+            <ExportMenu
+              surface="rank-tracking"
+              identifier={selectedProject.domain}
+              disabled={keywords.length === 0}
+              buildPayload={async () => {
+                const [distributionPng, trendPng] = await Promise.all([
+                  captureElementPng(distributionChartRef.current),
+                  captureElementPng(trendChartRef.current),
+                ]);
+                return buildRankTrackingReport({
+                  project: selectedProject,
+                  report,
+                  keywords,
+                  charts: { distributionPng, trendPng },
+                  periodLabel: `Last ${reportPeriod} days`,
+                });
+              }}
+            />
+          }
         />
 
         <AddKeywordsDialog
@@ -680,11 +711,15 @@ export default function RankTracking() {
 
         {report && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <RankDistributionChart
-              distribution={report.current.distribution}
-              rankingCount={report.current.ranking_keywords}
-            />
-            <RankTrendChart trend={report.trend} />
+            <div ref={distributionChartRef}>
+              <RankDistributionChart
+                distribution={report.current.distribution}
+                rankingCount={report.current.ranking_keywords}
+              />
+            </div>
+            <div ref={trendChartRef}>
+              <RankTrendChart trend={report.trend} />
+            </div>
           </div>
         )}
 
@@ -717,14 +752,14 @@ export default function RankTracking() {
         </p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'gsc' | 'tracked' | 'local')} className="w-full">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList>
           <TabsTrigger value="gsc">Site Rankings (GSC)</TabsTrigger>
           <TabsTrigger value="tracked">Tracked Keywords</TabsTrigger>
           <TabsTrigger value="local">Local Pack</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="gsc" className="mt-8 space-y-8">
+        <TabsContent value="gsc" className="mt-8 space-y-8" forceMount>
           <div className="flex items-start gap-3 bg-secondary rounded-xl px-5 py-4">
             <Sparkles className="h-4 w-4 text-primary mt-0.5 shrink-0" />
             <p className="text-sm text-muted-foreground">
@@ -802,7 +837,7 @@ export default function RankTracking() {
                       { key: 'all' as const, title: 'Total Keywords', value: gscOverview.query_summary.total_queries.toLocaleString(), accent: false },
                       { key: null, title: 'Avg. Position', value: String(gscOverview.query_summary.avg_position ?? '--'), accent: false },
                       { key: 'top10' as const, title: 'Organic Clicks', value: `${((gscOverview.summary.last_30_days.total_clicks || 0) / 1000).toFixed(1)}k`, accent: false },
-                      { key: 'page2' as const, title: 'Page 2 Opportunities', value: gscOverview.query_summary.striking_distance.toLocaleString(), accent: true },
+                      { key: 'page2' as const, title: 'Visibility Score', value: gscOverview.query_summary.striking_distance.toLocaleString(), accent: true },
                     ]).map((card) => {
                       const isClickable = card.key !== null;
                       const isActive = selectedCard === card.key && isClickable;
@@ -816,13 +851,8 @@ export default function RankTracking() {
                           ].join(' ')}
                           onClick={() => {
                             if (!isClickable) return;
-                            const next = selectedCard === card.key ? null : card.key;
-                            setSelectedCard(next);
-                            if (next === 'page2') {
-                              setQuerySort({ column: 'impressions', order: 'desc' });
-                            }
+                            setSelectedCard((prev) => prev === card.key ? null : card.key);
                             setFilteredOffset(0);
-                            filteredOffsetRef.current = 0;
                             setFilteredRows([]);
                           }}
                         >
@@ -841,34 +871,21 @@ export default function RankTracking() {
                     <div className="bg-white p-6 rounded-xl shadow-[0_1px_4px_rgba(24,28,32,0.06)]">
                       <h3 className="font-headline font-bold text-sm mb-4 uppercase tracking-widest text-muted-foreground">Distribution</h3>
                       <div className="space-y-4">
-                        {([
-                          { label: 'Top 3', filterKey: 'top3pos' as const, count: gscOverview.query_summary.top_3, pct: Math.round((gscOverview.query_summary.top_3 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary' },
-                          { label: 'Top 10', filterKey: 'top10pos' as const, count: gscOverview.query_summary.top_10, pct: Math.round((gscOverview.query_summary.top_10 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary/60' },
-                          { label: '11 - 30', filterKey: 'top30' as const, count: Math.max(0, (gscOverview.query_summary.top_20 || 0) - (gscOverview.query_summary.top_10 || 0)), pct: Math.round((Math.max(0, (gscOverview.query_summary.top_20 || 0) - (gscOverview.query_summary.top_10 || 0)) / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-orange-400' },
-                          { label: 'All', filterKey: 'all' as const, count: gscOverview.query_summary.total_queries, pct: 100, variant: 'bg-muted-foreground/30' },
-                        ]).map((tier) => {
-                          const isActive = selectedCard === tier.filterKey;
-                          return (
-                            <div
-                              key={tier.label}
-                              className={`space-y-1.5 cursor-pointer rounded-lg px-2 py-1.5 -mx-2 transition-colors ${isActive ? 'bg-primary/10' : 'hover:bg-muted/60'}`}
-                              onClick={() => {
-                                setSelectedCard((prev) => prev === tier.filterKey ? null : tier.filterKey);
-                                setFilteredOffset(0);
-                                filteredOffsetRef.current = 0;
-                                setFilteredRows([]);
-                              }}
-                            >
-                              <div className="flex justify-between text-xs font-bold">
-                                <span>{tier.label}</span>
-                                <span>{tier.count.toLocaleString()}</span>
-                              </div>
-                              <div className="w-full bg-muted h-2 rounded-full overflow-hidden">
-                                <div className={`${tier.variant} h-full rounded-full transition-all`} style={{ width: `${tier.pct}%` }} />
-                              </div>
+                        {[
+                          { label: 'Top 3', count: gscOverview.query_summary.top_3, pct: Math.round((gscOverview.query_summary.top_3 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary' },
+                          { label: 'Top 10', count: gscOverview.query_summary.top_10, pct: Math.round((gscOverview.query_summary.top_10 / Math.max(gscOverview.query_summary.total_queries, 1)) * 100), variant: 'bg-primary/60' },
+                          { label: 'Top 100', count: gscOverview.query_summary.total_queries, pct: 100, variant: 'bg-muted-foreground/30' },
+                        ].map((tier) => (
+                          <div key={tier.label} className="space-y-1.5">
+                            <div className="flex justify-between text-xs font-bold">
+                              <span>{tier.label}</span>
+                              <span>{tier.count.toLocaleString()}</span>
                             </div>
-                          );
-                        })}
+                            <div className="w-full bg-muted h-2 rounded-full overflow-hidden">
+                              <div className={`${tier.variant} h-full rounded-full transition-all`} style={{ width: `${tier.pct}%` }} />
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
 
@@ -885,7 +902,6 @@ export default function RankTracking() {
                             onClick={() => {
                               setSelectedCard((prev) => prev === 'page2' ? null : 'page2');
                               setFilteredOffset(0);
-                              filteredOffsetRef.current = 0;
                               setFilteredRows([]);
                             }}
                           >
@@ -921,9 +937,6 @@ export default function RankTracking() {
                       <h3 className="font-headline font-extrabold text-xl">
                         {selectedCard === 'all' && 'All Ranking Queries'}
                         {selectedCard === 'top10' && 'Top 10 Queries by Traffic'}
-                        {selectedCard === 'top3pos' && 'Top 3 Keywords'}
-                        {selectedCard === 'top10pos' && 'Top 10 Keywords by Position'}
-                        {selectedCard === 'top30' && 'Keywords Ranked 11 - 30'}
                         {selectedCard === 'page2' && 'Page 2 Opportunities'}
                         {selectedCard === 'opportunities' && 'Striking Distance'}
                         {!selectedCard && 'Keyword Movement'}
@@ -939,7 +952,6 @@ export default function RankTracking() {
                               onChange={(e) => {
                                 setQuerySearch(e.target.value);
                                 setFilteredOffset(0);
-                                filteredOffsetRef.current = 0;
                                 setFilteredRows([]);
                               }}
                             />
@@ -960,7 +972,6 @@ export default function RankTracking() {
                               order: prev.column === col && prev.order === 'desc' ? 'asc' : 'desc',
                             }));
                             setFilteredOffset(0);
-                            filteredOffsetRef.current = 0;
                             setFilteredRows([]);
                           }}
                           onTrack={handleTrackKeywordFromGSC}
@@ -1000,7 +1011,7 @@ export default function RankTracking() {
           )}
         </TabsContent>
 
-        <TabsContent value="tracked" className="mt-6 space-y-6">
+        <TabsContent value="tracked" className="mt-6 space-y-6" forceMount>
           <ProjectListView
             projects={projects}
             loading={loadingProjects}
@@ -1010,7 +1021,7 @@ export default function RankTracking() {
           />
         </TabsContent>
 
-        <TabsContent value="local" className="mt-6 space-y-6">
+        <TabsContent value="local" className="mt-6 space-y-6" forceMount>
           <LocalProjectListView
             projects={localProjects}
             loading={loadingLocalProjects}

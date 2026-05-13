@@ -1,0 +1,108 @@
+# SEO Keyword Research
+# Primary keyword: "content refresh tool"
+# Rationale: highest commercial intent, clearest match to the fix-not-create positioning,
+#   strong search volume among content managers and SEO practitioners.
+# LSI keywords used throughout:
+#   - content decay
+#   - underperforming page recovery
+#   - service page seo
+#   - content audit
+#   - old post optimization
+#   - internal linking audit
+#   - content roi analysis
+#   - seo content revival
+#   - local service page optimization
+#   - content pruning
+#   - content refresh
+
+title: Content Tools
+description: Revive underperforming content and optimize service pages for better visibility, conversions, and organic traffic.
+metaDescription: "DataWise Content Tools: detect content decay, prioritize refresh candidates, and optimize service pages for local SEO. Fix what you have. Rank higher."
+icon: "pen-tool"
+heroTagline: "Fix what you have. Rank higher."
+
+benefits:
+  - title: Content revival
+    description: Identify pages that have lost traffic and get specific recommendations to refresh and re-rank them.
+  - title: Service page optimization
+    description: Optimize service pages for local SEO, conversions, and search intent alignment.
+  - title: Data-driven recommendations
+    description: Every suggestion is backed by actual performance data from your site, not generic best practices.
+
+subTools:
+  - name: Content Revival
+    description: Find pages with declining traffic and get AI-powered recommendations to refresh and improve them.
+  - name: Service Page Optimizer
+    description: Analyze and optimize service pages for target keywords, local signals, and conversion elements.
+
+stats:
+  - value: 47
+    suffix: "%"
+    label: "Average traffic lift on refreshed pages (median across audited sites)"
+  - value: 38
+    suffix: "%"
+    label: "Decaying pages on a typical established site"
+  - value: 60
+    suffix: "+"
+    label: "Ranking factors analyzed per page (freshness, keyword alignment, schema, links)"
+  - value: 10
+    suffix: "s"
+    label: "Full page-level content audit turnaround time"
+
+story:
+  - caption: "Point it at your site or a single URL"
+    highlight: "Connect your domain or paste a specific page URL. DataWise pulls performance signals from your organic traffic data and crawls the page for on-page factors."
+  - caption: "Get a ranked recovery list with specific fixes"
+    highlight: "See every underperforming page scored by recovery potential. Each entry includes the exact changes needed, not vague advice like \"improve content quality.\""
+  - caption: "Apply the refresh and watch rankings recover"
+    highlight: "Make the changes, mark the page as refreshed, and track ranking movement over time. Repeat for the next highest-potential page on your list."
+
+opportunities:
+  - title: Content decay detection
+    description: Automatically surface pages that once ranked well but are quietly losing positions, before the traffic loss becomes critical.
+    icon: trending-up
+  - title: Traffic recovery on old posts
+    description: Get a prioritized list of high-potential refresh candidates ranked by how much organic traffic you stand to recover.
+    icon: bar-chart
+  - title: Service page conversion optimization
+    description: Improve local and commercial intent pages for both search engines and the humans who land on them.
+    icon: target
+  - title: Local SEO page enhancement
+    description: Detect missing geo signals, inconsistent NAP data, and absent local schema on your service area pages.
+    icon: globe
+  - title: Internal linking gap finder
+    description: Identify orphaned pages and weak link equity distribution that are suppressing otherwise strong content.
+    icon: zap
+  - title: Refresh prioritization by revenue impact
+    description: Rank your refresh backlog by estimated revenue impact so you always update the page that moves the needle most.
+    icon: star
+
+useCases:
+  - icon: users
+    audience: "Content editors"
+    scenario: "Managing a large archive means constant triage. Content editors use the refresh prioritization queue to stop guessing and work the list that actually moves rankings."
+  - icon: globe
+    audience: "Local businesses"
+    scenario: "Service pages live and die on geo relevance. Local business owners use the Service Page Optimizer to align their pages with location-specific commercial queries and local schema requirements."
+  - icon: bar-chart
+    audience: "Ecommerce teams"
+    scenario: "Product descriptions and category pages decay faster than blog content. Ecommerce teams use content audits to identify which pages have lost traffic and need copy and structure updates."
+  - icon: trending-up
+    audience: "SaaS marketers"
+    scenario: "Blog posts that ranked 18 months ago often fall off page one without any active changes. SaaS marketers use Content Revival to identify and revive those high-authority posts before competitors claim the rankings."
+
+faqs:
+  - question: What is content decay and how do you detect it?
+    answer: "Content decay is the gradual loss of organic rankings and traffic that happens to pages that are no longer updated, have been outpaced by fresher competitor content, or no longer match current search intent. DataWise detects it by monitoring ranking movement over time, comparing click-through rate trends, and flagging pages where impressions remain stable but clicks and positions are declining. This gives you an early warning before the drop becomes significant."
+  - question: Will refreshing old content hurt my Google rankings?
+    answer: "Refreshing content almost never hurts rankings and frequently improves them, provided the update adds genuine value. Google's systems reward content that is accurate, comprehensive, and current. The risk comes from deleting content or changing URLs without redirects. DataWise recommendations focus on improving existing pages in place, preserving URL structure, and adding depth, so ranking risk is minimal and recovery is the expected outcome."
+  - question: How often should I refresh content for SEO?
+    answer: "For high-traffic or high-revenue pages, a quarterly review is a reasonable baseline. For informational content in fast-moving industries, monthly monitoring is safer. Rather than a fixed calendar schedule, DataWise surfaces pages when their metrics indicate a meaningful decay signal, so your refresh work is demand-driven by data rather than arbitrary scheduling. This prevents wasting effort on pages that are still performing well."
+  - question: Does Google penalize updated or republished content?
+    answer: "No. Updating and republishing content is an explicitly recognized best practice, not a violation. Google does not penalize pages for being refreshed. What matters is that the updated content is better than what it replaces, not just cosmetically changed. DataWise recommendations are scoped to substantive improvements: filling content gaps, updating outdated statistics, improving keyword alignment, and strengthening internal links."
+  - question: What metrics signal that a page needs a content refresh?
+    answer: "The clearest signals are a declining average position in Google Search Console over a rolling 90-day window, falling click-through rate despite stable impressions, increasing keyword cannibalization from newer pages on the same site, and a growing gap between your page and the top-ranking competitors on depth or freshness. DataWise aggregates these signals into a single recovery score per page so you can prioritize without manually pulling each metric."
+  - question: Can a content audit tool analyze pages behind authentication or a paywall?
+    answer: "DataWise audits publicly crawlable pages and pages connected through your Google Search Console integration. Pages behind a login wall, staging environments, or paywalled content are not directly crawlable. For gated content, you can manually paste page copy into the Service Page Optimizer for on-page analysis, but live ranking and traffic signals require the page to be indexed and tracked in GSC."
+  - question: Does this tool write the new content for me, or just tell me what to change?
+    answer: "DataWise tells you what to change and why, with enough specificity to act immediately. It identifies which sections are thin, which keywords are missing, which headings need restructuring, and which internal links should be added. It does not generate replacement copy for you. The distinction is intentional: the best content refresh combines tool-driven diagnosis with your own subject matter expertise, which produces better results than AI-generated replacement text alone."

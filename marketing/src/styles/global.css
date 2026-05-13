@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/*
+  DataWise Design System
+  Forest green primary, tonal surface layering, editorial typography.
+  Dark mode via .dark class on <html> (toggled by JS, defaults to system preference).
+*/
+
+@theme {
+  --font-headline: 'Manrope', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+
+  /* Primary green scale */
+  --color-primary-50: hsl(155 40% 96%);
+  --color-primary-100: hsl(155 40% 90%);
+  --color-primary-200: hsl(155 45% 80%);
+  --color-primary-300: hsl(155 50% 65%);
+  --color-primary-400: hsl(155 60% 40%);
+  --color-primary: hsl(155 100% 16%);
+  --color-primary-light: hsl(155 100% 21%);
+  --color-primary-700: hsl(155 100% 13%);
+  --color-primary-800: hsl(155 100% 10%);
+  --color-primary-900: hsl(155 100% 7%);
+  --color-primary-foreground: hsl(0 0% 100%);
+
+  /* Brand */
+  --color-indigo: hsl(239 84% 67%);
+
+  /* Status */
+  --color-destructive: hsl(0 70% 41%);
+  --color-success: hsl(155 100% 21%);
+  --color-warning: hsl(38 92% 50%);
+  --color-info: hsl(199 89% 48%);
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.06);
+  --shadow-card-hover: 0 10px 25px -5px rgb(0 0 0 / 0.08), 0 8px 10px -6px rgb(0 0 0 / 0.04);
+  --shadow-elevated: 0 20px 40px -12px rgb(0 0 0 / 0.1);
+}
+
+/* ===== Semantic color tokens (swap in dark mode) ===== */
+:root {
+  --dw-bg: hsl(210 20% 98%);
+  --dw-surface: hsl(0 0% 100%);
+  --dw-surface-sunken: hsl(216 20% 94%);
+  --dw-text: hsl(220 20% 10%);
+  --dw-text-secondary: hsl(220 10% 35%);
+  --dw-text-muted: hsl(220 8% 50%);
+  --dw-border: hsl(216 15% 88%);
+  --dw-border-light: hsl(216 15% 93%);
+  --dw-accent-bg: hsl(150 30% 93%);
+  --dw-primary-highlight: hsl(155 100% 16%);
+  --dw-primary-highlight-light: hsl(155 100% 21%);
+  --dw-gradient-from: hsl(155 40% 96%);
+}
+
+html.dark {
+  --dw-bg: hsl(222 25% 8%);
+  --dw-surface: hsl(222 20% 12%);
+  --dw-surface-sunken: hsl(222 18% 10%);
+  --dw-text: hsl(210 20% 95%);
+  --dw-text-secondary: hsl(215 15% 70%);
+  --dw-text-muted: hsl(215 10% 55%);
+  --dw-border: hsl(220 15% 20%);
+  --dw-border-light: hsl(220 12% 18%);
+  --dw-accent-bg: hsl(155 30% 12%);
+  --dw-primary-highlight: hsl(150 60% 50%);
+  --dw-primary-highlight-light: hsl(150 60% 60%);
+  --dw-gradient-from: hsl(155 30% 10%);
+
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.2);
+  --shadow-card-hover: 0 10px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.2);
+  --shadow-elevated: 0 20px 40px -12px rgb(0 0 0 / 0.5);
+}
+
+/* Also keep backward compat aliases */
+:root {
+  --color-surface: var(--dw-bg);
+  --color-surface-elevated: var(--dw-surface);
+  --color-surface-sunken: var(--dw-surface-sunken);
+  --color-surface-container: var(--dw-surface-sunken);
+  --color-surface-container-low: var(--dw-surface-sunken);
+  --color-text-primary: var(--dw-text);
+  --color-text-secondary: var(--dw-text-secondary);
+  --color-text-muted: var(--dw-text-muted);
+  --color-on-surface: var(--dw-text);
+  --color-on-surface-muted: var(--dw-text-secondary);
+  --color-border: var(--dw-border);
+  --color-border-light: var(--dw-border-light);
+  --color-accent: var(--dw-accent-bg);
+  --color-accent-foreground: var(--dw-primary-highlight);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-body);
+    color: var(--dw-text);
+    background-color: var(--dw-bg);
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-headline);
+    color: var(--dw-text);
+    letter-spacing: -0.02em;
+  }
+
+  /* Prose styles for blog content */
+  .prose {
+    line-height: 1.75;
+    color: var(--dw-text-secondary);
+  }
+
+  .prose h2,
+  .prose h3 {
+    color: var(--dw-text);
+    margin-top: 2em;
+    margin-bottom: 0.75em;
+  }
+
+  .prose p {
+    margin-bottom: 1.25em;
+  }
+
+  .prose a {
+    color: var(--dw-primary-highlight);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .prose a:hover {
+    color: var(--dw-primary-highlight-light);
+  }
+
+  .prose ul, .prose ol {
+    padding-left: 1.5em;
+    margin-bottom: 1.25em;
+  }
+
+  .prose li {
+    margin-bottom: 0.5em;
+  }
+
+  .prose blockquote {
+    border-left: 3px solid var(--dw-primary-highlight);
+    padding-left: 1em;
+    font-style: italic;
+    color: var(--dw-text-muted);
+  }
+
+  .prose code {
+    background-color: var(--dw-surface-sunken);
+    padding: 0.2em 0.4em;
+    border-radius: 0.25em;
+    font-size: 0.875em;
+  }
+
+  /* Respect reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

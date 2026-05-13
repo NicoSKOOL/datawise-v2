@@ -1,0 +1,297 @@
+---
+interface FAQ {
+  question: string;
+  answer: string;
+}
+
+interface Props {
+  faqs: FAQ[];
+  eyebrow?: string;
+  title?: string;
+  subtitle?: string;
+}
+
+const {
+  faqs,
+  eyebrow = 'Questions',
+  title = 'Frequently asked questions',
+  subtitle,
+} = Astro.props;
+---
+
+<section class="faq-section">
+  <div class="faq-container">
+    <div class="faq-header">
+      <span class="faq-eyebrow">{eyebrow}</span>
+      <h2 class="faq-title">{title}</h2>
+      {subtitle && <p class="faq-subtitle">{subtitle}</p>}
+    </div>
+
+    <div class="faq-list" data-faq-list>
+      {faqs.map((faq, i) => (
+        <div class="faq-item" data-faq-item>
+          <button
+            class="faq-question"
+            type="button"
+            aria-expanded="false"
+            aria-controls={`faq-answer-${i}`}
+          >
+            <span class="faq-question-text">{faq.question}</span>
+            <span class="faq-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </span>
+          </button>
+          <div class="faq-answer" id={`faq-answer-${i}`} aria-hidden="true">
+            <div class="faq-answer-inner">
+              <p>{faq.answer}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq-section {
+    background: var(--dw-bg);
+    padding: 6rem 0;
+  }
+
+  .faq-container {
+    max-width: 52rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+
+  @media (min-width: 640px) {
+    .faq-container { padding: 0 1.5rem; }
+  }
+
+  .faq-header {
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  .faq-eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+    padding: 0.35rem 0.85rem;
+    border: 1px solid var(--dw-border);
+    border-radius: 999px;
+    background: var(--dw-accent-bg);
+  }
+
+  .faq-title {
+    margin-top: 1rem;
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--dw-text);
+    letter-spacing: -0.01em;
+  }
+
+  .faq-subtitle {
+    margin-top: 0.75rem;
+    font-size: 1.05rem;
+    color: var(--dw-text-secondary);
+    line-height: 1.55;
+  }
+
+  .faq-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .faq-item {
+    border: 1px solid var(--dw-border);
+    border-radius: 16px;
+    background: var(--dw-surface);
+    overflow: hidden;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+  }
+
+  .faq-item:hover {
+    border-color: var(--color-primary-200, rgba(0, 82, 50, 0.25));
+    box-shadow: var(--shadow-card, 0 4px 14px rgba(0, 0, 0, 0.05));
+  }
+
+  .faq-item.is-open {
+    border-color: var(--color-primary);
+    box-shadow: 0 8px 28px rgba(0, 82, 50, 0.1);
+  }
+
+  .faq-question {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    padding: 1.25rem 1.5rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    color: var(--dw-text);
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.4;
+    transition: color 0.2s ease;
+  }
+
+  .faq-question:hover {
+    color: var(--color-primary);
+  }
+
+  .faq-question:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+    border-radius: 16px;
+  }
+
+  .faq-icon {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--dw-accent-bg);
+    color: var(--color-primary);
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s ease;
+    position: relative;
+  }
+
+  .faq-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Morph + to × when open (rotate 135deg) */
+  .faq-item.is-open .faq-icon {
+    transform: rotate(135deg);
+    background: var(--color-primary);
+    color: #ffffff;
+  }
+
+  .faq-answer {
+    overflow: hidden;
+    height: 0;
+  }
+
+  .faq-answer-inner {
+    padding: 0 1.5rem 1.5rem;
+  }
+
+  .faq-answer p {
+    color: var(--dw-text-secondary);
+    font-size: 0.975rem;
+    line-height: 1.7;
+    margin: 0;
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Scroll-triggered entrance: items fade-up in sequence
+  document.querySelectorAll<HTMLElement>('[data-faq-list]').forEach((list) => {
+    const items = list.querySelectorAll<HTMLElement>('[data-faq-item]');
+    if (!prefersReducedMotion) {
+      gsap.from(items, {
+        y: 30,
+        opacity: 0,
+        duration: 0.6,
+        ease: 'power3.out',
+        stagger: 0.08,
+        scrollTrigger: { trigger: list, start: 'top 85%', once: true },
+      });
+    }
+  });
+
+  // Accordion open/close with animated height
+  document.querySelectorAll<HTMLElement>('[data-faq-item]').forEach((item) => {
+    const button = item.querySelector<HTMLButtonElement>('.faq-question');
+    const answer = item.querySelector<HTMLElement>('.faq-answer');
+    const inner = item.querySelector<HTMLElement>('.faq-answer-inner');
+    if (!button || !answer || !inner) return;
+
+    button.addEventListener('click', () => {
+      const isOpen = item.classList.contains('is-open');
+
+      // Close any other open item in the same list (only one open at a time)
+      const siblings = (item.parentElement?.querySelectorAll<HTMLElement>('[data-faq-item].is-open')) || [];
+      siblings.forEach((sib) => {
+        if (sib !== item) {
+          const sibAnswer = sib.querySelector<HTMLElement>('.faq-answer');
+          const sibBtn = sib.querySelector<HTMLButtonElement>('.faq-question');
+          if (sibAnswer) {
+            gsap.to(sibAnswer, {
+              height: 0,
+              duration: 0.45,
+              ease: 'power3.inOut',
+            });
+          }
+          sib.classList.remove('is-open');
+          sibBtn?.setAttribute('aria-expanded', 'false');
+          sibAnswer?.setAttribute('aria-hidden', 'true');
+        }
+      });
+
+      if (isOpen) {
+        // Close
+        gsap.to(answer, {
+          height: 0,
+          duration: 0.45,
+          ease: 'power3.inOut',
+        });
+        item.classList.remove('is-open');
+        button.setAttribute('aria-expanded', 'false');
+        answer.setAttribute('aria-hidden', 'true');
+      } else {
+        // Open — measure target height from inner content
+        const targetHeight = inner.offsetHeight;
+        gsap.fromTo(
+          answer,
+          { height: 0 },
+          {
+            height: targetHeight,
+            duration: 0.55,
+            ease: 'power3.inOut',
+            onComplete: () => {
+              // Allow natural flow after animation
+              (answer as HTMLElement).style.height = 'auto';
+            },
+          }
+        );
+        // Subtle fade-in for the inner content
+        if (!prefersReducedMotion) {
+          gsap.fromTo(
+            inner,
+            { opacity: 0, y: -8 },
+            { opacity: 1, y: 0, duration: 0.5, delay: 0.1, ease: 'power2.out' }
+          );
+        }
+        item.classList.add('is-open');
+        button.setAttribute('aria-expanded', 'true');
+        answer.setAttribute('aria-hidden', 'false');
+      }
+    });
+  });
+</script>

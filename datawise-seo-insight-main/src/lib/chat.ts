@@ -1,4 +1,5 @@
 import { api } from './api';
+import { DEFAULT_OPENROUTER_MODEL, isApprovedOpenRouterModel } from './ai-models';
 
 export interface Conversation {
   id: string;
@@ -16,37 +17,79 @@ export interface ChatMessageData {
 }
 
 export interface LLMConfig {
-  provider: 'openai' | 'claude' | 'gemini' | 'openrouter';
+  provider: 'openrouter';
   api_key: string;
   model?: string;
 }
 
 const LLM_CONFIG_KEY = 'datawise_llm_config';
 
-export function getLLMConfig(): LLMConfig | null {
+export type StoredLLMConfig = {
+  provider?: 'openai' | 'claude' | 'gemini' | 'openrouter' | string;
+  api_key?: string;
+  model?: string;
+};
+
+export function getStoredLLMConfig(): StoredLLMConfig | null {
   const stored = localStorage.getItem(LLM_CONFIG_KEY);
   if (!stored) return null;
   try {
-    return JSON.parse(stored);
+    const parsed = JSON.parse(stored);
+    return typeof parsed === 'object' && parsed ? parsed : null;
   } catch {
     return null;
   }
 }
 
+export function getLLMConfig(): LLMConfig | null {
+  const parsed = getStoredLLMConfig();
+  if (!parsed || parsed.provider !== 'openrouter' || !parsed.api_key) return null;
+  return {
+    provider: 'openrouter',
+    api_key: parsed.api_key,
+    model: isApprovedOpenRouterModel(parsed.model) ? parsed.model : DEFAULT_OPENROUTER_MODEL,
+  };
+}
+
+// Cross-component event: localStorage's native `storage` event doesn't fire
+// in the SAME tab that wrote the value, so any component reading the chat
+// config inside the same SPA (e.g. the Content Writer's ModelBadge) wouldn't
+// notice a Settings change. We dispatch a custom event on every write so
+// listeners can refresh without a page reload.
+export const LLM_CONFIG_EVENT = 'datawise:llm-config-changed';
+
 export function saveLLMConfig(config: LLMConfig): void {
-  localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify(config));
+  localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify({
+    provider: 'openrouter',
+    api_key: config.api_key,
+    model: isApprovedOpenRouterModel(config.model) ? config.model : DEFAULT_OPENROUTER_MODEL,
+  }));
+  window.dispatchEvent(new Event(LLM_CONFIG_EVENT));
 }
 
 export function clearLLMConfig(): void {
   localStorage.removeItem(LLM_CONFIG_KEY);
+  window.dispatchEvent(new Event(LLM_CONFIG_EVENT));
 }
 
-export async function getConversations() {
-  return api<{ conversations: Conversation[] }>('/chat/conversations');
+export async function getConversations(propertyId?: string) {
+  const qs = propertyId ? `?property_id=${encodeURIComponent(propertyId)}` : '';
+  return api<{ conversations: Conversation[] }>(`/chat/conversations${qs}`);
 }
 
 export async function getConversation(id: string) {
   return api<{ conversation: Conversation; messages: ChatMessageData[] }>(`/chat/conversations/${id}`);
+}
+
+export async function deleteConversation(id: string) {
+  return api<{ success: boolean }>(`/chat/conversations/${id}`, { method: 'DELETE' });
+}
+
+export async function renameConversation(id: string, title: string) {
+  return api<{ success: boolean }>(`/chat/conversations/${id}`, {
+    method: 'PATCH',
+    body: { title },
+  });
 }
 
 export async function sendMessage(

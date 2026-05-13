@@ -1,0 +1,130 @@
+---
+import Section from '../ui/Section.astro';
+import Icon from '../ui/Icon.astro';
+
+const tools = ['DataWise', 'Semrush', 'Ahrefs', 'Moz'];
+const features = [
+  { name: 'Keyword Research', available: [true, true, true, true] },
+  { name: 'Competitor Analysis', available: [true, true, true, true] },
+  { name: 'Rank Tracking', available: [true, true, true, true] },
+  { name: 'AI Visibility Tracking', available: [true, false, false, false] },
+  { name: 'AI SEO Assistant', available: [true, true, false, false] },
+  { name: 'Content Optimization', available: [true, true, true, true] },
+  { name: 'Google Search Console Integration', available: [true, true, true, true] },
+];
+const prices = ['From $27/mo', '$139/mo', '$129/mo', '$99/mo'];
+---
+
+<Section id="comparison" bg="accent">
+  <div class="text-center mb-12">
+    <h2 class="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)] comparison-title">
+      Why stack $367/mo in tools you barely use?
+    </h2>
+    <p class="mt-4 text-lg text-[var(--color-text-primary)]/70 max-w-2xl mx-auto comparison-sub">
+      One AI Ranking membership from $27/mo includes every DataWise tool plus weekly strategy drops. Compare feature-for-feature against Semrush, Ahrefs, and Moz.
+    </p>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-left comparison-table">
+      <thead>
+        <tr class="border-b-2 border-[var(--color-border)]">
+          <th class="py-4 pr-4 text-sm font-medium text-[var(--color-text-muted)]">Feature</th>
+          {tools.map((tool, i) => (
+            <th class:list={[
+              'py-4 px-4 text-center text-sm font-bold whitespace-nowrap',
+              i === 0 ? 'text-[var(--color-primary)] bg-[var(--color-primary-50)] rounded-t-lg' : 'text-[var(--color-text-primary)]',
+            ]}>
+              {tool}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {features.map((feature) => (
+          <tr class="border-b border-[var(--color-border-light)]">
+            <td class="py-3.5 pr-4 text-sm text-[var(--color-text-primary)] font-medium">{feature.name}</td>
+            {feature.available.map((has, i) => (
+              <td class:list={[
+                'py-3.5 px-4 text-center',
+                i === 0 && 'bg-[var(--color-primary-50)]/50',
+              ]}>
+                {has ? (
+                  <Icon name="check" size={20} class={i === 0 ? 'text-[var(--color-primary)] mx-auto' : 'text-[var(--color-text-muted)] mx-auto'} />
+                ) : (
+                  <span class="text-[var(--color-text-muted)]">&mdash;</span>
+                )}
+              </td>
+            ))}
+          </tr>
+        ))}
+        <tr class="border-t-2 border-[var(--color-border)]">
+          <td class="py-4 pr-4 text-sm font-bold text-[var(--color-text-primary)]">Price</td>
+          {prices.map((price, i) => (
+            <td class:list={[
+              'py-4 px-4 text-center font-bold',
+              i === 0
+                ? 'text-[var(--color-primary)] bg-[var(--color-primary-50)] rounded-b-lg text-lg'
+                : 'text-[var(--color-text-muted)] text-sm',
+            ]}>
+              {price}
+            </td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</Section>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    // Heading fade up
+    gsap.from('.comparison-title', {
+      y: 30, opacity: 0, duration: 0.6, ease: 'power3.out',
+      scrollTrigger: { trigger: '.comparison-title', start: 'top 85%', once: true },
+    });
+
+    gsap.from('.comparison-sub', {
+      y: 20, opacity: 0, duration: 0.5, ease: 'power3.out', delay: 0.1,
+      scrollTrigger: { trigger: '.comparison-sub', start: 'top 85%', once: true },
+    });
+
+    // Table rows stagger in from left
+    const rows = document.querySelectorAll('.comparison-table tr');
+    gsap.from(rows, {
+      x: -40,
+      opacity: 0,
+      duration: 0.4,
+      ease: 'power2.out',
+      stagger: 0.06,
+      scrollTrigger: {
+        trigger: '.comparison-table',
+        start: 'top 80%',
+        once: true,
+      },
+    });
+
+    // Checkmarks pop in with scale bounce
+    const checks = document.querySelectorAll('.comparison-table svg');
+    gsap.from(checks, {
+      scale: 0,
+      opacity: 0,
+      duration: 0.3,
+      ease: 'back.out(3)',
+      stagger: 0.03,
+      delay: 0.4,
+      scrollTrigger: {
+        trigger: '.comparison-table',
+        start: 'top 80%',
+        once: true,
+      },
+    });
+  }
+</script>

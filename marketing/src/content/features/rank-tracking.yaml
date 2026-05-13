@@ -1,0 +1,94 @@
+# Primary keyword: keyword rank tracker
+# LSI keywords: serp position tracker, google search console rank tracking, local pack tracker, keyword position monitoring, rank tracking software, seo ranking report, daily rank checker, serp feature tracking
+
+title: Rank Tracking
+description: Monitor keyword rankings over time with Google Search Console integration, local pack tracking, and performance alerts.
+metaDescription: "Track keyword rankings with DataWise's keyword rank tracker. GSC integration gives you real Google data, local pack monitoring, and trend analysis."
+icon: "📈"
+heroTagline: "Know where you stand, catch changes fast"
+benefits:
+  - title: GSC integration
+    description: Connect Google Search Console for real ranking data. No estimation, just actual performance metrics from Google.
+  - title: Local pack monitoring
+    description: Track your visibility in Google's local pack results for location-based keywords.
+  - title: Historical trends
+    description: See how your rankings evolve over time, spot drops early, and measure the impact of your SEO work.
+subTools:
+  - name: Site Rankings
+    description: View all your ranked keywords with positions, impressions, clicks, and CTR from Google Search Console.
+  - name: Tracked Keywords
+    description: Create a watchlist of priority keywords and monitor their ranking changes over time.
+  - name: Local Pack
+    description: Track your presence in Google's local 3-pack results for location-specific searches.
+
+stats:
+  - value: 1
+    suffix: "-day"
+    label: "Ranking data refresh cadence"
+  - value: 0
+    suffix: "%"
+    label: "Estimation error (GSC is your actual Google record)"
+  - value: 25
+    suffix: "+"
+    label: "Priority keywords per watchlist"
+  - value: 3
+    suffix: ""
+    label: "Local pack positions tracked per query"
+
+story:
+  - caption: "Connect your data source"
+    highlight: "Link Google Search Console in one OAuth step or manually add priority keywords to your watchlist. DataWise imports your existing ranking history from GSC so you start with context, not a blank slate."
+  - caption: "Watch positions move over time"
+    highlight: "Your dashboard surfaces ranking trends, position deltas, and SERP feature changes day by day. Spot the moment a page drops, gains a featured snippet, or breaks into the local pack."
+  - caption: "Act on the signal, prove the result"
+    highlight: "Investigate drops with click and impression data, prioritize fixes, and measure the ranking lift after you publish an update. Every SEO action gets a before-and-after record."
+
+opportunities:
+  - title: Early-warning ranking drops
+    description: "Catch position declines the day they happen, before traffic falls and revenue follows."
+    icon: shield
+  - title: SERP feature wins
+    description: "Detect when a page gains a featured snippet, People Also Ask slot, or AI Overview mention without manual checking."
+    icon: star
+  - title: Local pack coverage gaps
+    description: "See exactly which location-based queries show a competitor in the map pack instead of your business."
+    icon: globe
+  - title: Post-algorithm impact measurement
+    description: "Overlay Google update dates with your ranking history to know precisely which pages and queries were hit."
+    icon: bar-chart
+  - title: Content ROI proof
+    description: "Measure the ranking lift on a page before and after an SEO update so you can show leadership what moved the needle."
+    icon: check-circle
+  - title: Competitor position movement
+    description: "Track when a rival surges on a keyword you both target so you can respond before they consolidate the gain."
+    icon: users
+
+useCases:
+  - audience: "In-house SEO teams"
+    scenario: "Pull GSC-backed ranking data into weekly leadership reports. Replace screenshot-based updates with a live dashboard that shows position trends, click impact, and SERP feature changes over time."
+    icon: users
+  - audience: "Agencies"
+    scenario: "Build per-client ranking dashboards that refresh daily and show measurable progress against the keywords you promised to improve. Demonstrate ROI with historical trend lines, not point-in-time snapshots."
+    icon: bar-chart
+  - audience: "Local businesses"
+    scenario: "Monitor your Google map pack presence for every service-location keyword you care about. Know when you drop out of the local 3-pack and which competitor replaced you, so you can act fast."
+    icon: target
+  - audience: "Ecommerce"
+    scenario: "Track product and category page positions for commercial-intent terms across mobile and desktop. Identify which listing pages slipped after a site update and prioritize re-optimization by traffic value."
+    icon: trending-up
+
+faqs:
+  - question: How often does the rank tracker update keyword positions?
+    answer: "DataWise syncs ranking data from Google Search Console every 24 hours. GSC itself typically reflects the previous day's data, so your dashboard is always within one cycle of Google's own record. For most SEO workflows, daily refresh is the right cadence: frequent enough to catch sudden drops, stable enough to filter out single-day noise."
+  - question: Can a rank tracker show my local pack rankings?
+    answer: "Yes. DataWise includes a dedicated Local Pack sub-tool that tracks your presence in Google's local 3-pack results for location-based queries. You can monitor which keywords trigger a map pack, whether your business appears in it, and when a competitor displaces you. This is separate from standard organic tracking and is designed specifically for local SEO workflows."
+  - question: "What is the difference between a rank tracker and Google Search Console?"
+    answer: "Google Search Console shows you raw impressions, clicks, and average position across all your queries, but it does not surface trends clearly, does not alert you to drops, and does not let you build a focused watchlist. A keyword rank tracker like DataWise layers dashboards, position deltas, and alerts on top of the same underlying GSC data so you can act on changes instead of just observing them."
+  - question: Can I track mobile and desktop rankings separately?
+    answer: "Google Search Console separates data by device type, and DataWise exposes that segmentation in your ranking reports. You can compare position and CTR for mobile versus desktop on the same keyword, which is especially useful when a page ranks well on desktop but drops on mobile after a layout change or Core Web Vitals regression."
+  - question: How many keywords can I track with my AI Ranking membership?
+    answer: "Your AI Ranking community membership ($27/mo, 7-day risk-free trial) includes unlimited GSC-backed rank tracking on every property you connect, which surfaces every keyword Google already reports for your site. For the manual Tracked Keywords watchlist, you get up to 25 priority keywords per project with daily position monitoring out of the box, and you can run multiple projects across your portfolio under a single membership."
+  - question: Does rank tracking include SERP features like featured snippets and AI Overviews?
+    answer: "DataWise flags SERP feature presence alongside standard position data. When a tracked keyword shows a featured snippet, People Also Ask box, or AI Overview in the results, that is surfaced in your dashboard so you know whether you hold the feature or a competitor does. This context matters because winning a SERP feature can drive clicks even if your organic position stays the same."
+  - question: How do ranking drop alerts work and when should I act on them?
+    answer: "DataWise highlights keywords where position has declined by a configurable threshold since the previous period. When you see a drop alert, the first check is whether multiple pages dropped simultaneously (which suggests an algorithm update) or a single page dropped (which usually points to a content or technical issue). Act immediately on single-page drops tied to a recent publish. For algorithm-related drops, collect 7 to 14 days of data before making changes."

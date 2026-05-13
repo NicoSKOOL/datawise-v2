@@ -1,0 +1,197 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Section from '../components/ui/Section.astro';
+import Button from '../components/ui/Button.astro';
+import Badge from '../components/ui/Badge.astro';
+import Icon from '../components/ui/Icon.astro';
+import Accordion from '../components/ui/Accordion.astro';
+
+const includedFeatures = [
+  'Unlimited Keyword Research (5 sub-tools)',
+  'Unlimited Competitor Analysis (5 sub-tools)',
+  'Unlimited Rank Tracking with GSC integration',
+  'AI Visibility tracking across ChatGPT, Perplexity, Google AI Mode, Google AI Overviews',
+  'AI SEO Assistant that reads your Search Console data',
+  'Content refresh and service-page optimization tools',
+  'Weekly SEO strategy breakdowns and case studies',
+  'Direct access to the founder inside the community',
+  'No seat limits across your team',
+  'No feature gates, no "pro" tier, no upsells',
+];
+
+const faqs = [
+  {
+    question: 'Is DataWise free?',
+    answer: 'DataWise itself is not sold separately. It is included at no extra cost inside the AI Ranking community on Skool. The community starts at $27/month. Skool does not offer true free trials, so you pay upfront at signup, but it is risk-free: if the community and the tool are not a fit in the first 7 days, DM Nico and he personally refunds you 100%, no questions asked. So the honest framing: DataWise is the included perk, the community is the product.',
+  },
+  {
+    question: 'What exactly am I paying for?',
+    answer: 'The $27/month AI Ranking membership covers three things: (1) unlimited access to every DataWise tool for your whole team, (2) weekly strategy content and case studies from a decade of SEO practice, and (3) access to a community of SEO professionals plus direct access to the founder. Compared to stacking Semrush ($139) + Ahrefs ($129) + Moz ($99) = $367/month for just the tools, the math works out.',
+  },
+  {
+    question: 'How does the 7-day risk-free trial work?',
+    answer: 'Skool does not run true free trials, so when you join AI Ranking you pay the $27 upfront at signup and get full community access plus every DataWise tool immediately. If the community and the tool are not a fit for you in the first 7 days, send Nico a DM and he personally refunds you 100%, no questions asked. That is why we call it risk-free, not free.',
+  },
+  {
+    question: 'Can I use DataWise without joining the community?',
+    answer: 'DataWise is currently a community-member-only product. The AI Ranking community membership is the only way to get full access. This keeps the tool funded sustainably and the community engaged.',
+  },
+  {
+    question: 'How does DataWise compare to Semrush, Ahrefs, and Moz?',
+    answer: 'DataWise covers the core SEO toolkit (keyword research, competitor analysis, rank tracking, content optimization) plus AI visibility tracking, which the others do not offer. Semrush Pro is $139/mo, Ahrefs Lite is $129/mo, Moz Pro is $99/mo. Most SEOs end up stacking at least two of those ($228+/mo) to get the same coverage a single AI Ranking membership provides for $27/mo.',
+  },
+  {
+    question: 'Can I use DataWise for client work?',
+    answer: 'Yes. Many community members use DataWise for their agency or freelance SEO work. There are no restrictions on how you use the tools inside your membership.',
+  },
+  {
+    question: 'Do I need to connect Google Search Console?',
+    answer: 'GSC integration is optional but recommended. It enables the SEO Assistant, rank tracking, and personalized insights on your actual site. Most other tools (keyword research, competitor analysis, AI visibility) work without it.',
+  },
+];
+---
+
+<BaseLayout
+  title="Pricing"
+  description="DataWise is included with the AI Ranking community membership from $27/month. One membership replaces a $367/mo stack of Semrush, Ahrefs, and Moz. 7-day risk-free trial, cancel anytime."
+>
+  <!-- FAQPage Schema -->
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": faqs.map(faq => ({
+      "@type": "Question",
+      "name": faq.question,
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": faq.answer,
+      },
+    })),
+  })} />
+
+  <!-- Hero -->
+  <section class="pt-24 pb-8 lg:pt-32 lg:pb-12 text-center bg-gradient-to-b from-[var(--dw-accent-bg)] to-[var(--dw-bg)]">
+    <div class="mx-auto max-w-3xl px-4">
+      <Badge variant="accent" class="mb-6">7-Day Risk-Free Trial</Badge>
+      <h1 id="pricing-title" class="text-4xl sm:text-5xl font-extrabold leading-tight" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        Every SEO tool,<br />
+        <span class="text-[var(--color-primary)]">one membership</span>
+      </h1>
+      <p id="pricing-sub" class="mt-4 text-lg text-[var(--dw-text-secondary)] max-w-xl mx-auto">
+        One AI Ranking community membership covers every DataWise tool and every sub-feature. No stacked subscriptions, no tiered limits, no "contact sales" buttons.
+      </p>
+    </div>
+  </section>
+
+  <!-- Single pricing card -->
+  <Section>
+    <div class="max-w-xl mx-auto">
+      <div class="pricing-card rounded-3xl p-8 sm:p-10 border-2 border-[var(--color-primary)] bg-[var(--dw-surface)] shadow-[var(--shadow-elevated)] relative overflow-hidden">
+        <!-- Top accent bar -->
+        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[var(--color-primary)] to-[#2ecc71]"></div>
+
+        <Badge variant="primary" size="sm" class="mb-4">AI Ranking Community</Badge>
+
+        <h2 class="text-2xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+          Every DataWise tool, plus the community
+        </h2>
+
+        <div class="mt-6 flex items-baseline gap-2">
+          <span class="text-sm font-medium text-[var(--dw-text-muted)]">From</span>
+          <span class="text-5xl font-extrabold text-[var(--dw-text)]" style="font-family: var(--font-headline, 'Manrope', sans-serif);">$27</span>
+          <span class="text-lg text-[var(--dw-text-muted)]">/ month</span>
+        </div>
+
+        <p class="mt-3 text-sm text-[var(--dw-text-secondary)]">
+          Billed monthly through Skool. 7-day risk-free trial, cancel anytime. Credit card required at signup.
+        </p>
+
+        <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" class="w-full mt-6" magnetic>
+          Start 7-Day Risk-Free Trial
+        </Button>
+
+        <div class="mt-8 pt-8 border-t border-[var(--dw-border)]">
+          <div class="text-xs font-semibold tracking-widest uppercase text-[var(--dw-text-muted)] mb-4">What's included</div>
+          <ul class="space-y-3">
+            {includedFeatures.map((feat) => (
+              <li class="flex items-start gap-2 text-sm">
+                <Icon name="check-circle" size={18} class="shrink-0 text-[var(--color-primary)] mt-0.5" />
+                <span class="text-[var(--dw-text)]">{feat}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </Section>
+
+  <!-- Comparison callout -->
+  <Section bg="accent">
+    <div class="text-center max-w-3xl mx-auto">
+      <h2 class="text-2xl sm:text-3xl font-bold mb-4" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        What would this cost stacked elsewhere?
+      </h2>
+      <p class="text-[var(--dw-text-secondary)] leading-relaxed mb-8">
+        Most SEO teams end up paying for multiple tools to get the same coverage. Here is what the equivalent stack looks like:
+      </p>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <div class="p-5 rounded-xl bg-[var(--dw-surface)] border border-[var(--dw-border)]">
+          <div class="text-sm text-[var(--dw-text-muted)]">Semrush Pro</div>
+          <div class="mt-1 text-2xl font-bold text-[var(--dw-text)]">$139<span class="text-sm font-normal text-[var(--dw-text-muted)]">/mo</span></div>
+        </div>
+        <div class="p-5 rounded-xl bg-[var(--dw-surface)] border border-[var(--dw-border)]">
+          <div class="text-sm text-[var(--dw-text-muted)]">Ahrefs Lite</div>
+          <div class="mt-1 text-2xl font-bold text-[var(--dw-text)]">$129<span class="text-sm font-normal text-[var(--dw-text-muted)]">/mo</span></div>
+        </div>
+        <div class="p-5 rounded-xl bg-[var(--dw-surface)] border border-[var(--dw-border)]">
+          <div class="text-sm text-[var(--dw-text-muted)]">Moz Pro</div>
+          <div class="mt-1 text-2xl font-bold text-[var(--dw-text)]">$99<span class="text-sm font-normal text-[var(--dw-text-muted)]">/mo</span></div>
+        </div>
+      </div>
+      <div class="inline-flex flex-col sm:flex-row items-center gap-3 sm:gap-6 p-6 rounded-2xl bg-[var(--dw-surface)] border-2 border-[var(--color-primary)]">
+        <div class="text-left">
+          <div class="text-xs font-semibold tracking-widest uppercase text-[var(--dw-text-muted)]">Stacked total</div>
+          <div class="text-2xl font-bold text-[var(--dw-text-muted)] line-through">$367/mo</div>
+        </div>
+        <Icon name="arrow-right" size={24} class="text-[var(--color-primary)] hidden sm:block" />
+        <div class="text-left">
+          <div class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">AI Ranking membership</div>
+          <div class="text-2xl font-bold text-[var(--color-primary)]">From $27/mo</div>
+        </div>
+      </div>
+      <p class="mt-6 text-sm text-[var(--dw-text-secondary)]">
+        Plus DataWise includes AI visibility tracking (ChatGPT, Perplexity, Google AI Mode), which none of those tools offer.
+      </p>
+      <div class="mt-8">
+        <Button href="/features" variant="secondary" size="md">
+          See all features included
+        </Button>
+      </div>
+    </div>
+  </Section>
+
+  <!-- FAQ -->
+  <Section bg="white">
+    <h2 class="text-2xl sm:text-3xl font-bold text-center mb-10 faq-title" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+      Frequently asked questions
+    </h2>
+    <div class="max-w-2xl mx-auto">
+      <Accordion items={faqs} />
+    </div>
+  </Section>
+</BaseLayout>
+
+<script>
+  import { gsap } from 'gsap';
+  import { fadeUp } from '../scripts/animations';
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!prefersReducedMotion) {
+    gsap.from('#pricing-title', { y: 30, opacity: 0, duration: 0.6, ease: 'power3.out' });
+    gsap.from('#pricing-sub', { y: 20, opacity: 0, duration: 0.5, ease: 'power3.out', delay: 0.15 });
+    gsap.from('.pricing-card', {
+      y: 40, opacity: 0, duration: 0.7, ease: 'power3.out', delay: 0.3,
+    });
+  }
+  fadeUp('.faq-title');
+</script>

@@ -1,0 +1,1174 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Section from '../components/ui/Section.astro';
+import Button from '../components/ui/Button.astro';
+import Icon from '../components/ui/Icon.astro';
+
+const socials = [
+  {
+    name: 'LinkedIn',
+    href: 'https://www.linkedin.com/in/nico-gorrono/',
+    label: '@nico-gorrono',
+  },
+  {
+    name: 'YouTube',
+    href: 'https://www.youtube.com/@Nico_AIRanking',
+    label: '@Nico_AIRanking',
+  },
+  {
+    name: 'TikTok',
+    href: 'https://www.tiktok.com/@nico_airanking',
+    label: '@nico_airanking',
+  },
+];
+---
+
+<BaseLayout
+  title="About Nico Gorrono"
+  description="Nicolas Gorrono is the founder of DataWise and the AI Ranking community. After a decade in SEO across agencies and in-house roles, he is on a mission to make professional SEO tools accessible through one $27/mo community membership."
+>
+  <!-- Person Schema -->
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "Person",
+    "name": "Nicolas Gorrono",
+    "alternateName": "Nico Gorrono",
+    "jobTitle": "Founder",
+    "description": "Founder of DataWise SEO and the AI Ranking community. Over a decade of SEO experience across agency and in-house roles, now building AI-first SEO tools accessible to everyone.",
+    "image": "https://www.datawiseseo.com/images/about/nico-headshot.png",
+    "url": "https://www.datawiseseo.com/about",
+    "worksFor": {
+      "@type": "Organization",
+      "name": "DataWise SEO",
+      "url": "https://www.datawiseseo.com",
+    },
+    "sameAs": [
+      "https://www.skool.com/ai-ranking",
+      "https://www.linkedin.com/in/nico-gorrono/",
+      "https://www.youtube.com/@Nico_AIRanking",
+      "https://www.tiktok.com/@nico_airanking",
+    ],
+  })} />
+
+  <!-- ============================================= -->
+  <!-- HERO                                           -->
+  <!-- ============================================= -->
+  <section class="about-hero">
+    <div class="about-hero-bg" aria-hidden="true"></div>
+    <div class="about-hero-blob about-hero-blob--1" aria-hidden="true"></div>
+    <div class="about-hero-blob about-hero-blob--2" aria-hidden="true"></div>
+
+    <div class="about-hero-container">
+      <div class="about-hero-text">
+        <div class="about-hero-badge" id="about-badge">
+          <span class="about-badge-dot" aria-hidden="true"></span>
+          <span>Founder · DataWise · AI Ranking</span>
+        </div>
+        <h1 id="about-title" class="about-hero-title">
+          Hi, I'm Nico.<br />
+          <span class="about-hero-accent">I make SEO<br />actually accessible.</span>
+        </h1>
+        <p id="about-sub" class="about-hero-sub">
+          A decade in SEO across agencies and in-house roles, then a shift into AI-first search and community teaching. Now I build SEO tools for people who refuse to stack $400/month in enterprise subscriptions they barely use, and bundle them into one $27/mo community membership.
+        </p>
+
+        <div id="about-ctas" class="about-hero-ctas">
+          <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+            Join AI Ranking
+          </Button>
+          <Button href="#my-story" variant="ghost" size="lg">
+            Read the story
+          </Button>
+        </div>
+
+        <div id="about-socials" class="about-hero-socials">
+          {socials.map((s) => (
+            <a href={s.href} target="_blank" rel="noopener noreferrer" class="about-social" aria-label={`Nico on ${s.name}`}>
+              {s.name === 'LinkedIn' && (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.024-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.063 2.063 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                </svg>
+              )}
+              {s.name === 'YouTube' && (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                </svg>
+              )}
+              {s.name === 'TikTok' && (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005.8 20.1a6.34 6.34 0 0010.86-4.43V8.1a8.16 8.16 0 004.77 1.52V6.21a4.79 4.79 0 01-1.84-.52z" />
+                </svg>
+              )}
+              <span>{s.label}</span>
+            </a>
+          ))}
+        </div>
+      </div>
+
+      <div class="about-hero-portrait" id="about-portrait">
+        <div class="portrait-frame">
+          <img
+            src="/images/about/nico-headshot.png"
+            alt="Nicolas Gorrono, founder of DataWise and the AI Ranking community"
+            width="780"
+            height="975"
+            loading="eager"
+          />
+          <div class="portrait-shine" aria-hidden="true"></div>
+        </div>
+        <div class="portrait-caption">
+          <div class="portrait-caption-name">Nicolas Gorrono</div>
+          <div class="portrait-caption-role">Founder, DataWise &amp; AI Ranking</div>
+        </div>
+        <div class="portrait-glow portrait-glow--1" aria-hidden="true"></div>
+        <div class="portrait-glow portrait-glow--2" aria-hidden="true"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- QUICK FACTS STRIP                              -->
+  <!-- ============================================= -->
+  <section class="facts-strip">
+    <div class="facts-inner">
+      <div class="fact-item">
+        <div class="fact-value">10<span class="fact-suffix">+</span></div>
+        <div class="fact-label">Years in SEO</div>
+      </div>
+      <div class="fact-divider" aria-hidden="true"></div>
+      <div class="fact-item">
+        <div class="fact-value">6</div>
+        <div class="fact-label">SEO tools built</div>
+      </div>
+      <div class="fact-divider" aria-hidden="true"></div>
+      <div class="fact-item">
+        <div class="fact-value"><span class="fact-prefix">$</span>27<span class="fact-suffix">/mo</span></div>
+        <div class="fact-label">From membership</div>
+      </div>
+      <div class="fact-divider" aria-hidden="true"></div>
+      <div class="fact-item">
+        <div class="fact-value">AI-first</div>
+        <div class="fact-label">Approach</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- THE MISSION                                    -->
+  <!-- ============================================= -->
+  <section class="mission-section" id="mission">
+    <div class="mission-container">
+      <div class="mission-eyebrow">
+        <Icon name="target" size={14} />
+        <span>The mission</span>
+      </div>
+      <h2 class="mission-title">
+        Make SEO accessible without stacking <span class="mission-strike">$400/month</span> in tools you barely use.
+      </h2>
+      <p class="mission-body">
+        The SEO tool industry is built on enterprise pricing that locks small businesses, solo creators, and indie consultants out of the data they need. I have watched that pattern kill more ambitious projects than any Google update. DataWise is my answer: every tool you need to compete in modern AI-first search, bundled into one AI Ranking community membership from $27/mo.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- THE STORY                                      -->
+  <!-- ============================================= -->
+  <section class="story-section" id="my-story">
+    <div class="story-container">
+      <div class="story-header">
+        <div class="story-eyebrow">
+          <Icon name="pen-tool" size={14} />
+          <span>The story</span>
+        </div>
+        <h2 class="story-title">From agency trenches to an AI-first community</h2>
+      </div>
+
+      <div class="story-timeline">
+        <article class="story-step" data-story-card>
+          <div class="story-step-num">01</div>
+          <div class="story-step-icon">
+            <Icon name="bar-chart" size={22} />
+          </div>
+          <h3 class="story-step-title">A decade in SEO, agency and in-house</h3>
+          <p class="story-step-body">
+            I have worked in SEO for just over a decade. On the agency side at JTV Studios, and in-house at RedRock Venues and RPM Properties. That time gave me every angle: messy client accounts, venue and property sites with complex intent, and the slow grind of turning audits into real rankings.
+          </p>
+        </article>
+
+        <article class="story-step" data-story-card>
+          <div class="story-step-num">02</div>
+          <div class="story-step-icon">
+            <Icon name="zap" size={22} />
+          </div>
+          <h3 class="story-step-title">Then AI rewrote everything</h3>
+          <p class="story-step-body">
+            I leaned hard into AI search the moment it started shifting how people actually find information. My take: AI SEO is not a separate discipline, it is good technical SEO done faster with automation and LLMs. That framing turned into dozens of TikToks showing real websites grow organically, week by week.
+          </p>
+        </article>
+
+        <article class="story-step" data-story-card>
+          <div class="story-step-num">03</div>
+          <div class="story-step-icon">
+            <Icon name="users" size={22} />
+          </div>
+          <h3 class="story-step-title">AI Ranking was born on Skool</h3>
+          <p class="story-step-body">
+            People watching the TikToks kept asking if I could teach this. I said yes, and we launched the AI Ranking Skool community. It grew into a room full of founders, consultants, and operators who wanted to learn modern SEO without the gatekeeping.
+          </p>
+        </article>
+
+        <article class="story-step" data-story-card>
+          <div class="story-step-num">04</div>
+          <div class="story-step-icon">
+            <Icon name="shield" size={22} />
+          </div>
+          <h3 class="story-step-title">The tool-pricing problem</h3>
+          <p class="story-step-body">
+            One message kept coming up in the community: "I want to do SEO properly, but Semrush and Ahrefs are way out of my budget." And honestly, those tools carry a lot of features most people never touch. Paying $500 a month for 5% of a dashboard makes no sense.
+          </p>
+        </article>
+
+        <article class="story-step" data-story-card>
+          <div class="story-step-num">05</div>
+          <div class="story-step-icon">
+            <Icon name="robot" size={22} />
+          </div>
+          <h3 class="story-step-title">So I built DataWise</h3>
+          <p class="story-step-body">
+            Instead of recommending tools nobody could afford, I built one from scratch. DataWise runs on the same enterprise data (DataForSEO), adds AI where it actually helps, and ships as a single unified workspace. Every community member gets the whole thing included with their membership.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- COMMUNITY CTA BAND                             -->
+  <!-- ============================================= -->
+  <section class="community-band">
+    <div class="community-container">
+      <div class="community-card">
+        <div class="community-card-inner">
+          <div class="community-eyebrow">
+            <span class="community-dot" aria-hidden="true"></span>
+            <span>AI Ranking community</span>
+          </div>
+          <h2 class="community-title">
+            Where I actually teach this stuff
+          </h2>
+          <p class="community-body">
+            AI Ranking is the Skool community where I break down AI-first SEO strategies, share weekly case studies, and give members unlimited access to every DataWise tool. One membership from $27/mo, 7-day risk-free trial, no stacked tool bills.
+          </p>
+          <div class="community-bullets">
+            <div class="community-bullet">
+              <Icon name="check-circle" size={18} />
+              <span>Weekly strategy breakdowns and AI search case studies</span>
+            </div>
+            <div class="community-bullet">
+              <Icon name="check-circle" size={18} />
+              <span>Unlimited DataWise access for every seat</span>
+            </div>
+            <div class="community-bullet">
+              <Icon name="check-circle" size={18} />
+              <span>Direct access to me and a community of practitioners</span>
+            </div>
+          </div>
+          <div class="community-ctas">
+            <Button href="https://www.skool.com/ai-ranking" variant="accent" size="lg" magnetic>
+              Join AI Ranking Community
+            </Button>
+            <Button href="/features" variant="ghost" size="lg" class="text-white/80 hover:text-white hover:bg-white/10">
+              Explore the tools first
+            </Button>
+          </div>
+        </div>
+        <div class="community-card-glow" aria-hidden="true"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- FOLLOW STRIP                                   -->
+  <!-- ============================================= -->
+  <Section bg="white">
+    <div class="follow-strip">
+      <div class="follow-strip-header">
+        <h2 class="follow-strip-title">Follow along</h2>
+        <p class="follow-strip-sub">
+          I post daily AI SEO breakdowns and case studies across these platforms. Pick your poison.
+        </p>
+      </div>
+      <div class="follow-strip-grid">
+        {socials.map((s) => (
+          <a href={s.href} target="_blank" rel="noopener noreferrer" class="follow-card" data-tilt>
+            <div class="follow-card-icon">
+              {s.name === 'LinkedIn' && (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.024-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.063 2.063 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                </svg>
+              )}
+              {s.name === 'YouTube' && (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+                </svg>
+              )}
+              {s.name === 'TikTok' && (
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-5.2 1.74 2.89 2.89 0 012.31-4.64 2.93 2.93 0 01.88.13V9.4a6.84 6.84 0 00-1-.05A6.33 6.33 0 005.8 20.1a6.34 6.34 0 0010.86-4.43V8.1a8.16 8.16 0 004.77 1.52V6.21a4.79 4.79 0 01-1.84-.52z" />
+                </svg>
+              )}
+            </div>
+            <div class="follow-card-meta">
+              <div class="follow-card-platform">{s.name}</div>
+              <div class="follow-card-handle">{s.label}</div>
+            </div>
+            <div class="follow-card-arrow">
+              <Icon name="arrow-right" size={18} />
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  </Section>
+</BaseLayout>
+
+<style>
+  /* ============================================= */
+  /* HERO                                           */
+  /* ============================================= */
+  .about-hero {
+    position: relative;
+    padding: 6.5rem 0 5rem;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  @media (min-width: 1024px) {
+    .about-hero { padding: 8.5rem 0 6rem; }
+  }
+
+  .about-hero-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background: linear-gradient(180deg, var(--dw-accent-bg) 0%, var(--dw-bg) 100%);
+  }
+
+  .about-hero-blob {
+    position: absolute;
+    z-index: -1;
+    border-radius: 9999px;
+    filter: blur(100px);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .about-hero-blob--1 {
+    width: 520px;
+    height: 520px;
+    top: -160px;
+    left: -140px;
+    background: radial-gradient(circle, rgba(46, 204, 113, 0.45), transparent 65%);
+  }
+
+  .about-hero-blob--2 {
+    width: 600px;
+    height: 600px;
+    bottom: -200px;
+    right: -180px;
+    background: radial-gradient(circle, rgba(0, 82, 50, 0.35), transparent 60%);
+  }
+
+  .about-hero-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3rem;
+    align-items: center;
+    position: relative;
+  }
+
+  @media (min-width: 640px) {
+    .about-hero-container { padding: 0 1.5rem; }
+  }
+
+  @media (min-width: 1024px) {
+    .about-hero-container {
+      grid-template-columns: 1.2fr 1fr;
+      gap: 4rem;
+    }
+  }
+
+  .about-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--dw-text);
+    font-size: 0.82rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    box-shadow: var(--shadow-card, 0 1px 3px rgba(0, 0, 0, 0.04));
+    margin-bottom: 1.5rem;
+  }
+
+  .about-badge-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #2ecc71;
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.2);
+    animation: aboutPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes aboutPulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.2); }
+    50% { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0.08); }
+  }
+
+  .about-hero-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-weight: 800;
+    line-height: 1.04;
+    color: var(--dw-text);
+    letter-spacing: -0.025em;
+  }
+
+  .about-hero-accent {
+    background: linear-gradient(135deg, var(--color-primary) 0%, #2ecc71 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .about-hero-sub {
+    margin-top: 1.5rem;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+    max-width: 34rem;
+  }
+
+  .about-hero-ctas {
+    margin-top: 2rem;
+    display: flex;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+  }
+
+  .about-hero-socials {
+    margin-top: 2.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .about-social {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.85rem;
+    border-radius: 9999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--dw-text-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.3s ease;
+  }
+
+  .about-social svg {
+    width: 16px;
+    height: 16px;
+    color: var(--color-primary);
+    transition: color 0.3s ease;
+  }
+
+  .about-social:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+  }
+
+  /* Portrait */
+  .about-hero-portrait {
+    position: relative;
+    justify-self: center;
+    max-width: 460px;
+    width: 100%;
+  }
+
+  .portrait-frame {
+    position: relative;
+    aspect-ratio: 4 / 5;
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 30px 60px -20px rgba(0, 82, 50, 0.3), 0 15px 30px -10px rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--dw-border);
+    background: var(--dw-surface);
+    z-index: 2;
+  }
+
+  .portrait-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .portrait-shine {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, transparent 30%);
+    mix-blend-mode: overlay;
+  }
+
+  .portrait-caption {
+    position: absolute;
+    bottom: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    border-radius: 14px;
+    padding: 0.85rem 1.35rem;
+    box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.15);
+    text-align: center;
+    z-index: 3;
+    white-space: nowrap;
+  }
+
+  .portrait-caption-name {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--dw-text);
+    line-height: 1.2;
+  }
+
+  .portrait-caption-role {
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    color: var(--dw-text-secondary);
+    letter-spacing: 0.01em;
+  }
+
+  .portrait-glow {
+    position: absolute;
+    z-index: 1;
+    border-radius: 9999px;
+    filter: blur(80px);
+    pointer-events: none;
+  }
+
+  .portrait-glow--1 {
+    width: 280px;
+    height: 280px;
+    top: -50px;
+    right: -60px;
+    background: radial-gradient(circle, rgba(46, 204, 113, 0.4), transparent 65%);
+  }
+
+  .portrait-glow--2 {
+    width: 260px;
+    height: 260px;
+    bottom: -40px;
+    left: -80px;
+    background: radial-gradient(circle, rgba(0, 82, 50, 0.35), transparent 65%);
+  }
+
+  /* ============================================= */
+  /* QUICK FACTS STRIP                              */
+  /* ============================================= */
+  .facts-strip {
+    background: var(--dw-surface);
+    border-top: 1px solid var(--dw-border);
+    border-bottom: 1px solid var(--dw-border);
+    padding: 2.25rem 0;
+  }
+
+  .facts-inner {
+    max-width: 70rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem 1rem;
+    align-items: center;
+  }
+
+  @media (min-width: 900px) {
+    .facts-inner {
+      grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr;
+    }
+  }
+
+  .fact-item {
+    text-align: center;
+  }
+
+  .fact-value {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.75rem, 3vw, 2.25rem);
+    font-weight: 800;
+    line-height: 1;
+    color: var(--dw-text);
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.05em;
+  }
+
+  .fact-suffix,
+  .fact-prefix {
+    color: var(--color-primary);
+  }
+
+  .fact-label {
+    margin-top: 0.45rem;
+    font-size: 0.78rem;
+    color: var(--dw-text-secondary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .fact-divider {
+    display: none;
+    width: 1px;
+    height: 40px;
+    background: var(--dw-border);
+    justify-self: center;
+  }
+
+  @media (min-width: 900px) {
+    .fact-divider { display: block; }
+  }
+
+  /* ============================================= */
+  /* MISSION                                        */
+  /* ============================================= */
+  .mission-section {
+    padding: 6rem 0;
+    background: var(--dw-bg);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .mission-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--dw-border) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--dw-border) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+    opacity: 0.3;
+    pointer-events: none;
+  }
+
+  .mission-container {
+    position: relative;
+    max-width: 52rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    text-align: center;
+  }
+
+  .mission-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--dw-border);
+    background: var(--dw-surface);
+    color: var(--color-primary);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 1.25rem;
+  }
+
+  .mission-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.2;
+    color: var(--dw-text);
+    letter-spacing: -0.015em;
+  }
+
+  .mission-strike {
+    position: relative;
+    color: var(--dw-text-muted);
+    display: inline-block;
+  }
+
+  .mission-strike::after {
+    content: '';
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    top: 50%;
+    height: 3px;
+    background: var(--color-primary);
+    transform: rotate(-4deg) translateY(-50%);
+    border-radius: 2px;
+  }
+
+  .mission-body {
+    margin-top: 1.5rem;
+    font-size: 1.08rem;
+    line-height: 1.65;
+    color: var(--dw-text-secondary);
+  }
+
+  /* ============================================= */
+  /* STORY TIMELINE                                 */
+  /* ============================================= */
+  .story-section {
+    padding: 6rem 0;
+    background: var(--dw-surface);
+  }
+
+  .story-container {
+    max-width: 70rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+
+  @media (min-width: 640px) {
+    .story-container { padding: 0 1.5rem; }
+  }
+
+  .story-header {
+    text-align: center;
+    margin-bottom: 3rem;
+  }
+
+  .story-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--dw-border);
+    background: var(--dw-bg);
+    color: var(--color-primary);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .story-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--dw-text);
+    letter-spacing: -0.015em;
+  }
+
+  .story-timeline {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  @media (min-width: 768px) {
+    .story-timeline {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 1100px) {
+    .story-timeline {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  .story-step {
+    position: relative;
+    padding: 2rem 1.75rem;
+    background: var(--dw-bg);
+    border: 1px solid var(--dw-border);
+    border-radius: 20px;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s ease, box-shadow 0.4s ease;
+    overflow: hidden;
+  }
+
+  .story-step::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--color-primary), #2ecc71);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .story-step:hover {
+    transform: translateY(-4px);
+    border-color: var(--color-primary);
+    box-shadow: 0 20px 40px -16px rgba(0, 82, 50, 0.2);
+  }
+
+  .story-step:hover::before {
+    transform: scaleX(1);
+  }
+
+  .story-step-num {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--color-primary);
+    opacity: 0.7;
+    margin-bottom: 1rem;
+  }
+
+  .story-step-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    background: var(--dw-accent-bg);
+    color: var(--color-primary);
+    margin-bottom: 1rem;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .story-step:hover .story-step-icon {
+    transform: scale(1.08) rotate(-4deg);
+  }
+
+  .story-step-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--dw-text);
+    line-height: 1.3;
+    margin-bottom: 0.6rem;
+  }
+
+  .story-step-body {
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+  }
+
+  /* ============================================= */
+  /* COMMUNITY CTA BAND                             */
+  /* ============================================= */
+  .community-band {
+    padding: 6rem 0;
+    background: var(--dw-bg);
+  }
+
+  .community-container {
+    max-width: 72rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+
+  @media (min-width: 640px) {
+    .community-container { padding: 0 1.5rem; }
+  }
+
+  .community-card {
+    position: relative;
+    background: linear-gradient(135deg, #042e1e 0%, #0a1f17 100%);
+    border: 1px solid rgba(46, 204, 113, 0.15);
+    border-radius: 32px;
+    padding: 4rem 2rem;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  @media (min-width: 768px) {
+    .community-card {
+      padding: 5rem 4rem;
+    }
+  }
+
+  .community-card-glow {
+    position: absolute;
+    top: -200px;
+    right: -100px;
+    width: 500px;
+    height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(46, 204, 113, 0.35), transparent 65%);
+    filter: blur(60px);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .community-card-inner {
+    position: relative;
+    z-index: 2;
+    max-width: 42rem;
+  }
+
+  .community-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.45rem 0.95rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(46, 204, 113, 0.35);
+    background: rgba(46, 204, 113, 0.08);
+    color: #2ecc71;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 1.25rem;
+  }
+
+  .community-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #2ecc71;
+    box-shadow: 0 0 0 3px rgba(46, 204, 113, 0.25);
+  }
+
+  .community-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(2rem, 5vw, 3.25rem);
+    font-weight: 800;
+    line-height: 1.1;
+    color: #ffffff;
+    letter-spacing: -0.02em;
+  }
+
+  .community-body {
+    margin-top: 1.25rem;
+    font-size: 1.08rem;
+    line-height: 1.6;
+    color: rgba(229, 231, 235, 0.75);
+    max-width: 36rem;
+  }
+
+  .community-bullets {
+    margin-top: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .community-bullet {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+
+  .community-bullet :global(svg) {
+    color: #2ecc71;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .community-ctas {
+    margin-top: 2.5rem;
+    display: flex;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+  }
+
+  /* ============================================= */
+  /* FOLLOW STRIP                                   */
+  /* ============================================= */
+  .follow-strip {
+    max-width: 70rem;
+    margin: 0 auto;
+  }
+
+  .follow-strip-header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+  }
+
+  .follow-strip-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.65rem, 3.5vw, 2.25rem);
+    font-weight: 800;
+    color: var(--dw-text);
+    letter-spacing: -0.01em;
+  }
+
+  .follow-strip-sub {
+    margin-top: 0.75rem;
+    font-size: 1rem;
+    color: var(--dw-text-secondary);
+  }
+
+  .follow-strip-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  @media (min-width: 768px) {
+    .follow-strip-grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.25rem;
+    }
+  }
+
+  .follow-card {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.35rem 1.5rem;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    border-radius: 18px;
+    text-decoration: none;
+    color: var(--dw-text);
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .follow-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, var(--dw-accent-bg), transparent);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .follow-card:hover {
+    border-color: var(--color-primary);
+    transform: translateY(-3px);
+    box-shadow: 0 18px 36px -14px rgba(0, 82, 50, 0.25);
+  }
+
+  .follow-card:hover::before {
+    opacity: 1;
+  }
+
+  .follow-card-icon {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: var(--dw-accent-bg);
+    color: var(--color-primary);
+    flex-shrink: 0;
+    z-index: 2;
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .follow-card-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .follow-card:hover .follow-card-icon {
+    background: var(--color-primary);
+    color: #ffffff;
+    transform: scale(1.05) rotate(-4deg);
+  }
+
+  .follow-card-meta {
+    position: relative;
+    z-index: 2;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .follow-card-platform {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .follow-card-handle {
+    margin-top: 0.15rem;
+    font-size: 0.82rem;
+    color: var(--dw-text-secondary);
+  }
+
+  .follow-card-arrow {
+    position: relative;
+    z-index: 2;
+    color: var(--dw-text-muted);
+    opacity: 0;
+    transform: translateX(-6px);
+    transition: all 0.35s ease;
+    flex-shrink: 0;
+  }
+
+  .follow-card:hover .follow-card-arrow {
+    opacity: 1;
+    transform: translateX(0);
+    color: var(--color-primary);
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* Hero entrance */
+  if (!prefersReducedMotion) {
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.from('#about-badge', { y: 14, opacity: 0, duration: 0.5 })
+      .from('#about-title', { y: 40, opacity: 0, duration: 0.8 }, '-=0.2')
+      .from('#about-sub', { y: 24, opacity: 0, duration: 0.6 }, '-=0.4')
+      .from('#about-ctas', { y: 20, opacity: 0, duration: 0.5 }, '-=0.4')
+      .from('#about-socials', { y: 20, opacity: 0, duration: 0.5 }, '-=0.35')
+      .from('#about-portrait', { x: 50, opacity: 0, duration: 1 }, '-=0.9');
+  }
+
+  /* Story cards stagger reveal on scroll */
+  if (!prefersReducedMotion) {
+    ScrollTrigger.batch('[data-story-card]', {
+      onEnter: (elements) => {
+        gsap.from(elements, {
+          y: 40,
+          opacity: 0,
+          duration: 0.75,
+          ease: 'power3.out',
+          stagger: 0.1,
+          overwrite: true,
+        });
+      },
+      start: 'top 85%',
+      once: true,
+    });
+  }
+</script>

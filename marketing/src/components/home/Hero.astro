@@ -1,0 +1,80 @@
+---
+import Button from '../ui/Button.astro';
+import Badge from '../ui/Badge.astro';
+import AppScreenshot from '../ui/AppScreenshot.astro';
+---
+
+<section class="relative pt-24 pb-16 lg:pt-32 lg:pb-24 overflow-hidden">
+  <!-- Background -->
+  <div class="absolute inset-0 -z-10">
+    <div class="absolute inset-0 bg-gradient-to-b from-[var(--dw-gradient-from)] via-[var(--dw-bg)] to-[var(--dw-bg)]"></div>
+    <div class="absolute top-0 right-0 w-[600px] h-[600px] bg-[var(--dw-gradient-from)] rounded-full blur-[120px] opacity-40 -translate-y-1/2 translate-x-1/4"></div>
+  </div>
+
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+      <!-- Text Column -->
+      <div class="max-w-xl">
+        <div id="hero-badge">
+          <Badge variant="outline">
+            <span class="h-2 w-2 rounded-full bg-[var(--color-success)] animate-pulse"></span>
+            From $27/mo · 7-day risk-free trial
+          </Badge>
+        </div>
+
+        <h1 id="hero-title" class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] tracking-tight text-[var(--dw-text)]">
+          One Membership That Replaces Your
+          <span class="text-[var(--dw-primary-highlight)]">$400/mo SEO Stack</span>
+        </h1>
+
+        <p id="hero-sub" class="mt-6 text-lg text-[var(--dw-text-secondary)] leading-relaxed">
+          Keyword research, competitor analysis, rank tracking, AI visibility monitoring, and an AI SEO assistant. Every DataWise tool is included with your AI Ranking community membership. Try it free for 7 days.
+        </p>
+
+        <div id="hero-cta" class="mt-8 flex flex-col sm:flex-row items-start gap-4">
+          <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+            Join AI Ranking
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </Button>
+          <Button href="/features" variant="secondary" size="lg">
+            Explore the Tools
+          </Button>
+        </div>
+
+        <p id="hero-proof" class="mt-8 text-sm text-[var(--dw-text-muted)] flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[var(--dw-primary-highlight)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Join 500+ SEO professionals in the AI Ranking community
+        </p>
+      </div>
+
+      <!-- Screenshot Column -->
+      <div id="hero-screenshot" class="relative">
+        <AppScreenshot
+          src="/images/screenshots/dashboard.jpg"
+          alt="DataWise SEO dashboard showing keyword rankings, GSC clicks, pages indexed, and quick action tools"
+          priority
+          class="lg:translate-x-4"
+        />
+        <!-- Decorative accent -->
+        <div class="absolute -bottom-4 -left-4 w-24 h-24 bg-[var(--dw-gradient-from)] rounded-2xl -z-10 hidden lg:block"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  import { gsap } from 'gsap';
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+
+    tl.from('#hero-badge', { y: -20, autoAlpha: 0, duration: 0.5 })
+      .from('#hero-title', { y: 40, autoAlpha: 0, duration: 0.7 }, '-=0.2')
+      .from('#hero-sub', { y: 30, autoAlpha: 0, duration: 0.6 }, '-=0.3')
+      .from('#hero-cta', { y: 20, autoAlpha: 0, scale: 0.95, duration: 0.5, ease: 'back.out(1.7)' }, '-=0.2')
+      .from('#hero-proof', { y: 10, autoAlpha: 0, duration: 0.4 }, '-=0.1')
+      .from('#hero-screenshot', { x: 80, autoAlpha: 0, duration: 1, ease: 'power2.out' }, '-=0.6');
+  }
+</script>

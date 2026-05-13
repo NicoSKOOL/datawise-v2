@@ -1,0 +1,63 @@
+---
+import Section from '../ui/Section.astro';
+import Button from '../ui/Button.astro';
+---
+
+<Section id="founder-video" bg="accent">
+  <div class="max-w-4xl mx-auto text-center">
+    <span class="inline-block text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)] mb-3">
+      Meet the founder
+    </span>
+    <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold mb-4 leading-tight" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+      Why DataWise exists
+    </h2>
+    <p class="text-lg text-[var(--dw-text-secondary)] mb-10 max-w-2xl mx-auto">
+      75 seconds from Nico on what makes this different, and a personal refund promise if it is not a fit.
+    </p>
+
+    <div class="founder-video-frame rounded-2xl overflow-hidden border border-[var(--dw-border)] shadow-2xl bg-[var(--dw-surface)]">
+      <div style="position: relative; padding-bottom: 56.25%; height: 0;">
+        <iframe
+          style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0;"
+          src="https://www.tella.tv/video/vid_cmnxj76eu01qf05lggpmma6k2/embed?b=0&title=0&a=1&loop=0&t=0&muted=0&wt=0&o=1"
+          allow="autoplay; fullscreen"
+          allowtransparency
+          loading="lazy"
+          title="Nicolas Gorrono explaining why DataWise exists"
+        ></iframe>
+      </div>
+    </div>
+
+    <div class="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+      <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+        Join AI Ranking
+      </Button>
+      <p class="text-sm text-[var(--dw-text-muted)]">
+        $27/month · 7-day risk-free trial · Full refund if it is not a fit
+      </p>
+    </div>
+  </div>
+</Section>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    gsap.from('.founder-video-frame', {
+      y: 40,
+      opacity: 0,
+      duration: 0.8,
+      ease: 'power3.out',
+      scrollTrigger: {
+        trigger: '.founder-video-frame',
+        start: 'top 85%',
+        once: true,
+      },
+    });
+  }
+</script>

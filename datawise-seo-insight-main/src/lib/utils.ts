@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function sanitizeDomain(value: string): string {
+  return value
+    .trim()
+    .replace(/^(https?:\/\/)?(www\.)?/i, '')
+    .replace(/\/.*$/, '')
+    .toLowerCase();
+}
+
 // Color calculation utilities for domain comparison
 export function isNumericColumn(value: any): boolean {
   return typeof value === 'number' || (!isNaN(Number(value)) && value !== '' && value !== null);

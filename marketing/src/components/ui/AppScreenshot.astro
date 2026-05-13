@@ -1,0 +1,101 @@
+---
+interface Props {
+  src: string;
+  alt: string;
+  class?: string;
+  priority?: boolean;
+}
+
+const { src, alt, class: className = '', priority = false } = Astro.props;
+---
+
+<div class:list={['app-screenshot-wrapper relative overflow-hidden rounded-[20px] shadow-[var(--shadow-card)] border border-[var(--dw-border)] transition-all duration-300', className]} data-mouse-follow>
+  <img
+    src={src}
+    alt={alt}
+    class="w-full h-auto block screenshot-img transition-transform duration-500 ease-out"
+    loading={priority ? 'eager' : 'lazy'}
+    decoding="async"
+    fetchpriority={priority ? 'high' : undefined}
+  />
+  <!-- Shine overlay that follows the mouse -->
+  <div class="screenshot-shine absolute inset-0 pointer-events-none opacity-0 transition-opacity duration-300" aria-hidden="true"></div>
+  <!-- Border glow on hover -->
+  <div class="screenshot-glow absolute inset-0 rounded-[20px] pointer-events-none opacity-0 transition-opacity duration-300" aria-hidden="true"></div>
+</div>
+
+<style>
+  .app-screenshot-wrapper {
+    will-change: transform;
+    transform-style: preserve-3d;
+    perspective: 1000px;
+  }
+
+  /* Lift + stronger shadow on hover */
+  .app-screenshot-wrapper:hover {
+    box-shadow: 0 25px 50px -12px rgb(0 82 50 / 0.12), 0 12px 24px -8px rgb(0 0 0 / 0.08);
+    border-color: var(--color-primary-200);
+  }
+
+  /* Slight scale on the image */
+  .app-screenshot-wrapper:hover .screenshot-img {
+    transform: scale(1.02);
+  }
+
+  /* Mouse-follow shine */
+  .app-screenshot-wrapper:hover .screenshot-shine {
+    opacity: 1;
+  }
+
+  .screenshot-shine {
+    background: radial-gradient(
+      500px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      rgba(255, 255, 255, 0.2) 0%,
+      rgba(255, 255, 255, 0.05) 40%,
+      transparent 70%
+    );
+  }
+
+  /* Subtle green glow around edges */
+  .app-screenshot-wrapper:hover .screenshot-glow {
+    opacity: 1;
+  }
+
+  .screenshot-glow {
+    box-shadow: inset 0 0 30px rgba(0, 82, 50, 0.06);
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    document.querySelectorAll('[data-mouse-follow]').forEach((wrapper) => {
+      const el = wrapper as HTMLElement;
+
+      const rotateXTo = gsap.quickTo(el, 'rotationX', { duration: 0.4, ease: 'power2' });
+      const rotateYTo = gsap.quickTo(el, 'rotationY', { duration: 0.4, ease: 'power2' });
+
+      el.addEventListener('mousemove', (e: MouseEvent) => {
+        const rect = el.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const percX = (x / rect.width) * 100;
+        const percY = (y / rect.height) * 100;
+
+        el.style.setProperty('--mouse-x', `${percX}%`);
+        el.style.setProperty('--mouse-y', `${percY}%`);
+
+        rotateXTo((y / rect.height - 0.5) * -6);
+        rotateYTo((x / rect.width - 0.5) * 6);
+      });
+
+      el.addEventListener('mouseleave', () => {
+        rotateXTo(0);
+        rotateYTo(0);
+      });
+    });
+  }
+</script>

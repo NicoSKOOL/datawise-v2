@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Plus, RefreshCw, Globe } from 'lucide-react';
@@ -10,10 +11,11 @@ interface ProjectDetailHeaderProps {
   onBack: () => void;
   onAddKeywords: () => void;
   onCheckRankings: () => void;
+  extraActions?: ReactNode;
 }
 
 export default function ProjectDetailHeader({
-  project, checking, keywordCount, onBack, onAddKeywords, onCheckRankings,
+  project, checking, keywordCount, onBack, onAddKeywords, onCheckRankings, extraActions,
 }: ProjectDetailHeaderProps) {
   return (
     <div className="flex items-center justify-between flex-wrap gap-4">
@@ -30,6 +32,7 @@ export default function ProjectDetailHeader({
         </div>
       </div>
       <div className="flex gap-2">
+        {extraActions}
         <Button variant="outline" onClick={onAddKeywords}>
           <Plus className="h-4 w-4 mr-2" />
           Add Keywords

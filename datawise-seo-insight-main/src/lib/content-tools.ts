@@ -158,6 +158,7 @@ export interface ServicePageAnalysis {
   meta_description_suggested: string;
   additional_recommendations: string[];
   _parse_error?: string;
+  _truncated?: boolean;
 }
 
 export async function fetchServicePage(url: string): Promise<ServicePageData> {

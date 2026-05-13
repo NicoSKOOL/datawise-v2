@@ -1,0 +1,111 @@
+# SEO KEYWORD RESEARCH NOTES
+# Primary keyword: "generative engine optimization tool"
+#   - GEO is an emerging category (2024-2026), lower competition than "ai seo"
+#   - Captures strong informational + commercial intent from brands and SEOs
+#     trying to understand and act on the AI search shift
+# Runner-up: "ai search visibility tracking"
+#   - Targets the monitoring/tracking use case directly
+# LSI / supporting terms woven into copy:
+#   - answer engine optimization (AEO)
+#   - llm citations, llms.txt
+#   - google ai overview optimization
+#   - chatgpt seo, perplexity citations
+#   - ai search monitoring, brand mentions in ai
+#   - ai mode seo, llm-friendly content
+#   - people also ask optimization, geo seo
+# Targeting note: "GEO" has rising search volume and is far less saturated than
+#   "ai seo" or "seo ai tool", which attract broader, lower-converting audiences.
+
+title: AI Visibility
+description: Track your brand presence in AI-powered search results across Google AI Mode, ChatGPT, Perplexity, and more.
+metaDescription: "Monitor your generative engine optimization (GEO) performance: track brand citations in ChatGPT, Perplexity, and Google AI Overviews, then fix gaps to earn more LLM mentions."
+icon: "🤖"
+heroTagline: "Know exactly where AI cites you, and where it doesn't"
+
+benefits:
+  - title: AI search monitoring
+    description: Track whether your brand appears in AI-generated answers across Google AI Mode, ChatGPT, and Perplexity.
+  - title: People Also Ask tracking
+    description: Monitor PAA boxes for your target keywords and find opportunities to capture featured snippets.
+  - title: On-page SEO auditing
+    description: Run Lighthouse-powered audits to ensure your pages are optimized for both traditional and AI search.
+
+subTools:
+  - name: AI Search Tracker
+    description: Check if your domain is cited in AI-generated search results across multiple AI engines.
+  - name: People Also Ask
+    description: Analyze PAA questions for any keyword to inform your content strategy and FAQ sections.
+  - name: On-Page SEO Audit
+    description: Run comprehensive on-page audits powered by Lighthouse to identify technical optimization opportunities.
+
+stats:
+  - value: 4
+    suffix: "+"
+    label: "AI engines tracked (Google AI Mode, ChatGPT, Perplexity, AI Overviews)"
+  - value: 30
+    suffix: "%+"
+    label: "Google queries triggering AI Overviews as of 2026"
+  - value: 1
+    suffix: "s"
+    label: "Live citation check response time per AI engine"
+  - value: 100
+    suffix: "-point"
+    label: "Lighthouse scoring coverage across performance, SEO, and best practices"
+
+story:
+  - caption: "Enter your brand or target keywords"
+    highlight: "Type your domain, brand name, or a money keyword. DataWise sends live queries to each AI engine and PAA box simultaneously."
+  - caption: "See your AI citation map"
+    highlight: "A clear breakdown shows which engines cite you, which ignore you, and what competitors appear in your place across every AI platform."
+  - caption: "Fix gaps and claim more citations"
+    highlight: "Act on Lighthouse audit findings and PAA opportunities to make your content more citation-worthy for LLMs and AI-generated answers."
+
+opportunities:
+  - title: "ChatGPT brand mention tracking"
+    description: "Find out when ChatGPT names your brand in answers and monitor shifts after content or PR changes."
+    icon: "message-circle"
+  - title: "Perplexity citation monitoring"
+    description: "Perplexity explicitly cites its sources inline. Track whether your domain earns those coveted references."
+    icon: "globe"
+  - title: "Google AI Overview coverage"
+    description: "See if your pages surface in AI Overviews for high-value queries before competitors lock in those positions."
+    icon: "zap"
+  - title: "People Also Ask opportunity capture"
+    description: "Mine PAA boxes for citation-ready question formats that feed both featured snippets and LLM training signals."
+    icon: "target"
+  - title: "Google AI Mode presence"
+    description: "Track your visibility in Google's dedicated AI search experience, separate from standard AI Overview monitoring."
+    icon: "shield"
+  - title: "Structured data and llms.txt optimization"
+    description: "Identify missing schema markup and llms.txt signals that make your content easier for LLMs to parse and cite."
+    icon: "check-circle"
+
+useCases:
+  - icon: "users"
+    audience: "Brand marketers"
+    scenario: "A brand manager discovers a competitor is consistently cited in ChatGPT answers for category-defining terms. They use AI Visibility to track their own citation rate, spot the content gap, and brief the team to publish authoritative responses that shift AI attribution back to their brand."
+  - icon: "star"
+    audience: "PR teams"
+    scenario: "A communications director monitors how Perplexity and Google AI Mode describe the company narrative after a product launch. When AI-generated summaries pull from outdated press coverage, the team publishes structured corrections and tracks citation recovery in real time."
+  - icon: "pen-tool"
+    audience: "Content teams"
+    scenario: "A content strategist audits which existing articles earn AI citations and which are invisible to LLMs. Using PAA data and Lighthouse findings, they reformat posts with clear answer capsules and FAQ sections, increasing citation frequency within weeks."
+  - icon: "trending-up"
+    audience: "SEO leads"
+    scenario: "An SEO director preparing for the shift from blue-link rankings to AI-driven results uses DataWise to benchmark current GEO performance across all major AI engines, then builds a quarterly roadmap prioritizing citation-gap pages over traditional rank-chasing."
+
+faqs:
+  - question: "What is Generative Engine Optimization (GEO)?"
+    answer: "Generative Engine Optimization (GEO) is the practice of structuring your content so that AI-powered search engines, including ChatGPT, Perplexity, and Google AI Mode, are more likely to cite your pages in their generated answers. Unlike traditional SEO, which targets blue-link rankings, GEO focuses on becoming a trusted source that large language models quote and reference. Tactics include clear answer formatting, structured data markup, authoritative sourcing, and publishing an llms.txt file to signal your content's availability to AI crawlers."
+  - question: "How do AI search tools like ChatGPT and Perplexity decide which sources to cite?"
+    answer: "AI engines weigh several factors when selecting citations: source authority and trust signals (domain rating, backlink profile), content clarity (how directly a page answers the query), structured formatting (headers, lists, FAQ sections), freshness, and entity associations. Perplexity is particularly citation-transparent, pulling URLs inline. ChatGPT and Google AI Overviews tend to blend multiple sources. Consistently earning citations requires content that is authoritative, well-structured, and formatted so LLMs can extract clean, quotable answers without ambiguity."
+  - question: "Is ChatGPT replacing Google Search?"
+    answer: "Not yet, but the market is shifting fast. ChatGPT handles hundreds of millions of queries weekly, and AI-native search tools are growing faster than any previous search entrant. More importantly, Google itself is transforming into an AI-first experience via AI Overviews and AI Mode, which already affect over 30% of queries. The practical implication for brands: relying on traditional SEO alone is no longer sufficient. Visibility in AI-generated answers is now a parallel channel that requires a deliberate generative engine optimization strategy alongside classic ranking work."
+  - question: "How do I get my website cited in Google AI Overviews?"
+    answer: "Google AI Overviews pull from pages that rank well organically and present information in a clear, directly-answering format. To increase your odds: target informational and comparison queries with tight, concise answers near the top of the page; use structured data (FAQ, HowTo, Article schema); ensure your Lighthouse performance and Core Web Vitals scores are strong; and build topical authority through internally linked content clusters. DataWise's On-Page SEO Audit surfaces specific gaps across all of these dimensions for any URL you submit."
+  - question: "What is the difference between SEO, AEO, and GEO?"
+    answer: "SEO (Search Engine Optimization) targets traditional blue-link rankings on Google and Bing. AEO (Answer Engine Optimization) focuses on earning featured snippets and direct answers within classic search results pages. GEO (Generative Engine Optimization) goes further: it optimizes content to be cited inside AI-generated responses from tools like ChatGPT, Perplexity, and Google AI Mode. GEO builds on AEO principles but adds LLM-specific considerations such as entity clarity, llms.txt configuration, and citation-ready answer formatting that goes beyond classic on-page signals."
+  - question: "How often does AI visibility data refresh across engines?"
+    answer: "DataWise runs live queries to each AI engine at the time of your scan, so every check reflects that engine's current output rather than a cached snapshot. Because AI answers are non-deterministic and updated frequently, we recommend running visibility checks after any major content publish, PR event, or product update. Tracking over time, rather than in one-off checks, reveals citation trends and shows whether your generative engine optimization efforts are moving the needle across ChatGPT, Perplexity, Google AI Overviews, and AI Mode."
+  - question: "Can I track Perplexity or Gemini citations for a specific industry?"
+    answer: "Yes. DataWise lets you input any keyword or brand term, so you can scope tracking to your specific vertical, whether that is legal services, SaaS, e-commerce, or local businesses. Run industry-specific queries to see which competitors earn Perplexity citations in your niche, which topics trigger AI Overviews, and what PAA questions dominate your category. This makes AI Visibility useful not just for brand monitoring but for full competitive intelligence across the emerging GEO and AEO landscape."

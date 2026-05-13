@@ -269,6 +269,149 @@ function stripCodeFences(text: string): string {
   return text.trim();
 }
 
+type ServicePageSource = {
+  meta_title?: string;
+  meta_description?: string;
+  word_count?: number;
+};
+
+function defaultServicePageAnalysis(
+  page: ServicePageSource,
+  parseError?: string,
+  truncated = false
+): Record<string, unknown> {
+  return {
+    ...(parseError ? { _parse_error: parseError } : {}),
+    ...(truncated ? { _truncated: true } : {}),
+    service_type: 'unknown',
+    location: 'unknown',
+    industry_category: 'other',
+    content_score: 'thin',
+    content_score_pct: 0,
+    content_word_count: page.word_count || 0,
+    content_gaps: [],
+    swap_test: { score: 0, generic_sections: [] },
+    missing_page_sections: [],
+    industry_specific_sections: [],
+    image_audit: { has_images: false, total_count: 0, missing_alt_count: 0, needs_service_area_map: false, suggestions: [] },
+    heading_structure: { has_h1: false, h1_text: '', h1_includes_keyword: false, h1_includes_location: false, hierarchy_valid: false, issues: [], suggested_headings: [] },
+    cta_audit: { ctas_found: [], score: 'none', suggestions: [] },
+    trust_signals: { found: [], missing: [], score: 'none' },
+    tone_analysis: '',
+    local_content_section: { title: '', content: '', placement: '' },
+    schema_existing: [],
+    schema_missing: [],
+    schema_generated: {},
+    faq: [],
+    meta_title_current: page.meta_title || '',
+    meta_title_suggested: '',
+    meta_description_current: page.meta_description || '',
+    meta_description_suggested: '',
+    additional_recommendations: [],
+  };
+}
+
+function mergeServicePageAnalysisDefaults(parsed: Record<string, unknown>, page: ServicePageSource): Record<string, unknown> {
+  const defaults = defaultServicePageAnalysis(page);
+  return {
+    ...defaults,
+    ...parsed,
+    swap_test: {
+      ...(defaults.swap_test as Record<string, unknown>),
+      ...((parsed.swap_test as Record<string, unknown> | undefined) || {}),
+    },
+    image_audit: {
+      ...(defaults.image_audit as Record<string, unknown>),
+      ...((parsed.image_audit as Record<string, unknown> | undefined) || {}),
+    },
+    heading_structure: {
+      ...(defaults.heading_structure as Record<string, unknown>),
+      ...((parsed.heading_structure as Record<string, unknown> | undefined) || {}),
+    },
+    cta_audit: {
+      ...(defaults.cta_audit as Record<string, unknown>),
+      ...((parsed.cta_audit as Record<string, unknown> | undefined) || {}),
+    },
+    trust_signals: {
+      ...(defaults.trust_signals as Record<string, unknown>),
+      ...((parsed.trust_signals as Record<string, unknown> | undefined) || {}),
+    },
+    local_content_section: {
+      ...(defaults.local_content_section as Record<string, unknown>),
+      ...((parsed.local_content_section as Record<string, unknown> | undefined) || {}),
+    },
+  };
+}
+
+function extractCompleteJsonObject(text: string): { json: string | null; incomplete: boolean } {
+  const start = text.indexOf('{');
+  if (start === -1) return { json: null, incomplete: false };
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return { json: text.slice(start, i + 1), incomplete: false };
+      }
+    }
+  }
+
+  return { json: null, incomplete: depth > 0 || inString };
+}
+
+export function parseServicePageAnalysisResponse(
+  responseText: string,
+  page: ServicePageSource,
+  finishReason?: string
+): Record<string, unknown> {
+  const raw = stripCodeFences(responseText || '');
+  const providerTruncated = ['length', 'max_tokens', 'model_length'].includes((finishReason || '').toLowerCase());
+  const extracted = extractCompleteJsonObject(raw);
+
+  if (!extracted.json) {
+    const reason = providerTruncated || extracted.incomplete
+      ? 'LLM response was truncated before a complete JSON object was returned.'
+      : 'LLM response did not contain a valid JSON object.';
+    return defaultServicePageAnalysis(page, `${reason}\n\n${raw.substring(0, 500)}`, providerTruncated || extracted.incomplete);
+  }
+
+  try {
+    const parsed = JSON.parse(extracted.json) as Record<string, unknown>;
+    const analysis = mergeServicePageAnalysisDefaults(parsed, page);
+    if (providerTruncated) {
+      analysis._truncated = true;
+    }
+    return analysis;
+  } catch {
+    return defaultServicePageAnalysis(
+      page,
+      `LLM response contained malformed JSON.\n\n${raw.substring(0, 500)}`,
+      providerTruncated
+    );
+  }
+}
+
 const FETCH_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -834,79 +977,8 @@ export async function handleAnalyzeServicePage(request: Request, env: Env): Prom
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
-    const result = await provider.chatComplete(messages, env, body.llm_config, 8192);
-    const raw = stripCodeFences(result.text);
-
-    // Try to salvage truncated JSON by closing open braces/brackets
-    let jsonText = raw;
-    if (!jsonText.endsWith('}')) {
-      // Count open vs close braces and brackets
-      let braces = 0, brackets = 0;
-      for (const ch of jsonText) {
-        if (ch === '{') braces++;
-        else if (ch === '}') braces--;
-        else if (ch === '[') brackets++;
-        else if (ch === ']') brackets--;
-      }
-      // Close any open brackets then braces
-      while (brackets > 0) { jsonText += ']'; brackets--; }
-      while (braces > 0) { jsonText += '}'; braces--; }
-    }
-
-    let analysis;
-    try {
-      analysis = JSON.parse(jsonText);
-    } catch {
-      // Try to extract partial JSON by finding the last complete key-value
-      try {
-        // Remove trailing incomplete value and close the object
-        const lastComma = raw.lastIndexOf(',');
-        if (lastComma > 0) {
-          let truncated = raw.substring(0, lastComma);
-          let b = 0, br = 0;
-          for (const ch of truncated) {
-            if (ch === '{') b++; if (ch === '}') b--;
-            if (ch === '[') br++; if (ch === ']') br--;
-          }
-          while (br > 0) { truncated += ']'; br--; }
-          while (b > 0) { truncated += '}'; b--; }
-          analysis = JSON.parse(truncated);
-          analysis._truncated = true;
-        }
-      } catch {
-        // Complete fallback
-      }
-      if (!analysis) {
-        analysis = {
-          _parse_error: raw.substring(0, 500),
-          service_type: 'unknown',
-          location: 'unknown',
-          industry_category: 'other',
-          content_score: 'thin',
-          content_score_pct: 0,
-          content_word_count: body.page.word_count || 0,
-          content_gaps: [],
-          swap_test: { score: 0, generic_sections: [] },
-          missing_page_sections: [],
-          industry_specific_sections: [],
-          image_audit: { has_images: false, total_count: 0, missing_alt_count: 0, needs_service_area_map: false, suggestions: [] },
-          heading_structure: { has_h1: false, h1_text: '', h1_includes_keyword: false, h1_includes_location: false, hierarchy_valid: false, issues: [], suggested_headings: [] },
-          cta_audit: { ctas_found: [], score: 'none', suggestions: [] },
-          trust_signals: { found: [], missing: [], score: 'none' },
-          tone_analysis: '',
-          local_content_section: { title: '', content: '', placement: '' },
-          schema_existing: [],
-          schema_missing: [],
-          schema_generated: {},
-          faq: [],
-          meta_title_current: body.page.meta_title || '',
-          meta_title_suggested: '',
-          meta_description_current: body.page.meta_description || '',
-          meta_description_suggested: '',
-          additional_recommendations: [],
-        };
-      }
-    }
+    const result = await provider.chatComplete(messages, env, body.llm_config, 12000);
+    const analysis = parseServicePageAnalysisResponse(result.text, body.page, result.finishReason);
 
     return json({ analysis, usage: result.usage });
   } catch (err) {

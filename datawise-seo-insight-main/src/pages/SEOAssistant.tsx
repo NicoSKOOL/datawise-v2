@@ -3,14 +3,16 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { MessageSquare, Send, Plus, Link2, HelpCircle } from 'lucide-react';
+import { MessageSquare, Send, Plus, Link2, HelpCircle, Trash2, Pencil, Check, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import SparklesIcon from '@/components/icons/sparkles-icon';
 import type { AnimatedIconHandle } from '@/components/icons/types';
-import { sendMessage, getConversations, getConversation, type Conversation, type ChatMessageData } from '@/lib/chat';
+import { sendMessage, getConversations, getConversation, deleteConversation, renameConversation, type Conversation, type ChatMessageData } from '@/lib/chat';
 import { getGSCProperties, type GSCProperty } from '@/lib/gsc';
 import { useToast } from '@/hooks/use-toast';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildChatConversationReport } from '@/lib/export/adapters/chatConversation';
 
 interface UIMessage {
   id: string;
@@ -27,11 +29,49 @@ export default function SEOAssistant() {
   const [properties, setProperties] = useState<GSCProperty[]>([]);
   const [selectedProperty, setSelectedProperty] = useState<string>('');
   const [connected, setConnected] = useState(false);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sparklesRef = useRef<AnimatedIconHandle>(null);
-  const restoredRef = useRef(false);
   const { toast } = useToast();
+
+  // Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem('seo-assistant-sidebar-width');
+    return saved ? Math.max(200, Math.min(480, Number(saved))) : 264;
+  });
+  const isDragging = useRef(false);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const newWidth = Math.max(200, Math.min(480, e.clientX - 16));
+      setSidebarWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      if (isDragging.current) {
+        isDragging.current = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        localStorage.setItem('seo-assistant-sidebar-width', String(sidebarWidth));
+      }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [sidebarWidth]);
+
+  const startDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
 
   // Load conversations and GSC properties
   useEffect(() => {
@@ -51,23 +91,6 @@ export default function SEOAssistant() {
       })
       .catch(() => {});
   }, []);
-
-  // Restore the last active conversation when the conversation list loads
-  useEffect(() => {
-    if (restoredRef.current || conversations.length === 0) return;
-    restoredRef.current = true;
-    const savedId = sessionStorage.getItem('datawise_active_conversation');
-    if (savedId && conversations.some((c) => c.id === savedId)) {
-      loadConversation(savedId);
-    }
-  }, [conversations]);
-
-  // Persist active conversation id so it survives navigation
-  useEffect(() => {
-    if (conversationId) {
-      sessionStorage.setItem('datawise_active_conversation', conversationId);
-    }
-  }, [conversationId]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -156,8 +179,48 @@ export default function SEOAssistant() {
   const startNewConversation = () => {
     setConversationId(null);
     setMessages([]);
-    sessionStorage.removeItem('datawise_active_conversation');
     inputRef.current?.focus();
+  };
+
+  const handleDeleteConversation = async (convId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteConversation(convId);
+      setConversations((prev) => prev.filter((c) => c.id !== convId));
+      if (conversationId === convId) {
+        setConversationId(null);
+        setMessages([]);
+      }
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete conversation' });
+    }
+  };
+
+  const startRename = (convId: string, currentTitle: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingConvId(convId);
+    setEditingTitle(currentTitle);
+    setTimeout(() => editInputRef.current?.select(), 0);
+  };
+
+  const confirmRename = async () => {
+    if (!editingConvId || !editingTitle.trim()) {
+      setEditingConvId(null);
+      return;
+    }
+    try {
+      await renameConversation(editingConvId, editingTitle.trim());
+      setConversations((prev) =>
+        prev.map((c) => c.id === editingConvId ? { ...c, title: editingTitle.trim() } : c)
+      );
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to rename conversation' });
+    }
+    setEditingConvId(null);
+  };
+
+  const cancelRename = () => {
+    setEditingConvId(null);
   };
 
   const suggestedPrompts = [
@@ -177,7 +240,7 @@ export default function SEOAssistant() {
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-4">
       {/* Sidebar: Conversations */}
-      <div className="w-64 flex-shrink-0 flex flex-col border rounded-xl bg-card">
+      <div className="flex-shrink-0 flex flex-col border rounded-xl bg-card relative" style={{ width: sidebarWidth }}>
         <div className="p-3 border-b">
           <Button onClick={startNewConversation} variant="outline" className="w-full gap-2" size="sm">
             <Plus className="h-4 w-4" />
@@ -248,21 +311,57 @@ export default function SEOAssistant() {
             {conversations.map((conv) => {
               const convProperty = properties.find((p) => p.id === conv.property_id);
               const convColor = convProperty?.color || null;
+              const isEditing = editingConvId === conv.id;
               return (
-                <button
+                <div
                   key={conv.id}
-                  onClick={() => loadConversation(conv.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                  className={`group relative w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 cursor-pointer ${
                     conversationId === conv.id
                       ? 'bg-primary/10 text-primary font-medium'
                       : 'text-muted-foreground hover:bg-muted'
                   }`}
+                  onClick={() => !isEditing && loadConversation(conv.id)}
                 >
                   {convColor && (
                     <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: convColor }} />
                   )}
-                  <span className="truncate">{conv.title}</span>
-                </button>
+                  {isEditing ? (
+                    <div className="flex items-center gap-1 flex-1 min-w-0">
+                      <input
+                        ref={editInputRef}
+                        value={editingTitle}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') confirmRename();
+                          if (e.key === 'Escape') cancelRename();
+                        }}
+                        onBlur={confirmRename}
+                        className="flex-1 min-w-0 bg-background border rounded px-1.5 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <span className="truncate flex-1">{conv.title}</span>
+                      <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 flex-shrink-0 transition-opacity">
+                        <button
+                          onClick={(e) => startRename(conv.id, conv.title, e)}
+                          className="p-0.5 rounded hover:bg-muted-foreground/10 hover:text-foreground"
+                          title="Rename conversation"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          className="p-0.5 rounded hover:bg-destructive/10 hover:text-destructive"
+                          title="Delete conversation"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               );
             })}
             {conversations.length === 0 && (
@@ -270,10 +369,51 @@ export default function SEOAssistant() {
             )}
           </div>
         </ScrollArea>
+        {/* Drag handle */}
+        <div
+          onMouseDown={startDrag}
+          className="absolute top-0 -right-2 w-4 h-full cursor-col-resize group/drag flex items-center justify-center z-10"
+        >
+          <div className="w-0.5 h-8 rounded-full bg-border group-hover/drag:bg-primary/50 group-active/drag:bg-primary transition-colors" />
+        </div>
       </div>
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col border rounded-xl bg-card">
+        {messages.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border-b">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold truncate">
+                {conversations.find((c) => c.id === conversationId)?.title || 'New Conversation'}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {messages.length} {messages.length === 1 ? 'message' : 'messages'}
+              </p>
+            </div>
+            <ExportMenu
+              surface="seo-assistant"
+              identifier={() => conversations.find((c) => c.id === conversationId)?.title}
+              buildPayload={() => {
+                const conv = conversations.find((c) => c.id === conversationId);
+                const nowIso = new Date().toISOString();
+                return buildChatConversationReport({
+                  conversation: conv ?? {
+                    id: conversationId ?? 'draft',
+                    title: 'SEO Assistant Conversation',
+                    property_id: selectedProperty || null,
+                    updated_at: nowIso,
+                  },
+                  messages: messages.map((m) => ({
+                    id: m.id,
+                    role: m.role,
+                    content: m.content,
+                    created_at: nowIso,
+                  })) as ChatMessageData[],
+                });
+              }}
+            />
+          </div>
+        )}
         {/* Messages */}
         <ScrollArea className="flex-1 p-4">
           {messages.length === 0 ? (

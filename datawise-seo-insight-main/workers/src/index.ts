@@ -1,39 +1,52 @@
 export interface Env {
   DB: D1Database;
   KV: KVNamespace;
+  DFS_CACHE: KVNamespace;
+  TASK_ATTACHMENTS: R2Bucket;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  AI: any; // Workers AI binding — env.AI.run(model, { messages })
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
+  BWT_CLIENT_ID: string;
+  BWT_CLIENT_SECRET: string;
   ENCRYPTION_KEY: string;
   FRONTEND_URL: string;
+  MARKETING_URL: string;
+  WORKER_URL: string;
   ENVIRONMENT: string;
   DATAFORSEO_EMAIL: string;
   DATAFORSEO_PASSWORD: string;
   RESEND_API_KEY: string;
-  // LLM config
+  SKOOL_WEBHOOK_SECRET: string;
+  // LLM config (external providers — Workers AI is the free fallback)
   LLM_PROVIDER: string;
   LLM_MODEL: string;
   LLM_BASE_URL: string;
   OPENAI_API_KEY: string;
   ANTHROPIC_API_KEY: string;
   KIMI_API_KEY: string;
+  OPENROUTER_API_KEY: string;
 }
 
-import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe } from './auth/google';
+import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe, handleUpdateDefaults } from './auth/google';
 import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetPassword } from './auth/email';
+import { handleDevLogin } from './auth/dev';
 import { authMiddleware } from './middleware/auth';
-import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCRefreshProperties } from './gsc/oauth';
-import { handleGSCSync, handleGSCData, handleGSCQueries } from './gsc/sync';
-import { handleChat, handleListConversations, handleGetConversation } from './chat/handler';
+import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
+import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
+import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty } from './gsc/sync';
+import { handleChat, handleListConversations, handleGetConversation, handleDeleteConversation, handleRenameConversation } from './chat/handler';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
   handleKeywordDifficulty, handleKeywordOverview,
 } from './routes/keywords';
 import {
   handleRankedKeywords, handleDomainRankOverview, handleKeywordGapAnalysis,
-  handleBulkTrafficEstimation, handleCompetitorsDomain,
+  handleBulkTrafficEstimation, handleCompetitorsDomain, handleGapAnalysisAI,
 } from './routes/competitors';
 import {
   handleGoogleAIMode, handleChatGPTSearch, handlePerplexitySearch,
+  handleClaudeSearch, handleGeminiSearch,
   handlePeopleAlsoAsk, handleLighthouseSEO, handleGeoAnalyzer,
   handleVisibilitySummary, handleVisibilityCheck,
 } from './routes/ai';
@@ -43,6 +56,14 @@ import {
   handleCheckRankings, handleKeywordHistory,
   handleProjectReport, handleDashboardSummary,
 } from './routes/rank-tracking';
+import {
+  handleListPlannerKeywords, handleAddPlannerKeyword, handleBulkAddPlannerKeywords,
+  handleUpdatePlannerKeyword, handleDeletePlannerKeyword,
+} from './routes/planner';
+import {
+  handleListClusters, handleCreateCluster, handleUpdateCluster,
+  handleDeleteCluster, handleSetClusterPillar,
+} from './routes/planner-clusters';
 import {
   handleBusinessSearch, handleCreateLocalProject, handleLocalKeywords,
   handleLocalRankCheck, handleLocalProjectReport,
@@ -57,27 +78,110 @@ import {
 import {
   handleUploadMembers, handleCrossReference, handleRevokeAccess,
   handleSendInvites, handleToggleMember, handleAddMember, handleListUsers, handleDeleteUser,
+  handleListPromoCodes, handleCreatePromoCode, handleTogglePromoCode, handlePromoRedemptions,
+  handleConversionAnalytics, handleTrafficAnalytics, handleSignupAnalytics,
 } from './routes/admin';
+import {
+  handleListContentWriterPrompts,
+  handleUpdateContentWriterPromptDraft,
+  handlePublishContentWriterPrompt,
+  handleResetContentWriterPrompt,
+  handleRenderContentWriterPrompt,
+} from './routes/admin-content-writer-prompts';
+import { handleRedeemPromo, handlePromoStatus } from './routes/promo';
+import {
+  handleAggregate, handleCrossAggregate, handleSearch,
+  handleTopDomains, handleTopPages, handleKeywordVolume,
+} from './routes/llm-mentions';
+import {
+  handleBacklinksSummary, handleBacklinksTimeseries, handleBacklinksList,
+  handleReferringDomains, handleAnchors, handleBacklinksCompetitors,
+  handleDomainIntersection, handleBulkRanks,
+} from './routes/backlinks';
 import {
   handleSubmitFeedback, handleListMyFeedback, handleGetScreenshot,
   handleListAllFeedback, handleUpdateFeedback, handleDeleteFeedback,
 } from './routes/feedback';
-import { checkAndDeductCredit } from './middleware/credits';
+import {
+  handleListChecklist, handleUpsertChecklist,
+  handleListCustom, handleCreateCustom, handleDeleteCustom,
+} from './routes/citations';
+import {
+  handleCreateAudit, handleListAudits, handleGetAudit, handleDeleteAudit,
+  handleListActionItems, handleUpdateActionItem, handleDeleteActionItem,
+  handleListPropertyTasks, handleCreateTask,
+  handleUploadTaskAttachment, handleServeAttachment,
+} from './routes/site-audit';
+import { handleMetaCheck, handleFetchSitemap } from './routes/meta-checker';
+import {
+  handleListWorkspaces, handleCreateWorkspace, handleResolveWorkspace, handleGetWorkspace, handleDeleteWorkspace,
+  handleGetKBDoc, handleUpdateKBDoc, handleDiscoverWebsitePages, handleAutoDraftKnowledgeBase, handleInterview, handleFinalize,
+  handleListPosts, handleCreatePost, handleGetPost, handleUpdatePost, handleDeletePost,
+  handlePostStep,
+} from './routes/content-writer';
+import { handleMetaRewrite } from './routes/meta-rewrite';
+import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
+import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
+import { processEmailSequences, cancelUserSequences } from './email/sequences';
+import { handleSkoolMemberJoined } from './routes/webhooks';
+import {
+  handleRelatedKeywordsPublic,
+  handleKeywordDifficultyPublic,
+  handleFanOutQueriesPublic,
+  handleBusinessCategoriesPublic,
+} from './routes/public-tools';
+import { handlePageview, prunePageviews } from './routes/track';
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Daily GSC re-sync (runs once a day, separate from the 6h email cron).
+    if (event.cron === '0 11 * * *') {
+      await runDailyGSCSync(env);
+      return;
+    }
+
+    // Default cron (every 6h): email sequences + pageview pruning.
+    const result = await processEmailSequences(env);
+    console.log(`Email sequences processed: ${result.sent} sent, ${result.errors} errors`);
+    try {
+      const pruned = await prunePageviews(env);
+      console.log(`Pageviews pruned: ${pruned.deleted}`);
+    } catch (err) {
+      console.error('prunePageviews failed:', err);
+    }
+  },
+
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
 
-    // CORS headers
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': env.FRONTEND_URL,
+    // CORS + security headers.
+    // Reflect the request Origin when it matches an allowlist: env.FRONTEND_URL
+    // plus any localhost/127.0.0.1 origin on any port (dev workflows against
+    // either a local or prod worker). Localhost is safe to reflect in prod:
+    // a page at evil.com cannot cause a browser to send Origin: localhost:*.
+    const requestOrigin = request.headers.get('Origin') || '';
+    const isLocalhostOrigin = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(requestOrigin);
+    const isAllowedOrigin =
+      requestOrigin === env.FRONTEND_URL ||
+      requestOrigin === env.MARKETING_URL ||
+      isLocalhostOrigin;
+
+    const corsHeaders: Record<string, string> = {
+      'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Expose-Headers': 'X-Conversation-ID',
-      'Access-Control-Allow-Credentials': 'true',
+      'Vary': 'Origin',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
     };
+    if (isAllowedOrigin) {
+      corsHeaders['Access-Control-Allow-Origin'] = requestOrigin;
+    }
 
     if (method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders });
@@ -116,16 +220,63 @@ export default {
       if (path === '/auth/reset-password' && method === 'POST') {
         return addCors(await handleResetPassword(request, env));
       }
+      if (path === '/auth/dev-login' && method === 'POST') {
+        return addCors(await handleDevLogin(request, env));
+      }
+
+      // Email unsubscribe (public, no auth)
+      if (path === '/api/unsubscribe' && method === 'GET') {
+        const uid = url.searchParams.get('uid');
+        if (uid) {
+          await cancelUserSequences(env, uid);
+        }
+        return new Response(
+          '<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>You will no longer receive emails from this sequence.</p></body></html>',
+          { status: 200, headers: { 'Content-Type': 'text/html' } }
+        );
+      }
       if (path === '/health') {
         return addCors(json({ status: 'ok', environment: env.ENVIRONMENT }));
+      }
+
+      // Public attachment serve — random keys, no auth
+      if (path.startsWith('/api/attachments/') && method === 'GET') {
+        const keyParts = path.replace('/api/attachments/', '').split('/');
+        return addCors(await handleServeAttachment(env, keyParts));
+      }
+
+      // --- Webhooks (Bearer-token auth, no CORS needed) ---
+      if (path === '/webhooks/skool-member-joined' && method === 'POST') {
+        return await handleSkoolMemberJoined(request, env);
       }
       // GSC callback is a public redirect from Google (uses state param for auth)
       if (path === '/gsc/callback' && method === 'GET') {
         return addCors(await handleGSCCallback(request, env));
       }
-      // DEV ONLY: PAA bypass auth for local testing
-      if (path === '/api/ai/people-also-ask' && method === 'POST') {
-        return addCors(await handlePeopleAlsoAsk(request, env));
+      // BWT callback is a public redirect from Bing (uses state param for auth)
+      if (path === '/bwt/callback' && method === 'GET') {
+        return addCors(await handleBWTCallback(request, env));
+      }
+
+      // --- Public free-tools (anonymous, IP-rate-limited, no credits) ---
+      // Powers the marketing site's /free-tools section. These run BEFORE
+      // authMiddleware so they don't require a session token.
+      if (path === '/api/public/related-keywords' && method === 'POST') {
+        return addCors(await handleRelatedKeywordsPublic(request, env));
+      }
+      if (path === '/api/public/keyword-difficulty' && method === 'POST') {
+        return addCors(await handleKeywordDifficultyPublic(request, env));
+      }
+      if (path === '/api/public/fan-out-queries' && method === 'POST') {
+        return addCors(await handleFanOutQueriesPublic(request, env));
+      }
+      if (path === '/api/public/business-categories' && method === 'GET') {
+        return addCors(await handleBusinessCategoriesPublic(request, env));
+      }
+
+      // Anonymous pageview beacon (public, no auth, bot-filtered, KV-rate-limited).
+      if (path === '/api/track/pageview' && method === 'POST') {
+        return addCors(await handlePageview(request, env));
       }
 
       // --- Auth-required routes ---
@@ -138,13 +289,26 @@ export default {
         if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
         return addCors(await handleMe(user));
       }
+      if (path === '/auth/defaults' && method === 'PATCH') {
+        if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
+        return addCors(await handleUpdateDefaults(request, env, user));
+      }
 
       // All API routes require auth
       if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
 
-      // Credit-gated handler: checks and deducts a credit before calling the handler
-      const withCredit = async (handler: () => Promise<Response>): Promise<Response> => {
-        const result = await checkAndDeductCredit(env, user.id);
+      // --- Promo Codes (auth-required, not credit-gated) ---
+      if (path === '/api/promo/redeem' && method === 'POST') {
+        return addCors(await handleRedeemPromo(request, env, user.id));
+      }
+      if (path === '/api/promo/status' && method === 'GET') {
+        return addCors(await handlePromoStatus(request, env, user.id));
+      }
+
+      // Credit-gated handler: checks and deducts credit(s) before calling the handler.
+      // Pass cost explicitly for routes with non-default costs; defaults to 1.
+      const withCredit = async (handler: () => Promise<Response>, cost = 1): Promise<Response> => {
+        const result = await checkAndDeductCredit(env, user.id, cost);
         if (!result.allowed) {
           return addCors(json({
             error: 'out_of_credits',
@@ -202,6 +366,9 @@ export default {
       if (path === '/api/competitors/domains' && method === 'POST') {
         return await withCredit(() => handleCompetitorsDomain(request, env));
       }
+      if (path === '/api/competitors/gap-analysis-ai' && method === 'POST') {
+        return addCors(await handleGapAnalysisAI(request, env));
+      }
 
       // --- Rank Tracking ---
       if (path === '/api/rank-tracking/projects' && method === 'GET') {
@@ -235,11 +402,49 @@ export default {
         return addCors(await handleProjectReport(request, env, user.id, projectId));
       }
       if (path === '/api/rank-tracking/dashboard-summary' && method === 'GET') {
-        return addCors(await handleDashboardSummary(env, user.id));
+        const domain = url.searchParams.get('domain') || undefined;
+        return addCors(await handleDashboardSummary(env, user.id, domain));
       }
       if (path.match(/^\/api\/rank-tracking\/keywords\/[^/]+\/history$/) && method === 'GET') {
         const keywordId = path.split('/')[4];
         return addCors(await handleKeywordHistory(env, user.id, keywordId));
+      }
+
+      // --- Content Planner ---
+      if (path === '/api/planner/keywords' && method === 'GET') {
+        return addCors(await handleListPlannerKeywords(request, env, user.id));
+      }
+      if (path === '/api/planner/keywords' && method === 'POST') {
+        return addCors(await handleAddPlannerKeyword(request, env, user.id));
+      }
+      if (path === '/api/planner/keywords/bulk' && method === 'POST') {
+        return addCors(await handleBulkAddPlannerKeywords(request, env, user.id));
+      }
+      if (path.match(/^\/api\/planner\/keywords\/[^/]+$/) && method === 'PATCH') {
+        const keywordId = path.split('/')[4];
+        return addCors(await handleUpdatePlannerKeyword(request, env, user.id, keywordId));
+      }
+      if (path.match(/^\/api\/planner\/keywords\/[^/]+$/) && method === 'DELETE') {
+        const keywordId = path.split('/')[4];
+        return addCors(await handleDeletePlannerKeyword(env, user.id, keywordId));
+      }
+      if (path === '/api/planner/clusters' && method === 'GET') {
+        return addCors(await handleListClusters(request, env, user.id));
+      }
+      if (path === '/api/planner/clusters' && method === 'POST') {
+        return addCors(await handleCreateCluster(request, env, user.id));
+      }
+      if (path.match(/^\/api\/planner\/clusters\/[^/]+$/) && method === 'PATCH') {
+        const clusterId = path.split('/')[4];
+        return addCors(await handleUpdateCluster(request, env, user.id, clusterId));
+      }
+      if (path.match(/^\/api\/planner\/clusters\/[^/]+$/) && method === 'DELETE') {
+        const clusterId = path.split('/')[4];
+        return addCors(await handleDeleteCluster(env, user.id, clusterId));
+      }
+      if (path.match(/^\/api\/planner\/clusters\/[^/]+\/pillar$/) && method === 'POST') {
+        const clusterId = path.split('/')[4];
+        return addCors(await handleSetClusterPillar(request, env, user.id, clusterId));
       }
 
       // --- Local SEO ---
@@ -311,6 +516,12 @@ export default {
       if (path === '/api/ai/perplexity' && method === 'POST') {
         return await withCredit(() => handlePerplexitySearch(request, env));
       }
+      if (path === '/api/ai/claude-search' && method === 'POST') {
+        return await withCredit(() => handleClaudeSearch(request, env));
+      }
+      if (path === '/api/ai/gemini-search' && method === 'POST') {
+        return await withCredit(() => handleGeminiSearch(request, env));
+      }
       if (path === '/api/ai/people-also-ask' && method === 'POST') {
         return await withCredit(() => handlePeopleAlsoAsk(request, env));
       }
@@ -328,15 +539,15 @@ export default {
       if (path === '/gsc/properties' && method === 'GET') {
         return addCors(await handleGSCProperties(env, user.id));
       }
+      if (path === '/gsc/properties/refresh' && method === 'POST') {
+        return addCors(await handleGSCPropertiesRefresh(env, user.id));
+      }
       if (path.match(/^\/gsc\/properties\/[^/]+$/) && method === 'PATCH') {
         const propertyId = path.split('/')[3];
         return addCors(await handleGSCPropertyUpdate(request, env, user.id, propertyId));
       }
       if (path === '/gsc/disconnect' && method === 'POST') {
         return addCors(await handleGSCDisconnect(env, user.id));
-      }
-      if (path === '/gsc/refresh-properties' && method === 'POST') {
-        return addCors(await handleGSCRefreshProperties(env, user.id));
       }
       if (path === '/gsc/sync' && method === 'POST') {
         return addCors(await handleGSCSync(request, env, user.id));
@@ -347,9 +558,26 @@ export default {
       if (path === '/gsc/queries' && method === 'GET') {
         return addCors(await handleGSCQueries(request, env, user.id));
       }
+      if (path === '/gsc/sitemaps' && method === 'GET') {
+        return addCors(await handleGSCSitemaps(request, env, user.id));
+      }
 
-      // Debug: test GSC context building
-      if (path === '/debug/gsc-context' && method === 'GET') {
+      // --- BWT Integration ---
+      if (path === '/bwt/connect' && method === 'POST') {
+        return addCors(await handleBWTConnect(request, env, user.id));
+      }
+      if (path === '/bwt/properties' && method === 'GET') {
+        return addCors(await handleBWTProperties(env, user.id));
+      }
+      if (path === '/bwt/properties/refresh' && method === 'POST') {
+        return addCors(await handleBWTPropertiesRefresh(env, user.id));
+      }
+      if (path === '/bwt/disconnect' && method === 'POST') {
+        return addCors(await handleBWTDisconnect(env, user.id));
+      }
+
+      // Debug: test GSC context building (development only)
+      if (path === '/debug/gsc-context' && method === 'GET' && env.ENVIRONMENT === 'development') {
         const propertyId = new URL(request.url).searchParams.get('property_id');
         if (!propertyId) return addCors(json({ error: 'property_id required' }, 400));
 
@@ -361,7 +589,6 @@ export default {
           'SELECT COUNT(*) as count FROM gsc_search_data WHERE property_id = ?'
         ).bind(propertyId).first();
 
-        // Also test the full context builder
         const { buildGSCContextDebug } = await import('./chat/handler');
         const context = await buildGSCContextDebug(env, user.id, propertyId);
 
@@ -447,24 +674,298 @@ export default {
       if (path === '/api/admin/delete-user' && method === 'POST') {
         return addCors(await handleDeleteUser(request, env, user));
       }
+      if (path === '/api/admin/promo-codes' && method === 'GET') {
+        return addCors(await handleListPromoCodes(request, env, user));
+      }
+      if (path === '/api/admin/promo-codes' && method === 'POST') {
+        return addCors(await handleCreatePromoCode(request, env, user));
+      }
+      if (path.match(/^\/api\/admin\/promo-codes\/[^/]+$/) && method === 'PATCH') {
+        const codeId = path.split('/')[4];
+        return addCors(await handleTogglePromoCode(request, env, user, codeId));
+      }
+      if (path.match(/^\/api\/admin\/promo-codes\/[^/]+\/redemptions$/) && method === 'GET') {
+        const codeId = path.split('/')[4];
+        return addCors(await handlePromoRedemptions(request, env, user, codeId));
+      }
+      if (path === '/api/admin/conversion-analytics' && method === 'GET') {
+        return addCors(await handleConversionAnalytics(request, env, user));
+      }
+      if (path === '/api/admin/analytics/traffic' && method === 'GET') {
+        return addCors(await handleTrafficAnalytics(request, env, user));
+      }
+      if (path === '/api/admin/analytics/signups' && method === 'GET') {
+        return addCors(await handleSignupAnalytics(request, env, user));
+      }
+      if (path === '/api/admin/content-writer-prompts' && method === 'GET') {
+        return addCors(await handleListContentWriterPrompts(env, user));
+      }
+      if (path === '/api/admin/content-writer-prompts/render' && method === 'POST') {
+        return addCors(await handleRenderContentWriterPrompt(request, env, user));
+      }
+      {
+        const m = path.match(/^\/api\/admin\/content-writer-prompts\/([^/]+)\/draft$/);
+        if (m && method === 'PUT') {
+          return addCors(await handleUpdateContentWriterPromptDraft(request, env, user, decodeURIComponent(m[1])));
+        }
+      }
+      {
+        const m = path.match(/^\/api\/admin\/content-writer-prompts\/([^/]+)\/publish$/);
+        if (m && method === 'POST') {
+          return addCors(await handlePublishContentWriterPrompt(env, user, decodeURIComponent(m[1])));
+        }
+      }
+      {
+        const m = path.match(/^\/api\/admin\/content-writer-prompts\/([^/]+)\/reset$/);
+        if (m && method === 'POST') {
+          return addCors(await handleResetContentWriterPrompt(env, user, decodeURIComponent(m[1])));
+        }
+      }
+
+      // --- LLM Mentions (credit-gated) ---
+      if (path === '/api/llm-mentions/aggregate' && method === 'POST') {
+        return await withCredit(() => handleAggregate(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/llm-mentions/cross-aggregate' && method === 'POST') {
+        return await withCredit(() => handleCrossAggregate(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/llm-mentions/search' && method === 'POST') {
+        return await withCredit(() => handleSearch(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/llm-mentions/top-domains' && method === 'POST') {
+        return await withCredit(() => handleTopDomains(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/llm-mentions/top-pages' && method === 'POST') {
+        return await withCredit(() => handleTopPages(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/llm-mentions/keyword-volume' && method === 'POST') {
+        return await withCredit(() => handleKeywordVolume(request, env, user.id), creditCostForRoute(path));
+      }
+
+      // --- Backlinks (credit-gated) ---
+      if (path === '/api/backlinks/summary' && method === 'POST') {
+        return await withCredit(() => handleBacklinksSummary(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/timeseries' && method === 'POST') {
+        return await withCredit(() => handleBacklinksTimeseries(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/list' && method === 'POST') {
+        return await withCredit(() => handleBacklinksList(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/referring-domains' && method === 'POST') {
+        return await withCredit(() => handleReferringDomains(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/anchors' && method === 'POST') {
+        return await withCredit(() => handleAnchors(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/competitors' && method === 'POST') {
+        return await withCredit(() => handleBacklinksCompetitors(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/domain-intersection' && method === 'POST') {
+        return await withCredit(() => handleDomainIntersection(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/backlinks/bulk-ranks' && method === 'POST') {
+        return await withCredit(() => handleBulkRanks(request, env, user.id), creditCostForRoute(path));
+      }
+
+      // --- Local citations checklist (no credit cost — static data + user state) ---
+      if (path === '/api/citations/checklist' && method === 'GET') {
+        return addCors(await handleListChecklist(env, user));
+      }
+      if (path === '/api/citations/checklist' && method === 'POST') {
+        return addCors(await handleUpsertChecklist(request, env, user));
+      }
+      if (path === '/api/citations/custom' && method === 'GET') {
+        return addCors(await handleListCustom(request, env, user));
+      }
+      if (path === '/api/citations/custom' && method === 'POST') {
+        return addCors(await handleCreateCustom(request, env, user));
+      }
+      if (path.match(/^\/api\/citations\/custom\/[^/]+$/) && method === 'DELETE') {
+        const id = path.split('/')[4];
+        return addCors(await handleDeleteCustom(env, user, id));
+      }
+
+      // --- Site Audit (7-Day Plan) ---
+      if (path === '/api/site-audit/audits' && method === 'POST') {
+        return await withCredit(() => handleCreateAudit(request, env, user.id, ctx));
+      }
+      if (path === '/api/site-audit/audits' && method === 'GET') {
+        return addCors(await handleListAudits(env, user.id));
+      }
+      if (path.match(/^\/api\/site-audit\/audits\/[^/]+$/) && method === 'GET') {
+        const auditId = path.split('/')[4];
+        return addCors(await handleGetAudit(env, user.id, auditId));
+      }
+      if (path.match(/^\/api\/site-audit\/audits\/[^/]+$/) && method === 'DELETE') {
+        const auditId = path.split('/')[4];
+        return addCors(await handleDeleteAudit(env, user.id, auditId));
+      }
+      if (path.match(/^\/api\/site-audit\/audits\/[^/]+\/action-items$/) && method === 'GET') {
+        const auditId = path.split('/')[4];
+        return addCors(await handleListActionItems(env, user.id, auditId));
+      }
+      if (path.match(/^\/api\/site-audit\/properties\/[^/]+\/tasks$/) && method === 'GET') {
+        const propertyId = path.split('/')[4];
+        return addCors(await handleListPropertyTasks(env, user.id, propertyId, new URL(request.url)));
+      }
+      if (path === '/api/site-audit/tasks' && method === 'POST') {
+        return addCors(await handleCreateTask(request, env, user.id));
+      }
+      if (path === '/api/site-audit/meta-check' && method === 'POST') {
+        return addCors(await handleMetaCheck(request, env));
+      }
+      if (path === '/api/site-audit/meta-rewrite' && method === 'POST') {
+        return await withCredit(() => handleMetaRewrite(request, env));
+      }
+
+      // --- Properties (manual / non-GSC websites) ---
+      if (path === '/api/properties/manual' && method === 'POST') {
+        return addCors(await handleCreateManualProperty(request, env, user.id));
+      }
+      if (path.match(/^\/api\/properties\/manual\/[^/]+$/) && method === 'DELETE') {
+        const propertyId = path.split('/')[4];
+        return addCors(await handleDeleteManualProperty(env, user.id, propertyId));
+      }
+      if (path === '/api/site-audit/fetch-sitemap' && method === 'POST') {
+        return addCors(await handleFetchSitemap(request));
+      }
+      if (path === '/api/site-audit/attachments' && method === 'POST') {
+        return addCors(await handleUploadTaskAttachment(request, env, user.id));
+      }
+      if (path.match(/^\/api\/site-audit\/action-items\/[^/]+$/) && method === 'PATCH') {
+        const itemId = path.split('/')[4];
+        return addCors(await handleUpdateActionItem(request, env, user.id, itemId));
+      }
+      if (path.match(/^\/api\/site-audit\/action-items\/[^/]+$/) && method === 'DELETE') {
+        const itemId = path.split('/')[4];
+        return addCors(await handleDeleteActionItem(env, user.id, itemId));
+      }
+
+      // --- Content Writer Builder ---
+      if (path === '/api/content-writer/workspaces' && method === 'GET') {
+        return addCors(await handleListWorkspaces(env, user.id));
+      }
+      if (path === '/api/content-writer/workspaces' && method === 'POST') {
+        return addCors(await handleCreateWorkspace(request, env, user.id));
+      }
+      if (path === '/api/content-writer/workspaces/resolve' && method === 'POST') {
+        return addCors(await handleResolveWorkspace(request, env, user.id));
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)$/);
+        if (m && method === 'GET') return addCors(await handleGetWorkspace(env, user.id, m[1]));
+        if (m && method === 'DELETE') return addCors(await handleDeleteWorkspace(env, user.id, m[1]));
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)\/kb\/auto-draft$/);
+        if (m && method === 'POST') {
+          return await withCredit(() => handleAutoDraftKnowledgeBase(request, env, user.id, m[1]), 1);
+        }
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)\/kb\/sitemap\/discover$/);
+        if (m && method === 'POST') {
+          return await withCredit(() => handleDiscoverWebsitePages(request, env, user.id, m[1]), 1);
+        }
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)\/kb\/([^/]+)$/);
+        if (m && method === 'GET') return addCors(await handleGetKBDoc(env, user.id, m[1], m[2]));
+        if (m && method === 'PUT') return addCors(await handleUpdateKBDoc(request, env, user.id, m[1], m[2]));
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)\/kb\/([^/]+)\/interview$/);
+        if (m && method === 'POST') {
+          return await withCredit(() => handleInterview(request, env, user.id, m[1], m[2]), 1);
+        }
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)\/kb\/([^/]+)\/finalize$/);
+        if (m && method === 'POST') {
+          return await withCredit(() => handleFinalize(request, env, user.id, m[1], m[2]), 1);
+        }
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/workspaces\/([^/]+)\/posts$/);
+        if (m && method === 'GET') return addCors(await handleListPosts(env, user.id, m[1]));
+        if (m && method === 'POST') return addCors(await handleCreatePost(request, env, user.id, m[1]));
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/posts\/([^/]+)$/);
+        if (m && method === 'GET') return addCors(await handleGetPost(env, user.id, m[1]));
+        if (m && method === 'PUT') return addCors(await handleUpdatePost(request, env, user.id, m[1]));
+        if (m && method === 'DELETE') return addCors(await handleDeletePost(env, user.id, m[1]));
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/posts\/([^/]+)\/step$/);
+        if (m && method === 'POST') {
+          return await withCredit(() => handlePostStep(request, env, user.id, m[1]), 2);
+        }
+      }
 
       // --- Chat ---
       if (path === '/chat' && method === 'POST') {
-        return addCors(await handleChat(request, env, user.id));
+        return addCors(await handleChat(request, env, ctx, user.id));
       }
       if (path === '/chat/conversations' && method === 'GET') {
-        return addCors(await handleListConversations(env, user.id));
+        return addCors(await handleListConversations(request, env, user.id));
       }
       if (path.startsWith('/chat/conversations/') && method === 'GET') {
         const convId = path.split('/').pop()!;
         return addCors(await handleGetConversation(env, user.id, convId));
       }
+      if (path.startsWith('/chat/conversations/') && method === 'PATCH') {
+        const convId = path.split('/').pop()!;
+        return addCors(await handleRenameConversation(request, env, user.id, convId));
+      }
+      if (path.startsWith('/chat/conversations/') && method === 'DELETE') {
+        const convId = path.split('/').pop()!;
+        return addCors(await handleDeleteConversation(env, user.id, convId));
+      }
 
       return addCors(json({ error: 'Not Found' }, 404));
     } catch (error) {
-      console.error('Worker error:', error);
-      const message = error instanceof Error ? error.message : 'Internal Server Error';
-      return addCors(json({ error: message }, 500));
+      const requestId = crypto.randomUUID().slice(0, 8);
+      console.error(`Worker error [${requestId}]:`, error);
+      return addCors(json({ error: 'internal_error', request_id: requestId }, 500));
     }
   },
 };
+
+// Daily GSC re-sync over every enabled property. Skips properties whose
+// refresh token can no longer mint an access token (user must reconnect);
+// skipping does not delete the property — they may reconnect later.
+// Processes in small concurrent batches to stay within Worker CPU limits.
+async function runDailyGSCSync(env: Env): Promise<void> {
+  const startedAt = Date.now();
+  const props = await env.DB.prepare(
+    'SELECT id, user_id FROM gsc_properties WHERE is_enabled = 1'
+  ).all<{ id: string; user_id: string }>();
+
+  const rows = props.results || [];
+  let synced = 0, skipped = 0, failed = 0;
+  const concurrency = 4;
+
+  for (let i = 0; i < rows.length; i += concurrency) {
+    const batch = rows.slice(i, i + concurrency);
+    const results = await Promise.allSettled(
+      batch.map(p => syncProperty(env, p.user_id, p.id))
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        if (r.value.ok) synced++;
+        else if (r.value.status === 403) skipped++;
+        else failed++;
+      } else {
+        failed++;
+        console.error('cron syncProperty rejected:', r.reason);
+      }
+    }
+  }
+
+  console.log(
+    `GSC daily sync done: ${synced} synced, ${skipped} skipped (token), ${failed} failed, ` +
+    `${rows.length} total, ${Date.now() - startedAt}ms`
+  );
+}

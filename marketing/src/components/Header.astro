@@ -1,0 +1,165 @@
+---
+const navLinks = [
+  { label: 'Features', href: '/features' },
+  { label: 'Pricing', href: '/pricing' },
+  { label: 'Community', href: '/community' },
+  { label: 'Blog', href: '/blog' },
+  { label: 'About', href: '/about' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<header
+  id="site-header"
+  class="fixed top-0 left-0 right-0 z-50 transition-all duration-300 bg-transparent"
+>
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <div class="flex h-16 items-center justify-between">
+      <!-- Logo -->
+      <a href="/" class="flex items-center gap-2.5 group">
+        <div class="h-8 w-8 rounded-lg bg-[var(--color-indigo)] flex items-center justify-center">
+          <span class="text-white font-bold text-sm font-[var(--font-headline)]">DW</span>
+        </div>
+        <span class="font-[var(--font-headline)] font-bold text-lg text-[var(--dw-text)]">
+          DataWise
+        </span>
+      </a>
+
+      <!-- Desktop Nav -->
+      <nav class="hidden md:flex items-center gap-8">
+        {navLinks.map(link => (
+          <a
+            href={link.href}
+            class:list={[
+              'text-sm font-medium transition-colors hover:text-[var(--dw-primary-highlight)]',
+              currentPath.startsWith(link.href)
+                ? 'text-[var(--dw-primary-highlight)]'
+                : 'text-[var(--dw-text-secondary)]',
+            ]}
+          >
+            {link.label}
+          </a>
+        ))}
+      </nav>
+
+      <!-- Desktop CTA + Dark mode toggle -->
+      <div class="hidden md:flex items-center gap-3">
+        <!-- Dark mode toggle -->
+        <button
+          id="theme-toggle"
+          class="p-2 rounded-lg text-[var(--dw-text-muted)] hover:text-[var(--dw-text)] hover:bg-[var(--dw-surface-sunken)] transition-colors"
+          aria-label="Toggle dark mode"
+        >
+          <svg id="icon-sun" class="h-5 w-5 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+          <svg id="icon-moon" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a
+          href="https://app.datawiseseo.com"
+          class="text-sm font-medium text-[var(--dw-text-secondary)] hover:text-[var(--dw-text)] transition-colors"
+        >
+          Log in
+        </a>
+        <a
+          href="https://www.skool.com/ai-ranking"
+          class="inline-flex items-center rounded-lg bg-[var(--dw-primary-highlight)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition-all duration-200 hover:shadow-lg"
+        >
+          Join AI Ranking
+        </a>
+      </div>
+
+      <!-- Mobile Menu Button -->
+      <button
+        id="mobile-menu-btn"
+        class="md:hidden p-2 text-[var(--dw-text-secondary)] hover:text-[var(--dw-text)]"
+        aria-label="Toggle menu"
+        aria-expanded="false"
+      >
+        <svg id="menu-icon-open" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        <svg id="menu-icon-close" class="h-6 w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Mobile Menu -->
+  <div id="mobile-menu" class="hidden md:hidden border-t border-[var(--dw-border)] bg-[var(--dw-surface)]">
+    <div class="px-4 py-4 space-y-3">
+      {navLinks.map(link => (
+        <a
+          href={link.href}
+          class:list={[
+            'block text-base font-medium py-1',
+            currentPath.startsWith(link.href)
+              ? 'text-[var(--dw-primary-highlight)]'
+              : 'text-[var(--dw-text-secondary)]',
+          ]}
+        >
+          {link.label}
+        </a>
+      ))}
+      <div class="pt-3 border-t border-[var(--dw-border)] flex flex-col gap-2">
+        <a href="https://app.datawiseseo.com" class="text-base font-medium text-[var(--dw-text-secondary)]">Log in</a>
+        <a href="https://www.skool.com/ai-ranking" class="inline-flex items-center justify-center rounded-lg bg-[var(--dw-primary-highlight)] px-4 py-2.5 text-base font-semibold text-white">Join AI Ranking</a>
+      </div>
+    </div>
+  </div>
+</header>
+
+<style>
+  :global(#site-header.nav-scrolled) {
+    background-color: color-mix(in srgb, var(--dw-surface) 85%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.06);
+    border-bottom: 1px solid var(--dw-border);
+  }
+</style>
+
+<script>
+  // Mobile menu toggle
+  const btn = document.getElementById('mobile-menu-btn');
+  const menu = document.getElementById('mobile-menu');
+  const iconOpen = document.getElementById('menu-icon-open');
+  const iconClose = document.getElementById('menu-icon-close');
+
+  btn?.addEventListener('click', () => {
+    const isOpen = menu?.classList.toggle('hidden') === false;
+    btn.setAttribute('aria-expanded', String(isOpen));
+    iconOpen?.classList.toggle('hidden', isOpen);
+    iconClose?.classList.toggle('hidden', !isOpen);
+  });
+
+  // Dark mode toggle
+  const toggle = document.getElementById('theme-toggle');
+  const iconSun = document.getElementById('icon-sun');
+  const iconMoon = document.getElementById('icon-moon');
+
+  function setTheme(dark: boolean) {
+    document.documentElement.classList.toggle('dark', dark);
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+    iconSun?.classList.toggle('hidden', !dark);
+    iconMoon?.classList.toggle('hidden', dark);
+  }
+
+  // Init: check localStorage, then system preference
+  const stored = localStorage.getItem('theme');
+  if (stored === 'dark') {
+    setTheme(true);
+  } else if (stored === 'light') {
+    setTheme(false);
+  } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    setTheme(true);
+  }
+
+  toggle?.addEventListener('click', () => {
+    setTheme(!document.documentElement.classList.contains('dark'));
+  });
+</script>

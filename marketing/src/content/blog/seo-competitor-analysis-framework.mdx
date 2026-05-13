@@ -1,0 +1,180 @@
+---
+title: "SEO Competitor Analysis: The Complete Framework for Finding and Closing Gaps"
+description: "A practical framework for running SEO competitor analysis: identifying real rivals, mapping keyword and content gaps, and turning competitor data into a 90-day action plan."
+date: 2026-04-23
+author: Nicolas Gorrono
+tags: ["Competitor Analysis", "Strategy", "Keyword Gap"]
+image: "/images/blog/seo-competitor-analysis-feature.webp"
+faqs:
+  - question: "How often should I run a full competitor analysis?"
+    answer: "Run a full analysis quarterly. Run a lightweight check monthly to catch new competitor content, sudden ranking shifts, and newly ranking domains encroaching on your SERP space. More frequent than monthly is overkill for most markets, though news, finance, and fast-moving SaaS categories can justify weekly monitoring during active campaigns. The key is separating the deep analysis (where you rebuild priorities) from the monitoring cadence (where you catch surprises)."
+  - question: "Is competitor keyword research legal and ethical?"
+    answer: "Yes. All data in competitor analysis comes from publicly indexed search results, publicly accessible web pages, and aggregated clickstream panels. No private data is accessed. Analyzing which keywords a competitor ranks for is not meaningfully different from reading their public content. DataWise queries DataForSEO's APIs, which operate within search engine terms of service. The one thing to avoid is scraping login-gated content or using any tool that misrepresents itself to circumvent rate limits."
+  - question: "Should I analyze competitors one at a time or as a group?"
+    answer: "Both, in sequence. Start with a group-level pass across your top 5 to 8 SEO competitors to identify shared patterns (topics all of them cover, formats multiple ones use, clusters that dominate your market). Then drop into individual analysis on the 2 or 3 most strategically important rivals, where you want URL-level detail. The group pass finds market structure. The individual pass finds tactical gaps. Skipping the group pass is a common mistake because it leads to overfitting to one competitor's strategy."
+  - question: "What tools do I actually need to do competitor analysis well?"
+    answer: "At minimum: one tool for keyword and domain data (DataWise, Semrush, or Ahrefs), one tool for crawling competitor sites (Screaming Frog or Sitebulb), and Google Search Console for your own baseline. Optional but useful: a SERP scraper for tracking feature presence (featured snippets, PAA, AI Overviews), and a traffic estimation tool if your primary tool is weak there. The trap is buying 5 overlapping tools and using 15% of each. One solid all-in-one plus a crawler covers 90% of the work."
+  - question: "How do I know if my competitor analysis is actually working?"
+    answer: "Two measurable outcomes. First, the opportunities you close should move rankings within 6 to 12 weeks. If you are shipping fixes for overlap-gap keywords and not seeing movement, something about the analysis is wrong, usually a misread of the actual ranking signal doing the work on the competitor URL. Second, your share of voice across your target keyword set should trend up over quarters, not just individual keyword wins. Track share of voice monthly. It is the only metric that captures whether your competitive position is improving versus whether you are just adding isolated rankings."
+---
+
+<div class="tldr">
+  <h2>TL;DR</h2>
+  <ul>
+    <li><a href="https://ahrefs.com/blog/domain-rating/">Only 5 to 20% of ranking variance</a> is explained by Domain Authority or Domain Rating. Page-level signals dominate the rest.</li>
+    <li><a href="https://backlinko.com/search-engine-ranking">Backlinks from referring domains</a> show a correlation of roughly 0.30 with rankings in Backlinko's 11.8 million SERP study. Strong, but far from deterministic.</li>
+    <li><a href="https://ahrefs.com/blog/long-tail-keywords/">45 to 60% of keywords</a> driving traffic to a competitor page are not the primary keyword the page targets. Most of their value is in the long tail.</li>
+    <li>Keyword gap analysis typically surfaces <a href="https://www.semrush.com/blog/keyword-gap/">3 to 10x more opportunity keywords</a> than manual research against a single competitor.</li>
+    <li>Your real SEO competitors are almost never your business competitors. They are whoever shares SERP real estate with you, which can include publishers, forums, and adjacent-niche blogs.</li>
+    <li>Video and YouTube presence is a hidden competitive axis: if rivals dominate video, you need a video strategy; if they ignore it, you can outrank higher-authority domains by answering video-intent queries with video.</li>
+  </ul>
+</div>
+
+---
+
+A B2B SaaS client of mine was stuck at 12,000 monthly organic visits for 18 months. Their domain authority was 48. Their main competitor sat at DA 42 and pulled 61,000 monthly visits. On paper, we were stronger. In practice, we were losing badly. One afternoon of keyword gap analysis surfaced 340 commercial-intent keywords the competitor ranked for in positions 1 to 10 that we had never targeted. Six months later, after shipping 24 pages mapped to those gaps, organic traffic hit 47,000 per month. Same domain authority. Same backlink profile. The difference was knowing exactly where to aim.
+
+That is what real [SEO competitor analysis](/features/competitor-analysis) unlocks. Not vanity metrics, not a quarterly slide deck, but a prioritized list of moves that map directly to revenue. This guide walks through the framework I use: who your actual competitors are, which metrics to trust, and how to convert the output into a 90-day plan.
+
+---
+
+## What SEO competitor analysis actually is
+
+SEO competitor analysis is not checking what rankings your rivals hold. That is monitoring. Real competitor analysis is a structured process for identifying which domains share search demand with you, reverse engineering why they win the queries they win, and extracting a prioritized set of moves you can execute against.
+
+A complete analysis answers six questions in order. First, who actually competes with you in search (often not who you think). Second, what queries do you both fight for (the shared battleground). Third, which queries do they win that you do not (the gap). Fourth, why do they win those queries (content depth, links, internal structure, entity coverage). Fifth, which of those wins are reachable given your current authority. Sixth, what is the fastest path to close the gap without picking fights you cannot win.
+
+Most teams skip directly to step three and produce a 400-row spreadsheet that nobody acts on. The framework below fixes that.
+
+## How to identify your real SEO competitors
+
+Your business competitors and your SEO competitors rarely overlap cleanly. A boutique accounting firm targeting "tax deductions for freelancers" is not competing with the other accounting firm down the street. They are competing with Investopedia, NerdWallet, Reddit, and the IRS website. If you build a competitor list from sales battlecards, you will analyze the wrong domains.
+
+The correct approach is keyword-driven. Pull your own ranked keywords (from Google Search Console or a [keyword research tool](/features/keyword-research)), then find every domain that shares the same SERPs. The domains that appear most frequently alongside yours, weighted by keyword volume and position, are your real SEO competitors. This is sometimes called a SERP overlap or shared ranking analysis.
+
+DataWise's Competitor Discovery does this automatically: you enter your domain, it pulls your ranked keyword set, then counts co-occurrences across every SERP in that set. The output is a ranked list with an overlap score. In my experience, 3 to 5 of the top 10 domains on that list are going to be publishers or aggregators, not business rivals. Treat them seriously. They are the ones absorbing the traffic you want.
+
+A practical rule: target 5 to 8 SEO competitors for deep analysis. Fewer than 5 and you miss patterns. More than 8 and you drown in noise. Mix the list: include 2 or 3 domains at similar authority (realistic battles), 2 or 3 above you (stretch targets), and 2 or 3 below you (defensive monitoring).
+
+## How to do keyword gap analysis the right way
+
+Keyword gap analysis compares your ranked keyword set against a competitor's and surfaces the queries where they rank and you do not. The mechanics are simple. The interpretation is where most teams go wrong.
+
+The common mistake is sorting the gap list by search volume and attacking the highest-volume keywords first. This reliably produces the worst ROI. High-volume head terms are where domain authority matters most, SERPs are the most entrenched, and the competitor ranking there has usually spent years building topical authority and links to earn that position. Chasing those terms with a single new page is a losing bet.
+
+The right way to run [keyword gap analysis](/features/competitor-analysis) is to filter by three layers. First, keyword difficulty: cap at a level that matches your current authority. If your site sits around DR 30, anything above KD 40 is probably out of reach in the next 12 months. Second, intent: commercial-investigation and transactional queries convert at 5 to 10x the rate of informational queries, so they are worth a difficulty premium. Third, position: competitors in positions 2 through 8 are more dislodgeable than the #1 result, which usually has outsized link and engagement signals.
+
+After filtering, cluster the remaining keywords into topic groups. A list of 340 keywords might collapse to 18 content clusters, each addressable with one pillar page plus 2 to 5 supporting articles. The cluster, not the individual keyword, is the unit of work. [Ahrefs research](https://ahrefs.com/blog/long-tail-keywords/) shows that 45 to 60% of a page's organic traffic comes from keywords other than the primary target, which means clustering also captures traffic your competitor is getting that does not even appear in the gap report.
+
+## Why Domain Authority is misleading
+
+The SEO industry has spent 15 years selling Domain Authority as a master metric, and in 2026 it is still what most agencies slide into executive decks. The problem is that it is a weak predictor of whether any individual page will rank.
+
+Moz's own data shows Domain Authority has a correlation coefficient with rankings in the 0.25 to 0.30 range. Ahrefs has been more transparent about the ceiling of its Domain Rating metric: in their [analysis of DR and traffic](https://ahrefs.com/blog/domain-rating/), they explicitly note that DR predicts organic traffic at only about 0.30 correlation, and that page-level metrics do most of the work. A correlation of 0.30 means DA or DR explains something like 9% of the variance in rankings. The remaining 91% is page-level content quality, query-specific link signals, user engagement, and topical authority.
+
+What actually predicts rankings at the page level, based on [Backlinko's study](https://backlinko.com/search-engine-ranking) of 11.8 million Google search results, is more specific. Referring domains to the ranking page (not the whole site) correlate at roughly 0.30. Content comprehensiveness correlates meaningfully with first-page rankings. Page-level relevance signals matter more than sitewide authority.
+
+The practical implication: when you see a competitor outranking you with "lower DA," it usually means their page-level signals on that specific URL are stronger. They have more referring domains to the URL itself, denser topical coverage, better internal link equity flowing to it, or a tighter match to search intent. The domain-level number is a distraction. Do your analysis at the URL level.
+
+## SERP overlap analysis: finding the shared battleground
+
+SERP overlap is the set of queries where you and a specific competitor both appear in the top 20 results. It is different from the keyword gap. The gap shows what they have that you lack. SERP overlap shows where you are already in the same fight.
+
+This matters because overlap keywords are your fastest wins. You already rank, which means Google considers your page relevant for the query. Moving from position 12 to position 6 is a dramatically smaller lift than ranking for a keyword you do not rank for at all. A useful prioritization: sort overlap keywords by the distance between your position and the competitor's, pick the ones where you are 3 to 10 positions behind, and audit why they win. Usually it is one of three things: more referring domains to the URL, deeper content coverage of sub-topics (the fan-out surface discussed in [our AI search piece](/blog/query-fan-out-ai-search)), or better on-page entity density.
+
+In [DataWise's Domain Rank Overview](/features/competitor-analysis), the overlap report surfaces these shared SERPs with positional delta columns so you can sort by "close gap" candidates. Spending a sprint lifting 20 overlap keywords from page 2 to the top 5 typically produces more traffic than shipping 5 new pieces of content targeting gap keywords.
+
+## How to ethically steal competitor keyword strategies
+
+"Steal" is the wrong word, though it is how the industry talks. What you are actually doing is observing publicly available information, identifying patterns, and applying the lessons to your own domain. Every keyword a competitor ranks for is visible to anyone with a crawler. Every page they publish is public. This is the same kind of competitive research any serious business performs.
+
+The process I use looks like this. Start with your top 3 SEO competitors. For each, pull their 100 highest-traffic pages. For those pages, pull the full keyword list each one ranks for (not just the target keyword). Look at the patterns. What content formats do they reuse? What internal linking conventions? What structural elements (tables, comparison modules, FAQs, calculators) appear on their top performers but not on the rest? What topics do they cluster, and in what order?
+
+You are not copying their pages. You are identifying the structural decisions that worked, then applying those decisions to your own unique positioning. If a competitor's pricing comparison page ranks for 420 keywords because it includes a table of 18 tools with 12 columns of data, that is a structural insight. You can build a better version with different tools, different criteria, and your own point of view, and still capture the retrieval patterns that made their page work.
+
+## Content gap analysis: finding topics competitors have not covered
+
+Keyword gap analysis tells you what they rank for that you do not. Content gap analysis is bigger: what entire topics or formats do they cover that you have not touched, and, more usefully, what have none of your competitors covered well?
+
+The second question is where real leverage lives. Crowded topics are crowded because everyone has converged on the same answer. Uncovered topics, especially ones with measurable search demand, are openings. To find them, build a topic inventory across your top 5 competitors. List every cluster each one ranks prominently for. Then compare against your target market's actual information needs (from sales call transcripts, support tickets, community questions). The gaps between what buyers ask and what any competitor covers are your highest-leverage content opportunities.
+
+A tactical addition: look for format gaps, not just topic gaps. If every competitor has a "how to choose X" article but nobody has built a calculator, an interactive comparison, or a benchmark report, the format gap can win the topic even when the topic itself is saturated. Format differentiation is often undervalued because keyword tools do not surface it.
+
+## Video and YouTube presence: the most overlooked competitive axis
+
+<figure>
+  <img src="/images/blog/youtube-dashboard-competitor-analysis.webp" alt="YouTube Studio analytics dashboard showing a growing SEO-focused channel with 52K subscribers and recent video performance" loading="lazy" width="1536" height="1024" />
+  <figcaption>A competitor running a channel like this is operating a distribution engine your blog cannot reach. If they don't have one, the lane is yours.</figcaption>
+</figure>
+
+Every competitor analysis I see stops at written content. That is a mistake. In 2026, Google blends YouTube results directly into the SERP for a large share of how-to, review, comparison, and demo queries. If your competitor has a serious YouTube channel and you do not, they are occupying SERP real estate you cannot reach with a blog post. If they do not, you have a wide-open lane to outrank even much stronger domains.
+
+The check is simple. For each of your top 5 SEO competitors, answer three questions. Do they have a YouTube channel tied to the brand? How many subscribers and monthly views? Do their videos appear in Google SERPs for your target keywords (video carousels, single-video results, or "Videos" tab pulls)? A competitor with 50,000+ subscribers and videos ranking on page one for commercial queries is running a parallel distribution channel that your blog cannot touch.
+
+Two strategic outcomes fall out of this check.
+
+**If competitors dominate video, you need a video strategy, not just more articles.** Shipping a 3,000-word pillar page against a keyword where the top 3 Google results are YouTube embeds is a losing fight. The search intent there is video. Google is telling you so. You either produce video for those queries or concede them.
+
+**If competitors ignore video, you have a massive opening.** This is one of the few places where a smaller, lower-authority site can directly outrank a much stronger domain. Pick keywords where the SERP is showing a video carousel but your competitor only has text. Produce a better video answering the exact intent. YouTube plus a well-optimized page with the embedded video can leapfrog a higher-DA competitor for that query, because you are matching the search intent more closely than they are. The ranking signal in play is relevance to intent, not sitewide authority.
+
+A practical first pass. Run your gap keyword list and flag every query where the Google SERP currently shows a video carousel, a "Videos" section, or individual YouTube results in the top 10. Those are your video-intent queries. Cross-reference against your competitors' channels: for the queries where they have no video, you are not really competing with them, you are competing with whoever is in the video carousel. That is often a much easier fight.
+
+## How to estimate competitor traffic accurately
+
+Every SEO tool will show you a traffic estimate for any domain. They are never exactly right. Ahrefs, Semrush, Similarweb, and DataForSEO all disagree, sometimes by 3x or more on the same domain. The reason is that each tool models traffic differently: different CTR curves applied to ranking positions, different keyword databases, different handling of branded versus non-branded volume.
+
+The useful framing is that absolute traffic numbers are directional, not precise, but relative comparisons between domains using the same tool are reliable. If Competitor A shows 3x the estimated traffic of Competitor B in DataWise's Bulk Traffic Estimation, that ratio is trustworthy for prioritization even if the actual visitor counts differ from each site's real analytics.
+
+Three ways to use traffic estimates without being fooled. First, compare competitors to each other within the same tool, never cross-tool. Second, look at the direction of change over time (growing versus flat versus declining) rather than the absolute number. Third, break traffic down by page, not by domain. A competitor with 200,000 monthly visits where 80% comes from 5 pages is a fundamentally different opportunity than one with the same traffic spread across 400 pages.
+
+## Competitor internal linking analysis
+
+This is the most underused signal in competitive SEO. Internal links distribute PageRank and topical relevance within a site. They are one of the few ranking signals entirely under a publisher's control. Analyzing how competitors structure their internal links often exposes why certain pages punch above their weight.
+
+The pattern worth looking for: pages with a high ratio of internal inbound links relative to their external backlink profile. When a page ranks well despite having few external links, its internal link equity is often doing the lifting. Crawl a competitor with Screaming Frog or Sitebulb, export the internal link count per URL, and cross-reference with their top-traffic pages. You will often find hub pages that receive 50+ internal links, acting as PageRank concentrators for a topic cluster.
+
+Apply the lesson to your own site: identify your 10 most strategic target pages, then audit whether they receive commensurate internal links. Most sites I audit have the link equity pointing at the wrong URLs (home page, about page, blog index) and starving the pages that actually need to rank. Fixing internal linking can lift rankings measurably within weeks, with no new content and no new [backlinks](/features/backlinks).
+
+## How to turn competitor data into a 90-day action plan
+
+A competitor analysis that does not produce a dated plan is a slide deck. Here is the structure I use to convert the output into work.
+
+**Days 1 to 14: Prioritize and sequence.** Merge your keyword gap list, overlap close-gap candidates, and content gap clusters into one master opportunity table. Score each opportunity on three axes: estimated traffic if won (volume x realistic CTR at achievable position), difficulty relative to your authority, and strategic fit (does this map to revenue or just traffic). Keep the top 30. Group them into 6 sprints of 5 opportunities each.
+
+**Days 15 to 45: Close overlap gaps first.** These are your fastest wins because the pages already rank. Audit each close-gap URL against the competitor URL beating you. Identify the specific signals you are missing (content depth, entity coverage, internal links, referring domains to the URL). Execute the fixes. Expect 40 to 70% of these pages to move up within 6 weeks.
+
+**Days 46 to 75: Ship gap content in priority clusters.** Build the pillar page plus 2 to 5 supporting articles for your top 3 content clusters. Each cluster should include internal links to and from the rest of the cluster. Publish in batches so you can measure cluster-level lift rather than individual page lift.
+
+**Days 76 to 90: Measure, prune, reprioritize.** Rerun the competitor analysis. Which opportunities moved? Which pages are stuck? What new gaps have emerged from competitor publishing during the quarter? The plan for the next 90 days writes itself from the delta.
+
+The pattern that matters: every 90-day cycle compounds. The content you ship in Q1 generates internal linking opportunities for Q2 content, which builds topical authority that makes Q3 content rank faster. Competitor analysis is not a one-time audit, it is the input to a rhythm.
+
+---
+
+## FAQ
+
+### How often should I run a full competitor analysis?
+
+Run a full analysis quarterly. Run a lightweight check monthly to catch new competitor content, sudden ranking shifts, and newly ranking domains encroaching on your SERP space. More frequent than monthly is overkill for most markets, though news, finance, and fast-moving SaaS categories can justify weekly monitoring during active campaigns. The key is separating the deep analysis (where you rebuild priorities) from the monitoring cadence (where you catch surprises).
+
+### Is competitor keyword research legal and ethical?
+
+Yes. All data in competitor analysis comes from publicly indexed search results, publicly accessible web pages, and aggregated clickstream panels. No private data is accessed. Analyzing which keywords a competitor ranks for is not meaningfully different from reading their public content. DataWise queries DataForSEO's APIs, which operate within search engine terms of service. The one thing to avoid is scraping login-gated content or using any tool that misrepresents itself to circumvent rate limits.
+
+### Should I analyze competitors one at a time or as a group?
+
+Both, in sequence. Start with a group-level pass across your top 5 to 8 SEO competitors to identify shared patterns (topics all of them cover, formats multiple ones use, clusters that dominate your market). Then drop into individual analysis on the 2 or 3 most strategically important rivals, where you want URL-level detail. The group pass finds market structure. The individual pass finds tactical gaps. Skipping the group pass is a common mistake because it leads to overfitting to one competitor's strategy.
+
+### What tools do I actually need to do competitor analysis well?
+
+At minimum: one tool for keyword and domain data (DataWise, Semrush, or Ahrefs), one tool for crawling competitor sites (Screaming Frog or Sitebulb), and Google Search Console for your own baseline. Optional but useful: a SERP scraper for tracking feature presence (featured snippets, PAA, AI Overviews), and a traffic estimation tool if your primary tool is weak there. The trap is buying 5 overlapping tools and using 15% of each. One solid all-in-one plus a crawler covers 90% of the work.
+
+### How do I know if my competitor analysis is actually working?
+
+Two measurable outcomes. First, the opportunities you close should move rankings within 6 to 12 weeks. If you are shipping fixes for overlap-gap keywords and not seeing movement, something about the analysis is wrong, usually a misread of the actual ranking signal doing the work on the competitor URL. Second, your share of voice across your target keyword set should trend up over quarters, not just individual keyword wins. Track share of voice monthly. It is the only metric that captures whether your competitive position is improving versus whether you are just adding isolated rankings.
+
+---
+
+## Ready to map your gaps?
+
+DataWise's [competitor analysis suite](/features/competitor-analysis) runs the full workflow described above: SERP-overlap-based competitor discovery, keyword gap analysis with difficulty and intent filters, URL-level traffic estimation, and domain scoring that weighs more than just backlinks. Start with one competitor. The first gap report usually surfaces 12 months of work in 10 minutes.

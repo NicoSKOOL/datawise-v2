@@ -3,7 +3,7 @@ import type { DashboardSummary } from '@/types/rank-tracking';
 import type { GSCOverviewData } from '@/lib/gsc';
 
 interface DashboardKPICardsProps {
-  summary: DashboardSummary | null;
+  summary: DashboardSummary;
   gscOverview: GSCOverviewData | null;
 }
 
@@ -35,21 +35,18 @@ function DeltaBadge({ current, previous, invert = false }: { current: number | n
 }
 
 export default function DashboardKPICards({ summary, gscOverview }: DashboardKPICardsProps) {
-  const top10Count = summary ? summary.distribution.top3 + summary.distribution.top10 : 0;
+  const top10Count = summary.distribution.top3 + summary.distribution.top10;
   const gscClicks = gscOverview?.summary.last_30_days.total_clicks || 0;
-  const gscImpressions = gscOverview?.summary.last_30_days.total_impressions || 0;
-  const gscAvgPos = gscOverview?.summary.last_30_days.avg_position;
-  const gscTotalQueries = gscOverview?.query_summary?.total_queries || 0;
 
   const cards = [
     {
       label: 'Total Keywords',
-      value: summary ? summary.total_keywords.toLocaleString() : gscTotalQueries.toLocaleString(),
+      value: summary.total_keywords.toLocaleString(),
       delta: null as React.ReactNode,
     },
     {
       label: 'Avg Position',
-      value: summary?.avg_position != null ? String(summary.avg_position) : (gscAvgPos != null ? String(gscAvgPos) : '--'),
+      value: summary.avg_position != null ? String(summary.avg_position) : '--',
       delta: null as React.ReactNode,
     },
     {
@@ -58,8 +55,8 @@ export default function DashboardKPICards({ summary, gscOverview }: DashboardKPI
       delta: null as React.ReactNode,
     },
     {
-      label: summary ? 'Top 10 Keywords' : 'Impressions (30d)',
-      value: summary ? String(top10Count) : (gscImpressions > 1000 ? `${(gscImpressions / 1000).toFixed(1)}k` : String(gscImpressions)),
+      label: 'Top 10 Keywords',
+      value: String(top10Count),
       delta: null as React.ReactNode,
     },
   ];

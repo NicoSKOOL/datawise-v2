@@ -7,6 +7,7 @@ export async function connectGSC() {
 export interface GSCProperty {
   id: string;
   site_url: string;
+  kind?: 'gsc' | 'manual';
   permission_level: string;
   last_synced_at: string | null;
   color: string | null;
@@ -64,10 +65,29 @@ export async function getGSCProperties() {
   return api<{ connected: boolean; properties: GSCProperty[] }>('/gsc/properties');
 }
 
+export async function refreshGSCProperties() {
+  return api<{ success: boolean; count: number }>('/gsc/properties/refresh', {
+    method: 'POST',
+  });
+}
+
 export async function updateGSCProperty(propertyId: string, data: { color?: string; is_enabled?: boolean }) {
   return api<{ success: boolean }>(`/gsc/properties/${propertyId}`, {
     method: 'PATCH',
     body: data,
+  });
+}
+
+export async function createManualProperty(siteUrl: string, color?: string) {
+  return api<GSCProperty>('/api/properties/manual', {
+    method: 'POST',
+    body: { site_url: siteUrl, color },
+  });
+}
+
+export async function deleteManualProperty(propertyId: string) {
+  return api<{ success: boolean }>(`/api/properties/manual/${encodeURIComponent(propertyId)}`, {
+    method: 'DELETE',
   });
 }
 
@@ -82,7 +102,7 @@ export async function getGSCData(propertyId: string) {
   return api<GSCOverviewData>(`/gsc/data?property_id=${propertyId}`);
 }
 
-export type GSCQueryFilter = 'all' | 'top10' | 'top3pos' | 'top10pos' | 'top30' | 'page2' | 'opportunities';
+export type GSCQueryFilter = 'all' | 'top10' | 'page2' | 'opportunities';
 export type GSCQuerySort = 'clicks' | 'impressions' | 'avg_position' | 'avg_ctr';
 
 export interface GSCResultRow {
@@ -126,8 +146,4 @@ export async function getGSCQueries(
 
 export async function disconnectGSC() {
   return api('/gsc/disconnect', { method: 'POST' });
-}
-
-export async function refreshGSCProperties() {
-  return api<{ success: boolean; properties: GSCProperty[] }>('/gsc/refresh-properties', { method: 'POST' });
 }

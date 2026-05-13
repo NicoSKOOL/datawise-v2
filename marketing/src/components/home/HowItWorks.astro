@@ -1,0 +1,132 @@
+---
+import Section from '../ui/Section.astro';
+import Icon from '../ui/Icon.astro';
+
+const steps = [
+  {
+    number: '1',
+    icon: 'users',
+    title: 'Join AI Ranking',
+    description: 'Sign up for the AI Ranking community on Skool. Start with a 7-day risk-free trial, cancel anytime.',
+  },
+  {
+    number: '2',
+    icon: 'globe',
+    title: 'Connect Google Search Console',
+    description: 'Optional but recommended. Link your real ranking data for personalized insights and tracking.',
+  },
+  {
+    number: '3',
+    icon: 'zap',
+    title: 'Run your first analysis',
+    description: 'Pick any tool: keyword research, competitor check, AI visibility scan. Get results in seconds.',
+  },
+];
+---
+
+<Section id="how-it-works">
+  <div class="text-center mb-16">
+    <h2 class="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)] hiw-title">
+      Start in under a minute
+    </h2>
+    <p class="mt-4 text-lg text-[var(--color-text-primary)]/70 max-w-2xl mx-auto hiw-sub">
+      No onboarding calls. No setup wizards. Just join the community and start using every tool.
+    </p>
+  </div>
+
+  <div class="relative">
+    <!-- Connecting line (desktop) -->
+    <div class="hidden md:block absolute top-12 left-[16.67%] right-[16.67%] h-0.5 bg-gradient-to-r from-[var(--color-primary-200)] via-[var(--color-primary-300)] to-[var(--color-primary-200)]" aria-hidden="true"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-10 lg:gap-16">
+      {steps.map((step) => (
+        <div class="relative text-center hiw-step">
+          <!-- Step number circle -->
+          <div class="relative inline-flex items-center justify-center h-14 w-14 rounded-full bg-[var(--color-primary)] text-white font-bold text-xl mb-6 shadow-lg shadow-[var(--color-primary)]/20">
+            {step.number}
+          </div>
+          <div class="inline-flex items-center justify-center h-10 w-10 rounded-lg bg-[var(--color-primary-50)] text-[var(--color-primary)] mb-3" data-icon-hover>
+            <Icon name={step.icon} size={20} />
+          </div>
+          <h3 class="text-lg font-bold mb-2">{step.title}</h3>
+          <p class="text-sm text-[var(--color-text-primary)]/60 leading-relaxed max-w-xs mx-auto">
+            {step.description}
+          </p>
+        </div>
+      ))}
+    </div>
+  </div>
+</Section>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    // Headings fade up
+    gsap.from('.hiw-title', {
+      y: 30, opacity: 0, duration: 0.6, ease: 'power3.out',
+      scrollTrigger: { trigger: '.hiw-title', start: 'top 85%', once: true },
+    });
+
+    gsap.from('.hiw-sub', {
+      y: 20, opacity: 0, duration: 0.5, ease: 'power3.out', delay: 0.1,
+      scrollTrigger: { trigger: '.hiw-sub', start: 'top 85%', once: true },
+    });
+
+    // Steps: each step scales up + fades with stagger
+    const steps = document.querySelectorAll('.hiw-step');
+    steps.forEach((step, i) => {
+      const circle = step.querySelector('.rounded-full');
+      const content = step.querySelectorAll('h3, p, [data-icon-hover]');
+
+      const stepTl = gsap.timeline({
+        scrollTrigger: {
+          trigger: step,
+          start: 'top 80%',
+          once: true,
+        },
+        delay: i * 0.2,
+      });
+
+      // Number circle pops in
+      if (circle) {
+        stepTl.from(circle, {
+          scale: 0,
+          rotation: -180,
+          duration: 0.5,
+          ease: 'back.out(2)',
+        });
+      }
+
+      // Text content fades up
+      stepTl.from(content, {
+        y: 20,
+        opacity: 0,
+        duration: 0.4,
+        ease: 'power2.out',
+        stagger: 0.08,
+      }, '-=0.2');
+    });
+
+    // Connecting line draws in
+    const connectLine = document.querySelector('[aria-hidden="true"]');
+    if (connectLine) {
+      gsap.from(connectLine, {
+        scaleX: 0,
+        transformOrigin: 'left center',
+        duration: 0.8,
+        ease: 'power2.inOut',
+        scrollTrigger: {
+          trigger: connectLine,
+          start: 'top 80%',
+          once: true,
+        },
+      });
+    }
+  }
+</script>

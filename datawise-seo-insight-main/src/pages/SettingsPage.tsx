@@ -4,46 +4,39 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Link2, Loader2, RefreshCw, Trash2, CheckCircle, Key, Eye, EyeOff, Check } from 'lucide-react';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Link2, Loader2, RefreshCw, Trash2, CheckCircle, Key, Eye, EyeOff, Check, Globe, Ticket } from 'lucide-react';
+import { redeemPromoCode } from '@/lib/promo';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, refreshGSCProperties, type GSCProperty } from '@/lib/gsc';
-import { getLLMConfig, saveLLMConfig, clearLLMConfig, type LLMConfig } from '@/lib/chat';
+import { connectBWT, getBWTProperties, disconnectBWT } from '@/lib/bwt';
+import { getStoredLLMConfig, saveLLMConfig, clearLLMConfig, type LLMConfig } from '@/lib/chat';
+import { DEFAULT_OPENROUTER_MODEL, OPENROUTER_MODELS, OPENROUTER_PROVIDER_GROUPS, isApprovedOpenRouterModel } from '@/lib/ai-models';
+import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
+import { api } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
+import claudeLogo from '@lobehub/icons-static-svg/icons/claude-color.svg?url';
+import openaiLogo from '@lobehub/icons-static-svg/icons/openai.svg?url';
+import deepseekLogo from '@lobehub/icons-static-svg/icons/deepseek-color.svg?url';
+import moonshotLogo from '@lobehub/icons-static-svg/icons/moonshot.svg?url';
 
-const LLM_PROVIDERS = [
-  { value: 'openai', label: 'OpenAI (GPT-4o-mini)', hint: 'Cheapest good option (~$0.15/1M tokens)' },
-  { value: 'claude', label: 'Anthropic (Claude)', hint: 'Best reasoning quality' },
-  { value: 'gemini', label: 'Google (Gemini Flash)', hint: 'Free tier available' },
-  { value: 'openrouter', label: 'OpenRouter', hint: 'Access all models with one key' },
-] as const;
-
-const OPENROUTER_MODELS = [
-  // Premium
-  { id: 'anthropic/claude-sonnet-4-6', name: 'Claude Sonnet 4.6', tier: 'premium', input: '$3.00', output: '$15.00', context: '1M', why: 'Best for nuanced SEO analysis and content strategy' },
-  { id: 'openai/gpt-5.3-chat', name: 'GPT-5.3', tier: 'premium', input: '$1.75', output: '$14.00', context: '128K', why: 'Strong general reasoning, good for chat' },
-  // Budget
-  { id: 'openai/gpt-4.1-nano', name: 'GPT-4.1 Nano', tier: 'budget', input: '$0.10', output: '$0.40', context: '1M', why: '1M context at near-zero cost, great for bulk SEO tasks' },
-  { id: 'openai/gpt-5-nano', name: 'GPT-5 Nano', tier: 'budget', input: '$0.05', output: '$0.40', context: '400K', why: 'Cheapest GPT-5 family model, good for high-volume work' },
-  { id: 'qwen/qwen3-235b-a22b-2507', name: 'Qwen3 235B', tier: 'budget', input: '$0.07', output: '$0.10', context: '262K', why: 'Best quality-per-dollar, strong reasoning' },
-  // Free
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B', tier: 'free', input: 'FREE', output: 'FREE', context: '65K', why: 'Solid 70B model, good instruction following' },
-  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1', tier: 'free', input: 'FREE', output: 'FREE', context: '128K', why: 'Free with 128K context, great for longer reports' },
-  { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B', tier: 'free', input: 'FREE', output: 'FREE', context: '131K', why: 'Google\'s free model, good at structured analysis' },
-] as const;
-
-const TIER_LABELS: Record<string, { label: string; color: string }> = {
-  premium: { label: 'Premium', color: 'text-amber-600 dark:text-amber-400' },
-  budget: { label: 'Budget', color: 'text-blue-600 dark:text-blue-400' },
-  free: { label: 'Free', color: 'text-green-600 dark:text-green-400' },
-};
+function providerLogo(provider: string): string {
+  if (provider === 'deepseek') return deepseekLogo;
+  if (provider === 'moonshotai') return moonshotLogo;
+  if (provider === 'anthropic') return claudeLogo;
+  if (provider === 'openai') return openaiLogo;
+  return openaiLogo;
+}
 
 export default function SettingsPage() {
-  const { user, isPro, isCommunityMember } = useAuth();
+  const { user, isPro, isCommunityMember, promoActive, promoExpiresAt, promoLabel, refreshUser, refreshPromoStatus } = useAuth();
   const { toast } = useToast();
   const [connected, setConnected] = useState(false);
   const [properties, setProperties] = useState<GSCProperty[]>([]);
+  const [bwtConnected, setBwtConnected] = useState(false);
+  const [bwtProperties, setBwtProperties] = useState<GSCProperty[]>([]);
+  const [bwtLoading, setBwtLoading] = useState(true);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -58,19 +51,83 @@ export default function SettingsPage() {
     { value: '#14b8a6', label: 'Teal' },
   ];
 
+  // Promo code
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [promoRedeeming, setPromoRedeeming] = useState(false);
+  const [promoError, setPromoError] = useState('');
+
+  const handleRedeemPromo = async () => {
+    if (!promoCodeInput.trim()) return;
+    setPromoRedeeming(true);
+    setPromoError('');
+    try {
+      const result = await redeemPromoCode(promoCodeInput.trim());
+      toast({
+        title: 'Promo activated!',
+        description: `You have unlimited access until ${new Date(result.expires_at).toLocaleString()}.`,
+      });
+      setPromoCodeInput('');
+      await Promise.all([refreshUser(), refreshPromoStatus()]);
+    } catch (err) {
+      setPromoError((err as Error).message || 'Invalid or expired promo code.');
+    } finally {
+      setPromoRedeeming(false);
+    }
+  };
+
   // LLM config (BYOK)
-  const [llmProvider, setLlmProvider] = useState<string>('openai');
   const [llmApiKey, setLlmApiKey] = useState('');
-  const [llmModel, setLlmModel] = useState<string>('');
+  const [llmModel, setLlmModel] = useState<string>(DEFAULT_OPENROUTER_MODEL);
+  const [legacyProvider, setLegacyProvider] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [llmSaved, setLlmSaved] = useState(false);
 
+  // User defaults (location/language)
+  const [defaultLocation, setDefaultLocation] = useState(String(user?.default_location_code ?? 2840));
+  const [defaultLanguage, setDefaultLanguage] = useState(user?.default_language_code ?? 'en');
+  const [defaultsSaving, setDefaultsSaving] = useState(false);
+  const [defaultsSaved, setDefaultsSaved] = useState(true);
+
   useEffect(() => {
-    const config = getLLMConfig();
-    if (config) {
-      setLlmProvider(config.provider);
+    if (user) {
+      setDefaultLocation(String(user.default_location_code ?? 2840));
+      setDefaultLanguage(user.default_language_code ?? 'en');
+      setDefaultsSaved(true);
+    }
+  }, [user]);
+
+  const handleSaveDefaults = async () => {
+    setDefaultsSaving(true);
+    try {
+      await api('/auth/defaults', {
+        method: 'PATCH',
+        body: {
+          default_location_code: parseInt(defaultLocation),
+          default_language_code: defaultLanguage,
+        },
+      });
+      setDefaultsSaved(true);
+      toast({ title: 'Saved', description: 'Default location and language updated.' });
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to save defaults.' });
+    } finally {
+      setDefaultsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    const config = getStoredLLMConfig();
+    if (config?.provider && config.provider !== 'openrouter') {
+      setLegacyProvider(config.provider);
+      setLlmApiKey('');
+      setLlmModel(DEFAULT_OPENROUTER_MODEL);
+      setLlmSaved(false);
+      return;
+    }
+    if (config?.provider === 'openrouter' && config.api_key) {
+      setLegacyProvider(null);
       setLlmApiKey(config.api_key);
-      setLlmModel(config.model || '');
+      setLlmModel(isApprovedOpenRouterModel(config.model) ? config.model : DEFAULT_OPENROUTER_MODEL);
       setLlmSaved(true);
     }
   }, []);
@@ -80,27 +137,30 @@ export default function SettingsPage() {
       toast({ variant: 'destructive', title: 'Error', description: 'Please enter an API key' });
       return;
     }
-    const config: LLMConfig = { provider: llmProvider as LLMConfig['provider'], api_key: llmApiKey.trim() };
-    if (llmProvider === 'openrouter' && llmModel) {
-      config.model = llmModel;
-    }
+    const config: LLMConfig = {
+      provider: 'openrouter',
+      api_key: llmApiKey.trim(),
+      model: isApprovedOpenRouterModel(llmModel) ? llmModel : DEFAULT_OPENROUTER_MODEL,
+    };
     saveLLMConfig(config);
+    setLegacyProvider(null);
     setLlmSaved(true);
-    toast({ title: 'Saved', description: 'LLM configuration saved locally (never sent to our servers).' });
+    toast({ title: 'Saved', description: 'OpenRouter configuration saved locally.' });
   };
 
   const handleClearLLM = () => {
     clearLLMConfig();
     setLlmApiKey('');
-    setLlmModel('');
+    setLlmModel(DEFAULT_OPENROUTER_MODEL);
+    setLegacyProvider(null);
     setLlmSaved(false);
     toast({ title: 'Cleared', description: 'API key removed.' });
   };
 
   useEffect(() => {
     loadGSCStatus();
+    loadBWTStatus();
 
-    // Check for GSC callback params
     const params = new URLSearchParams(window.location.search);
     if (params.get('gsc_connected') === 'true') {
       toast({ title: 'GSC Connected', description: 'Google Search Console connected successfully.' });
@@ -110,7 +170,47 @@ export default function SettingsPage() {
       toast({ variant: 'destructive', title: 'GSC Connection Failed', description: `Error: ${params.get('gsc_error')}` });
       window.history.replaceState({}, '', '/settings');
     }
+    if (params.get('bwt_connected') === 'true') {
+      toast({ title: 'Bing Connected', description: 'Bing Webmaster Tools connected successfully.' });
+      window.history.replaceState({}, '', '/settings');
+    }
+    if (params.get('bwt_error')) {
+      toast({ variant: 'destructive', title: 'Bing Connection Failed', description: `Error: ${params.get('bwt_error')}` });
+      window.history.replaceState({}, '', '/settings');
+    }
   }, []);
+
+  const loadBWTStatus = async () => {
+    try {
+      const data = await getBWTProperties();
+      setBwtConnected(data.connected);
+      setBwtProperties(data.properties || []);
+    } catch (err) {
+      console.error('Failed to load BWT status', err);
+    } finally {
+      setBwtLoading(false);
+    }
+  };
+
+  const handleBWTConnect = async () => {
+    try {
+      const data = await connectBWT();
+      window.location.href = data.url;
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to start Bing connection' });
+    }
+  };
+
+  const handleBWTDisconnect = async () => {
+    try {
+      await disconnectBWT();
+      setBwtConnected(false);
+      setBwtProperties([]);
+      toast({ title: 'Disconnected', description: 'Bing Webmaster Tools disconnected.' });
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Failed to disconnect Bing' });
+    }
+  };
 
   const loadGSCStatus = async () => {
     try {
@@ -137,7 +237,17 @@ export default function SettingsPage() {
     setSyncing(propertyId);
     try {
       const result = await syncGSCProperty(propertyId);
-      toast({ title: 'Sync Complete', description: `Synced ${result.rows_synced} rows from ${result.property}` });
+      const clicks = result.total_clicks ?? 0;
+      const impressions = result.total_impressions ?? 0;
+      if (clicks === 0 && impressions === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'No data found',
+          description: `Google returned ${result.rows_synced} rows but every day is 0 clicks / 0 impressions. Likely the wrong property variant — try the sc-domain or www variant.`,
+        });
+      } else {
+        toast({ title: 'Sync Complete', description: `${clicks.toLocaleString()} clicks · ${impressions.toLocaleString()} impressions over 90 days from ${result.property}` });
+      }
       loadGSCStatus();
     } catch {
       toast({ variant: 'destructive', title: 'Sync Failed', description: 'Could not sync GSC data. Try reconnecting.' });
@@ -146,18 +256,25 @@ export default function SettingsPage() {
     }
   };
 
-  const [refreshing, setRefreshing] = useState(false);
-
-  const handleRefreshProperties = async () => {
-    setRefreshing(true);
+  const [refreshingList, setRefreshingList] = useState(false);
+  const handleRefreshList = async () => {
+    setRefreshingList(true);
     try {
-      const data = await refreshGSCProperties();
-      setProperties(data.properties || []);
-      toast({ title: 'Properties Refreshed', description: 'Your GSC property list has been updated.' });
+      const before = properties.length;
+      const result = await refreshGSCProperties();
+      const after = result.count;
+      const diff = after - before;
+      toast({
+        title: 'Property list refreshed',
+        description: diff > 0
+          ? `${diff} new ${diff === 1 ? 'property' : 'properties'} found in Google Search Console.`
+          : `${after} ${after === 1 ? 'property' : 'properties'} — no new ones found.`,
+      });
+      loadGSCStatus();
     } catch {
-      toast({ variant: 'destructive', title: 'Refresh Failed', description: 'Could not refresh properties. Try reconnecting.' });
+      toast({ variant: 'destructive', title: 'Refresh failed', description: 'Could not pull property list from Google. Try reconnecting.' });
     } finally {
-      setRefreshing(false);
+      setRefreshingList(false);
     }
   };
 
@@ -215,6 +332,59 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Default Location & Language */}
+      <div className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Globe className="h-5 w-5" />
+          <h2 className="text-lg font-semibold">Default Location & Language</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Set your default country and language. All keyword research, competitor analysis, and SERP tools will use these defaults.
+        </p>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Country</Label>
+            <Select value={defaultLocation} onValueChange={(v) => { setDefaultLocation(v); setDefaultsSaved(false); }}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {locationOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={String(opt.value)}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Language</Label>
+            <Select value={defaultLanguage} onValueChange={(v) => { setDefaultLanguage(v); setDefaultsSaved(false); }}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {languageOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <Button onClick={handleSaveDefaults} disabled={defaultsSaved || defaultsSaving} size="sm">
+          {defaultsSaving ? (
+            <><Loader2 className="h-3 w-3 mr-1.5 animate-spin" />Saving...</>
+          ) : defaultsSaved ? (
+            <><CheckCircle className="h-3 w-3 mr-1.5" />Saved</>
+          ) : 'Save Defaults'}
+        </Button>
+      </div>
+
       {/* Subscription */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h2 className="text-lg font-semibold">Subscription</h2>
@@ -250,8 +420,22 @@ export default function SettingsPage() {
 
             {properties.length > 0 && (
               <div className="space-y-3">
-                <h3 className="text-sm font-medium text-muted-foreground">Your Properties</h3>
-                <p className="text-xs text-muted-foreground">Toggle properties on/off for the SEO Assistant dropdown. Assign colors to identify conversations.</p>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-muted-foreground">Your Properties</h3>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefreshList}
+                    disabled={refreshingList}
+                  >
+                    {refreshingList ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    <span className="ml-1.5">{refreshingList ? 'Refreshing...' : 'Refresh from Google'}</span>
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Toggle properties on/off for the SEO Assistant dropdown. Assign colors to identify conversations.
+                  Click <span className="font-medium">Refresh from Google</span> after adding or verifying a new property variant in Search Console.
+                </p>
                 {properties.map((prop) => {
                   const propColor = prop.color || '#6366f1';
                   const isEnabled = prop.is_enabled !== 0;
@@ -318,20 +502,10 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div className="flex items-center gap-2 pt-2 border-t">
-              <Button variant="outline" size="sm" onClick={handleRefreshProperties} disabled={refreshing}>
-                {refreshing ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : <RefreshCw className="h-3 w-3 mr-1.5" />}
-                {refreshing ? 'Refreshing...' : 'Refresh Properties'}
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleConnect}>
-                <Link2 className="h-3 w-3 mr-1.5" />
-                Reconnect
-              </Button>
-              <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDisconnect}>
-                <Trash2 className="h-3 w-3 mr-1.5" />
-                Disconnect
-              </Button>
-            </div>
+            <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDisconnect}>
+              <Trash2 className="h-3 w-3 mr-1.5" />
+              Disconnect GSC
+            </Button>
           </>
         ) : (
           <>
@@ -346,49 +520,90 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* LLM API Key (BYOK) */}
+      {/* Bing Webmaster Tools */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-lg font-semibold">Bing Webmaster Tools</h2>
+          <p className="text-xs text-muted-foreground">
+            Bing powers ChatGPT search, Copilot, and DuckDuckGo. Connecting BWT shows your visibility on the AI search surface, not just Google.
+          </p>
+        </div>
+
+        {bwtLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">Checking connection...</span>
+          </div>
+        ) : bwtConnected ? (
+          <>
+            <div className="flex items-center gap-2 text-green-600">
+              <CheckCircle className="h-4 w-4" />
+              <span className="text-sm font-medium">Connected</span>
+            </div>
+
+            {bwtProperties.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-muted-foreground">Your Bing Properties</h3>
+                {bwtProperties.map((prop) => (
+                  <div key={prop.id} className="flex items-center gap-3 p-3 rounded-lg border">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {prop.site_url.replace(/^https?:\/\//, '')}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {prop.site_group_id && properties.some((g) => g.site_group_id === prop.site_group_id)
+                          ? 'Auto-paired with your GSC property'
+                          : 'Bing-only site'}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Button variant="ghost" size="sm" className="text-destructive" onClick={handleBWTDisconnect}>
+              <Trash2 className="h-3 w-3 mr-1.5" />
+              Disconnect Bing
+            </Button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Connect Bing Webmaster Tools to combine Google + Bing data on your dashboards.
+            </p>
+            <Button variant="outline" onClick={handleBWTConnect} className="gap-2">
+              <Link2 className="h-4 w-4" />
+              Connect Bing Webmaster Tools
+            </Button>
+          </>
+        )}
+      </div>
+
+      {/* LLM API Key (BYOK) */}
+      <div id="llm" className="scroll-mt-20 rounded-xl border bg-card p-6 space-y-4">
         <div className="flex items-center gap-2">
           <Key className="h-5 w-5" />
-          <h2 className="text-lg font-semibold">AI Chat Model</h2>
+          <h2 className="text-lg font-semibold">OpenRouter AI Key</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Bring your own API key to power the SEO Assistant chat. Your key is stored locally in your browser and never sent to our servers.
+          Bring your own OpenRouter key. DataWise uses tested routing: Sonar Pro for search-grounded work and your selected OpenRouter model for assistant and writer analysis.
         </p>
 
         <div className="space-y-3">
-          <div className="space-y-2">
-            <Label>Provider</Label>
-            <Select value={llmProvider} onValueChange={(v) => { setLlmProvider(v); setLlmSaved(false); if (v === 'openrouter' && !llmModel) setLlmModel(OPENROUTER_MODELS[0].id); }}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LLM_PROVIDERS.map((p) => (
-                  <SelectItem key={p.value} value={p.value}>
-                    <div>
-                      <span>{p.label}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">{p.hint}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {legacyProvider && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Your browser still has an old {legacyProvider} key saved. The app now routes user-facing AI through OpenRouter only, so reconnect with an OpenRouter key.
+            </div>
+          )}
 
           <div className="space-y-2">
-            <Label>API Key</Label>
+            <Label>OpenRouter API Key</Label>
             <div className="relative">
               <Input
                 type={showKey ? 'text' : 'password'}
                 value={llmApiKey}
                 onChange={(e) => { setLlmApiKey(e.target.value); setLlmSaved(false); }}
-                placeholder={
-                  llmProvider === 'openai' ? 'sk-...' :
-                  llmProvider === 'claude' ? 'sk-ant-...' :
-                  llmProvider === 'openrouter' ? 'sk-or-...' :
-                  'AIza...'
-                }
+                placeholder="sk-or-..."
               />
               <button
                 type="button"
@@ -400,44 +615,51 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          {llmProvider === 'openrouter' && (
-            <div className="space-y-2">
-              <Label>Model</Label>
-              <Select value={llmModel || OPENROUTER_MODELS[0].id} onValueChange={(v) => { setLlmModel(v); setLlmSaved(false); }}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(['premium', 'budget', 'free'] as const).map((tier) => {
-                    const tierInfo = TIER_LABELS[tier];
-                    const models = OPENROUTER_MODELS.filter((m) => m.tier === tier);
-                    return models.map((m, i) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        <div className="flex items-center gap-2">
-                          {i === 0 && (
-                            <span className={`text-[10px] font-semibold uppercase tracking-wider ${tierInfo.color}`}>
-                              {tierInfo.label}
+          <div className="space-y-2">
+            <Label>Default analysis and writer model</Label>
+            <Select value={llmModel || DEFAULT_OPENROUTER_MODEL} onValueChange={(v) => { setLlmModel(v); setLlmSaved(false); }}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="min-w-[360px]">
+                {OPENROUTER_PROVIDER_GROUPS.map((provider, providerIndex) => {
+                  const models = OPENROUTER_MODELS.filter((model) => model.provider === provider.id);
+                  if (!models.length) return null;
+                  return (
+                    <SelectGroup key={provider.id}>
+                      {providerIndex > 0 ? <SelectSeparator /> : null}
+                      <SelectLabel className="flex items-center gap-2 pl-8 text-xs uppercase tracking-wide text-muted-foreground">
+                        <img src={providerLogo(provider.id)} alt="" className="h-3.5 w-3.5" />
+                        {provider.name}
+                      </SelectLabel>
+                      {models.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{m.name}</span>
+                            {m.id === DEFAULT_OPENROUTER_MODEL && (
+                              <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                                Default
+                              </span>
+                            )}
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                              {m.tier}
                             </span>
-                          )}
-                          {i > 0 && <span className="text-[10px] w-[52px]" />}
-                          <span className="font-medium">{m.name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            {m.tier === 'free' ? 'FREE' : `${m.input}/${m.output}`}
-                          </span>
-                          <span className="text-xs text-muted-foreground/60">{m.context}</span>
-                        </div>
-                      </SelectItem>
-                    ));
-                  }).flat()}
-                </SelectContent>
-              </Select>
-              {llmModel && (
-                <p className="text-xs text-muted-foreground">
-                  {OPENROUTER_MODELS.find((m) => m.id === llmModel)?.why || OPENROUTER_MODELS[0].why}
-                </p>
-              )}
-            </div>
-          )}
+                            <span className="text-xs text-muted-foreground">
+                              {m.input}/{m.output}
+                            </span>
+                            <span className="text-xs text-muted-foreground/60">{m.context}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {OPENROUTER_MODELS.find((m) => m.id === llmModel)?.why || OPENROUTER_MODELS[0].why}
+            </p>
+          </div>
 
           <div className="flex gap-2">
             <Button onClick={handleSaveLLM} disabled={!llmApiKey.trim() || llmSaved} size="sm">
@@ -446,7 +668,7 @@ export default function SettingsPage() {
                   <CheckCircle className="h-3 w-3 mr-1.5" />
                   Saved
                 </>
-              ) : 'Save Key'}
+              ) : 'Save Settings'}
             </Button>
             {llmSaved && (
               <Button variant="ghost" size="sm" className="text-destructive" onClick={handleClearLLM}>
@@ -456,6 +678,57 @@ export default function SettingsPage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Promo Code */}
+      <div className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Ticket className="h-5 w-5" />
+          <h2 className="text-lg font-semibold">Promo Code</h2>
+        </div>
+
+        {promoActive ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-0">Active</Badge>
+              {promoLabel && <span className="text-sm font-medium">{promoLabel}</span>}
+            </div>
+            {promoExpiresAt && (
+              <p className="text-sm text-muted-foreground">
+                Expires: {new Date(promoExpiresAt).toLocaleString()}
+              </p>
+            )}
+            <p className="text-sm text-green-600 font-medium">
+              You have unlimited access while this promo is active.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Enter a promo code to unlock temporary unlimited access.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                placeholder="Enter promo code"
+                value={promoCodeInput}
+                onChange={(e) => {
+                  setPromoCodeInput(e.target.value.toUpperCase());
+                  setPromoError('');
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handleRedeemPromo()}
+                className="max-w-xs uppercase"
+              />
+              <Button onClick={handleRedeemPromo} disabled={promoRedeeming || !promoCodeInput.trim()} size="sm">
+                {promoRedeeming ? (
+                  <><Loader2 className="h-3 w-3 mr-1.5 animate-spin" />Applying...</>
+                ) : 'Apply'}
+              </Button>
+            </div>
+            {promoError && (
+              <p className="text-xs text-destructive">{promoError}</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

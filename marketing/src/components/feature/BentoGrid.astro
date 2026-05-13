@@ -1,0 +1,162 @@
+---
+import BentoCard from './BentoCard.astro';
+
+interface SubTool {
+  name: string;
+  description: string;
+}
+
+interface Props {
+  subTools: SubTool[];
+  eyebrow?: string;
+  title?: string;
+  subtitle?: string;
+  glowColor?: string;
+}
+
+const {
+  subTools,
+  eyebrow = 'Inside the tool',
+  title = 'Everything you need in one place',
+  subtitle,
+  glowColor = '46, 204, 113',
+} = Astro.props;
+
+// Map each sub-tool to a grid area. Six cards get the MagicBento layout.
+// Fewer/more: fall back to a uniform grid.
+const sixAreaClasses = [
+  'bento-card-0', // span 2 cols
+  'bento-card-1',
+  'bento-card-2', // span 2 rows
+  'bento-card-3',
+  'bento-card-4', // span 2 cols
+  'bento-card-5',
+];
+
+const cards = subTools.map((tool, i) => ({
+  ...tool,
+  areaClass: subTools.length === 6 ? sixAreaClasses[i] : '',
+}));
+---
+
+<section class="bento-section" data-interpolate-bg>
+  <div class="bento-container">
+    <div class="bento-header">
+      <span class="bento-eyebrow">{eyebrow}</span>
+      <h2 class="bento-title">{title}</h2>
+      {subtitle && <p class="bento-subtitle">{subtitle}</p>}
+    </div>
+
+    <div
+      class:list={['bento-grid', subTools.length === 6 && 'bento-grid-6']}
+      data-bento-grid
+      data-glow={glowColor}
+    >
+      {cards.map((card) => (
+        <BentoCard
+          label={card.name.split(' ')[0]}
+          title={card.name}
+          description={card.description}
+          areaClass={card.areaClass}
+        />
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .bento-section {
+    position: relative;
+    background: #060b09;
+    color: #f5f7f6;
+    padding: 6rem 0 7rem;
+    overflow: hidden;
+  }
+
+  /* Subtle ambient glow at top */
+  .bento-section::before {
+    content: '';
+    position: absolute;
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 400px;
+    background: radial-gradient(ellipse at center, rgba(46, 204, 113, 0.15), transparent 70%);
+    pointer-events: none;
+  }
+
+  .bento-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    position: relative;
+  }
+
+  @media (min-width: 640px) {
+    .bento-container {
+      padding: 0 1.5rem;
+    }
+  }
+
+  .bento-header {
+    text-align: center;
+    max-width: 42rem;
+    margin: 0 auto 3rem;
+  }
+
+  .bento-eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(46, 204, 113, 0.9);
+    padding: 0.35rem 0.85rem;
+    border: 1px solid rgba(46, 204, 113, 0.3);
+    border-radius: 999px;
+    background: rgba(46, 204, 113, 0.08);
+  }
+
+  .bento-title {
+    margin-top: 1rem;
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.15;
+    color: #ffffff;
+  }
+
+  .bento-subtitle {
+    margin-top: 0.75rem;
+    font-size: 1.05rem;
+    color: rgba(229, 231, 235, 0.65);
+    line-height: 1.55;
+  }
+
+  .bento-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: 1fr;
+  }
+
+  @media (min-width: 640px) {
+    .bento-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .bento-grid-6 {
+      grid-template-columns: repeat(4, 1fr);
+      grid-template-rows: repeat(2, minmax(220px, auto));
+      gap: 1.25rem;
+    }
+    .bento-grid-6 :global(.bento-card-0) { grid-column: span 2; grid-row: span 1; }
+    .bento-grid-6 :global(.bento-card-1) { grid-column: span 1; grid-row: span 1; }
+    .bento-grid-6 :global(.bento-card-2) { grid-column: span 1; grid-row: span 2; }
+    .bento-grid-6 :global(.bento-card-3) { grid-column: span 1; grid-row: span 1; }
+    .bento-grid-6 :global(.bento-card-4) { grid-column: span 2; grid-row: span 1; }
+    .bento-grid-6 :global(.bento-card-5) { grid-column: span 1; grid-row: span 1; }
+  }
+</style>

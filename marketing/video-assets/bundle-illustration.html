@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Ranking · What's Included</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
+    rel="stylesheet"
+  />
+
+  <style>
+    :root {
+      --green: #005232;
+      --green-soft: #0a6b44;
+      --green-dark: #003d25;
+      --cream: #F6F0E2;
+      --cream-dark: #EDE5D0;
+      --ink: #141414;
+      --ink-soft: #6B665C;
+      --copper: #A46A2E;
+      --rule: rgba(20, 20, 20, 0.12);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      background: var(--cream);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      color: var(--ink);
+      overflow: hidden;
+      position: relative;
+      padding: 40px 20px;
+    }
+
+    /* Fine grain noise overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 240 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+      opacity: 0.22;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    /* Giant background watermark */
+    .watermark {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -54%) rotate(-8deg);
+      font-family: 'Instrument Serif', serif;
+      font-size: min(32vw, 540px);
+      line-height: 0.85;
+      font-weight: 400;
+      color: var(--green);
+      opacity: 0.035;
+      letter-spacing: -0.04em;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 0;
+      user-select: none;
+    }
+
+    /* Horizontal guide rules (subway tiles grid) */
+    .grid-lines {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background-image:
+        linear-gradient(to right, rgba(0, 82, 50, 0.04) 1px, transparent 1px);
+      background-size: 88px 100%;
+    }
+
+    /* Receipt card */
+    .receipt {
+      position: relative;
+      width: min(560px, 92vw);
+      background: linear-gradient(180deg, #FBF6E6 0%, var(--cream) 100%);
+      padding: 56px 56px 48px;
+      box-shadow:
+        inset 0 0 0 1px rgba(0, 82, 50, 0.08),
+        0 1px 2px rgba(20, 20, 20, 0.06),
+        0 18px 48px rgba(0, 82, 50, 0.10),
+        0 56px 120px rgba(0, 82, 50, 0.08);
+      z-index: 10;
+      border-top: 4px solid var(--green);
+    }
+
+    /* Torn bottom edge */
+    .receipt::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -14px;
+      height: 14px;
+      background-image:
+        linear-gradient(135deg, var(--cream) 25%, transparent 25%),
+        linear-gradient(225deg, var(--cream) 25%, transparent 25%);
+      background-size: 20px 28px;
+      background-repeat: repeat-x;
+      background-position: 0 0;
+      filter: drop-shadow(0 4px 6px rgba(0, 82, 50, 0.06));
+    }
+
+    /* Perforation */
+    .perf-top,
+    .perf-side {
+      position: absolute;
+      background-image: radial-gradient(circle, var(--cream) 2px, transparent 2.5px);
+      background-size: 12px 12px;
+      background-repeat: repeat-x;
+    }
+
+    /* Meta header row */
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      font-weight: 500;
+    }
+
+    .meta-row .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--copper);
+      display: inline-block;
+      margin: 0 8px 0 2px;
+      vertical-align: middle;
+    }
+
+    /* Title block */
+    .title-block {
+      margin-top: 28px;
+      margin-bottom: 32px;
+    }
+
+    .title {
+      font-family: 'Instrument Serif', serif;
+      font-size: 60px;
+      line-height: 0.92;
+      color: var(--green);
+      font-weight: 400;
+      letter-spacing: -0.025em;
+    }
+
+    .title em {
+      font-style: italic;
+      color: var(--copper);
+      display: block;
+      font-size: 0.68em;
+      margin-top: 4px;
+    }
+
+    .subtitle {
+      margin-top: 18px;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .subtitle::before,
+    .subtitle::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--rule);
+    }
+
+    /* Column header */
+    .col-header {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 16px;
+      padding: 10px 0 12px;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--green);
+      font-weight: 600;
+      border-top: 1px solid var(--rule);
+      border-bottom: 1px dashed var(--rule);
+      margin-bottom: 24px;
+    }
+
+    /* Line items */
+    .items {
+      display: flex;
+      flex-direction: column;
+      gap: 26px;
+    }
+
+    .item {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 16px;
+      align-items: start;
+      opacity: 0;
+      position: relative;
+    }
+
+    .item-num {
+      font-size: 11px;
+      color: var(--ink-soft);
+      font-weight: 500;
+      padding-top: 7px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.05em;
+    }
+
+    .item-body {
+      min-width: 0;
+    }
+
+    .item-title {
+      font-family: 'Instrument Serif', serif;
+      font-size: 26px;
+      color: var(--ink);
+      line-height: 1.1;
+      letter-spacing: -0.01em;
+      font-weight: 400;
+    }
+
+    .item-title em {
+      font-style: italic;
+      color: var(--green);
+    }
+
+    .item-desc {
+      font-size: 11px;
+      color: var(--ink-soft);
+      margin-top: 6px;
+      line-height: 1.5;
+      letter-spacing: 0.02em;
+      max-width: 34ch;
+    }
+
+    .item-tag {
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--green);
+      padding-top: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    /* Emphatic total */
+    .total-band {
+      margin-top: 40px;
+      padding-top: 24px;
+      border-top: 3px double var(--green);
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      opacity: 0;
+    }
+
+    .total-label {
+      font-size: 10px;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      font-weight: 500;
+    }
+
+    .total-label strong {
+      display: block;
+      font-family: 'Instrument Serif', serif;
+      font-style: italic;
+      text-transform: none;
+      font-size: 17px;
+      letter-spacing: 0;
+      color: var(--ink);
+      font-weight: 400;
+      margin-top: 4px;
+    }
+
+    .total-amount {
+      font-family: 'Instrument Serif', serif;
+      font-size: 96px;
+      line-height: 0.85;
+      color: var(--green);
+      font-weight: 400;
+      letter-spacing: -0.05em;
+      display: flex;
+      align-items: baseline;
+      gap: 2px;
+    }
+
+    .total-amount .currency {
+      font-size: 36px;
+      line-height: 1;
+      color: var(--green);
+      margin-right: 2px;
+      transform: translateY(-22px);
+    }
+
+    .total-amount .cents {
+      font-size: 28px;
+      line-height: 1;
+      color: var(--green-soft);
+      transform: translateY(-36px);
+      margin-left: 4px;
+    }
+
+    /* Footer promise */
+    .promise {
+      margin-top: 32px;
+      padding: 18px 20px;
+      border: 1px dashed var(--green);
+      background: rgba(0, 82, 50, 0.035);
+      text-align: center;
+      font-size: 10px;
+      line-height: 1.6;
+      letter-spacing: 0.06em;
+      color: var(--ink);
+      opacity: 0;
+    }
+
+    .promise strong {
+      font-family: 'Instrument Serif', serif;
+      font-style: italic;
+      font-weight: 400;
+      font-size: 15px;
+      color: var(--green);
+      letter-spacing: 0;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    /* Signature */
+    .sig {
+      margin-top: 22px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--ink-soft);
+      opacity: 0;
+    }
+
+    .sig-name {
+      font-family: 'Instrument Serif', serif;
+      font-style: italic;
+      font-size: 22px;
+      color: var(--green);
+      text-transform: none;
+      letter-spacing: -0.01em;
+      transform: rotate(-2deg) translateY(2px);
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--rule);
+      min-width: 140px;
+    }
+
+    /* Controls (hidden from screen capture) */
+    .controls {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      z-index: 100;
+      opacity: 0.35;
+      transition: opacity 0.3s;
+    }
+
+    .controls:hover { opacity: 1; }
+
+    .controls button {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: var(--green);
+      color: var(--cream);
+      border: none;
+      padding: 10px 18px;
+      cursor: pointer;
+      border-radius: 2px;
+      box-shadow: 0 4px 12px rgba(0, 82, 50, 0.25);
+    }
+
+    .controls button:hover { background: var(--green-dark); }
+
+    .controls .hint {
+      font-size: 9px;
+      color: var(--ink-soft);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      align-self: center;
+      padding-right: 8px;
+    }
+
+    /* Print/capture mode: press C to hide controls */
+    body.capture .controls { display: none; }
+  </style>
+</head>
+
+<body>
+  <div class="grid-lines"></div>
+  <div class="watermark">AI<br />Ranking</div>
+
+  <article class="receipt" id="receipt">
+    <div class="meta-row">
+      <span>No. 00027<span class="dot"></span>Monthly</span>
+      <span id="date">Since 2024</span>
+    </div>
+
+    <div class="title-block">
+      <h1 class="title">
+        AI Ranking<em>Membership</em>
+      </h1>
+      <p class="subtitle">What's included</p>
+    </div>
+
+    <div class="col-header">
+      <span>Nº</span>
+      <span>Item</span>
+      <span>Cadence</span>
+    </div>
+
+    <div class="items">
+      <div class="item" data-i="1">
+        <span class="item-num">01</span>
+        <div class="item-body">
+          <div class="item-title">The <em>DataWise</em> toolkit</div>
+          <div class="item-desc">
+            Keyword research, competitor analysis, rank tracking, AI visibility,
+            and the SEO Assistant. The whole thing.
+          </div>
+        </div>
+        <span class="item-tag">Unlimited</span>
+      </div>
+
+      <div class="item" data-i="2">
+        <span class="item-num">02</span>
+        <div class="item-body">
+          <div class="item-title">1:1 onboarding call</div>
+          <div class="item-desc">
+            Personal session with Nico. Map your site, your goals, and your
+            first wins on a live call.
+          </div>
+        </div>
+        <span class="item-tag">One-time</span>
+      </div>
+
+      <div class="item" data-i="3">
+        <span class="item-num">03</span>
+        <div class="item-body">
+          <div class="item-title">Live Q&amp;A sessions</div>
+          <div class="item-desc">
+            Bring your site, your rankings, your AI visibility problems. Get
+            real answers from the founder and the room.
+          </div>
+        </div>
+        <span class="item-tag">2× weekly</span>
+      </div>
+
+      <div class="item" data-i="4">
+        <span class="item-num">04</span>
+        <div class="item-body">
+          <div class="item-title">A room full of <em>practitioners</em></div>
+          <div class="item-desc">
+            SEOs actually shipping work in the AI search era. Agencies,
+            in-house, solo. No tourists.
+          </div>
+        </div>
+        <span class="item-tag">Always on</span>
+      </div>
+    </div>
+
+    <div class="total-band">
+      <div>
+        <div class="total-label">
+          Total, monthly
+          <strong>One membership. Every tool.</strong>
+        </div>
+      </div>
+      <div class="total-amount">
+        <span class="currency">$</span>27<span class="cents">.00</span>
+      </div>
+    </div>
+
+    <div class="promise">
+      <strong>7-day personal refund from the founder</strong>
+      If it is not a fit, DM Nico. Full refund. No questions.
+    </div>
+
+    <div class="sig">
+      <span>Signed</span>
+      <span class="sig-name">Nico</span>
+    </div>
+  </article>
+
+  <div class="controls">
+    <span class="hint">Press C for capture mode</span>
+    <button onclick="playAnimation()">Replay</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script>
+    function playAnimation() {
+      gsap.set('#receipt', { y: 48, opacity: 0 });
+      gsap.set('.title', { opacity: 0, y: 20 });
+      gsap.set('.subtitle', { opacity: 0 });
+      gsap.set('.col-header', { opacity: 0 });
+      gsap.set('.item', { y: 18, opacity: 0 });
+      gsap.set('.total-band', { y: 16, opacity: 0, scale: 0.96, transformOrigin: 'center bottom' });
+      gsap.set('.promise', { opacity: 0, y: 10 });
+      gsap.set('.sig', { opacity: 0 });
+
+      const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+
+      tl.to('#receipt', { y: 0, opacity: 1, duration: 0.9 })
+        .to('.title', { opacity: 1, y: 0, duration: 0.7 }, '-=0.5')
+        .to('.subtitle', { opacity: 1, duration: 0.4 }, '-=0.35')
+        .to('.col-header', { opacity: 1, duration: 0.4 }, '-=0.2')
+        .to('.item[data-i="1"]', { y: 0, opacity: 1, duration: 0.55 }, '+=0.1')
+        .to('.item[data-i="2"]', { y: 0, opacity: 1, duration: 0.55 }, '+=0.22')
+        .to('.item[data-i="3"]', { y: 0, opacity: 1, duration: 0.55 }, '+=0.22')
+        .to('.item[data-i="4"]', { y: 0, opacity: 1, duration: 0.55 }, '+=0.22')
+        .to('.total-band', { y: 0, opacity: 1, scale: 1, duration: 0.8, ease: 'back.out(1.4)' }, '+=0.25')
+        .to('.promise', { opacity: 1, y: 0, duration: 0.5 }, '-=0.15')
+        .to('.sig', { opacity: 1, duration: 0.4 }, '-=0.1');
+    }
+
+    window.addEventListener('load', () => {
+      setTimeout(playAnimation, 250);
+    });
+
+    // Press C to toggle capture mode (hides controls)
+    document.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'c') {
+        document.body.classList.toggle('capture');
+      }
+      if (e.key.toLowerCase() === 'r') {
+        playAnimation();
+      }
+    });
+  </script>
+</body>
+</html>

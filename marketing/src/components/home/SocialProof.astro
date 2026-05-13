@@ -1,0 +1,48 @@
+---
+import Section from '../ui/Section.astro';
+import Stat from '../ui/Stat.astro';
+---
+
+<Section id="social-proof" bg="white">
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+    <!-- Founder credibility -->
+    <div class="proof-content">
+      <h2 class="text-2xl sm:text-3xl font-bold mb-4">
+        Built by an SEO practitioner, not a venture-backed startup
+      </h2>
+      <p class="text-[var(--color-text-primary)]/60 leading-relaxed mb-4">
+        DataWise was built by Nicolas Gorrono, founder of the AI Ranking community. After years of paying for multiple SEO tools that each did one thing well, he built a single platform that covers the essentials and bundled it into the AI Ranking community membership.
+      </p>
+      <p class="text-[var(--color-text-primary)]/60 leading-relaxed">
+        No investor pressure to upsell you. No feature gates. No "contact sales" buttons. Just the SEO tools you need, backed by a community of professionals sharing strategies.
+      </p>
+    </div>
+
+    <!-- Stats grid -->
+    <div class="grid grid-cols-2 gap-8 proof-stats">
+      <Stat value="500" suffix="+" label="Community members" />
+      <Stat value="6" label="SEO tool suites" />
+      <Stat value="10" suffix="+" label="Years SEO experience" />
+      <Stat value="3" label="AI search engines tracked" />
+    </div>
+  </div>
+</Section>
+
+<script>
+  import { fadeUp, staggerIn, counterUp } from '../../scripts/animations';
+
+  fadeUp('.proof-content');
+  staggerIn('.proof-stats > div', 0.1);
+
+  document.querySelectorAll('.counter-value').forEach((el) => {
+    const text = el.textContent || '0';
+    const target = parseInt(text, 10);
+    if (target > 0) {
+      const parent = el.closest('[class*="proof-stats"]');
+      if (parent) {
+        const index = Array.from(parent.children).indexOf(el.closest('div')!);
+        counterUp(`.proof-stats > div:nth-child(${index + 1}) .counter-value`, target, 1.5);
+      }
+    }
+  });
+</script>

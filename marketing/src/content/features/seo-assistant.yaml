@@ -1,0 +1,117 @@
+# SEO KEYWORD RESEARCH NOTES
+# ============================================================
+# Primary keyword: "ai seo assistant"
+#   Rationale: Lower competition than "ai seo tool"; strong buyer intent;
+#   directly names the feature; growing search trend alongside ChatGPT adoption.
+#   Targets users actively looking for a personalized, conversational SEO tool.
+#
+# Secondary: "chatgpt for seo"
+#   Rationale: High awareness keyword; positions DataWise against generic LLMs
+#   by emphasizing the GSC-connected, personalized data angle as the differentiator.
+#
+# LSI keywords integrated throughout page:
+#   - ai google search console (direct feature match, low competition)
+#   - seo ai advisor (intent match for consultant-replacement angle)
+#   - conversational seo tool (differentiates from dashboard-only tools)
+#   - ai-powered seo insights (broad modifier, natural in FAQs + benefits)
+#   - seo recommendations ai (captures question-based queries)
+#   - ask ai about seo (conversational query form, FAQ integration)
+#   - gsc ai analysis (technical/integration audience)
+#
+# Page target: /features/seo-assistant
+# Internal links: /features/keyword-research, /features/rank-tracking
+# ============================================================
+
+title: SEO Assistant
+description: AI-powered chat that analyzes your Google Search Console data and delivers actionable SEO insights and recommendations.
+metaDescription: "DataWise SEO Assistant is an AI SEO advisor connected to your real GSC data. Ask questions in plain English and get personalized, actionable recommendations in seconds."
+icon: "message-circle"
+heroTagline: "Ask your AI SEO advisor anything"
+
+benefits:
+  - title: Personalized insights
+    description: The assistant analyzes your actual GSC data, not generic advice. Every recommendation is tailored to your site.
+  - title: Natural language queries
+    description: "Ask questions in plain English. \"What are my low-hanging fruit keywords?\" or \"Which pages are losing traffic?\""
+  - title: Instant strategy
+    description: Get actionable recommendations in seconds instead of spending hours analyzing spreadsheets.
+
+subTools:
+  - name: GSC Data Analysis
+    description: Ask questions about your search performance and get AI-generated analysis of your clicks, impressions, and CTR.
+  - name: Low-Hanging Fruit Finder
+    description: Identify keywords where small ranking improvements would drive significant traffic gains.
+  - name: Content Recommendations
+    description: Get AI suggestions for which pages to optimize, what content to create, and how to improve existing pages.
+
+stats:
+  - value: 5
+    suffix: "s"
+    label: "Response time per query including live GSC data retrieval"
+  - value: 12
+    suffix: "+"
+    label: "GSC metrics analyzed per answer (clicks, impressions, CTR, position, trends)"
+  - value: 0
+    suffix: ""
+    label: "Query limits per session (ask unlimited follow-ups)"
+  - value: 5
+    suffix: ""
+    label: "Prioritized actions delivered per conversation, ranked by impact"
+
+story:
+  - caption: "Connect your Search Console"
+    highlight: "Authorize DataWise once. Your GSC data syncs automatically so every conversation starts with current, real performance data, not a stale export."
+  - caption: "Ask a plain-English question"
+    highlight: "Type what you want to know. No SQL, no pivot tables, no filters to configure. The AI interprets your question and queries your data directly."
+  - caption: "Execute the recommendation immediately"
+    highlight: "You receive a specific, prioritized action. Update the title tag, target the keyword, or brief the content. One answer, ready to act on."
+
+opportunities:
+  - title: Instant GSC insights without spreadsheets
+    description: "Pull meaningful conclusions from your search data in seconds, without exporting CSVs, writing formulas, or building pivot tables."
+    icon: zap
+  - title: Plain-English queries on complex search data
+    description: "Ask nuanced questions about search performance and receive clear answers, not raw numbers that require hours of interpretation."
+    icon: message-circle
+  - title: Page-level optimization briefs on demand
+    description: "Get AI-generated, URL-specific guidance on which keywords to target, what to rewrite, and why it matters for that page."
+    icon: pen-tool
+  - title: Page-2 rankings identified and prioritized
+    description: "The assistant surfaces keywords where you already rank positions 8-15, pinpointing the fastest path to page-one traffic gains."
+    icon: trending-up
+  - title: Content decay detection before rankings drop
+    description: "Automatically identify pages where impressions or clicks have declined over 90 days before the rankings follow them down."
+    icon: bar-chart
+  - title: Ranked next-action list every session
+    description: "Every conversation ends with prioritized actions ordered by expected impact so you spend time on what moves the needle most."
+    icon: target
+
+useCases:
+  - icon: users
+    audience: "Non-technical founders"
+    scenario: "You connected GSC on day one but never knew what to do with the data. Now you ask the assistant \"what should I fix first?\" and get a prioritized action list based on your actual traffic, not a generic checklist from a blog post."
+  - icon: star
+    audience: "Solo SEO consultants"
+    scenario: "Before the kickoff meeting, you connect the client's GSC and ask the assistant to surface quick wins. You walk in with three specific, data-backed recommendations. Your client sees immediate expertise. You spent 10 minutes, not two hours."
+  - icon: pen-tool
+    audience: "Content marketers"
+    scenario: "You ask \"which topics are driving impressions but no clicks?\" The assistant identifies underperforming titles and suggests angle adjustments based on what searchers actually want from your existing content, not keyword volume alone."
+  - icon: shield
+    audience: "Small agency owners"
+    scenario: "Each account manager connects a client's GSC and uses the assistant to generate the monthly strategy brief. Consistent, data-driven recommendations across every account without requiring a senior SEO on each one."
+
+faqs:
+  - question: Does an AI SEO assistant replace a human SEO consultant?
+    answer: "Not fully, but it closes the gap significantly for most websites. The DataWise SEO Assistant handles the analytical work that consumes most of a consultant's time: pulling data, identifying patterns, and prioritizing actions. A human consultant still adds value for competitive strategy, technical audits, and stakeholder communication. For small and mid-size sites, the assistant delivers personalized, data-driven guidance that was previously only accessible through expensive monthly retainers."
+  - question: Which large language model powers the SEO Assistant?
+    answer: "DataWise uses frontier LLMs selected for accuracy and reasoning quality on structured data tasks. The specific model may vary as we evaluate performance. What stays constant is the retrieval layer: every response is grounded in your actual GSC data, not the model's general knowledge. This prevents the hallucinated keyword volumes and generic advice you get when asking a general-purpose AI SEO tool questions about your specific site."
+  - question: Is my Google Search Console data private when using an AI SEO tool?
+    answer: "Yes. Your GSC data is scoped to your account and never used to train models or shared with other users. DataWise accesses your data read-only through the official Google Search Console API. Queries are processed in isolated sessions. No raw GSC data is retained beyond what is needed to answer your current question. Review our privacy policy for complete data handling details."
+  - question: Can the SEO Assistant generate reports or summaries I can share with clients?
+    answer: "The assistant generates text-based analysis and recommendations you can copy directly into a client report or internal brief. Formatted PDF export and scheduled reporting are on the product roadmap. The current fastest workflow is to ask the assistant to summarize findings in a specific format, then copy the output into your reporting template. Most users find the assistant's output is already structured clearly enough to use with minimal editing."
+  - question: "How is this different from asking ChatGPT general SEO questions?"
+    answer: "ChatGPT gives generalized advice based on training data. It cannot see your site, your rankings, or your GSC performance. The DataWise SEO Assistant is connected to your real data. When you ask \"which pages are losing traffic?\" it queries your actual Search Console metrics and returns specific URLs with specific declines. The difference is asking a stranger for directions versus asking someone who has your GPS coordinates and can see the road conditions ahead."
+  - question: What kinds of questions can I actually ask the SEO Assistant?
+    answer: "You can ask about traffic trends (\"why did my clicks drop last month?\"), keyword opportunities (\"what low-hanging-fruit keywords am I close to ranking for?\"), content performance (\"which pages have high impressions but low CTR?\"), prioritization (\"what should I fix first?\"), and page-level strategy (\"how should I optimize my pricing page for search?\"). The assistant handles both broad strategy questions and specific diagnostic queries about individual URLs or keyword segments."
+  - question: Does the AI SEO Assistant learn from my site over time?
+    answer: "The assistant has access to your full GSC history each session, so it can reason about trends over time: comparing current performance to 90 days ago, or identifying seasonal patterns in your data. It does not retain memory between separate conversations. Each new session starts fresh but with full access to your synced GSC data. Persistent cross-session memory is a planned feature. For now, providing brief context at the start of each session (such as a recent site redesign or campaign launch) improves recommendation quality."

@@ -1,0 +1,909 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Section from '../../components/ui/Section.astro';
+import Button from '../../components/ui/Button.astro';
+import Icon from '../../components/ui/Icon.astro';
+import Badge from '../../components/ui/Badge.astro';
+import AppScreenshot from '../../components/ui/AppScreenshot.astro';
+import { getCollection } from 'astro:content';
+
+const featuresRaw = await getCollection('features');
+
+const iconMap: Record<string, string> = {
+  '🔍': 'search',
+  '📊': 'bar-chart',
+  '🤖': 'robot',
+  '📈': 'trending-up',
+  '💬': 'message-circle',
+  '✍️': 'pen-tool',
+};
+
+// Preferred ordering for the index page
+const order = ['keyword-research', 'competitor-analysis', 'rank-tracking', 'ai-visibility', 'seo-assistant', 'content-tools'];
+const features = [...featuresRaw].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+
+// Real screenshot paths — JPG for every feature
+const realShots: Record<string, string> = {
+  'keyword-research': '/images/screenshots/keyword-research.jpg',
+  'competitor-analysis': '/images/screenshots/competitor-analysis.jpg',
+  'rank-tracking': '/images/screenshots/rank-tracking.jpg',
+  'ai-visibility': '/images/screenshots/ai-visibility.jpg',
+  'seo-assistant': '/images/screenshots/seo-assistant.jpg',
+  'content-tools': '/images/screenshots/content-tools.jpg',
+};
+const getShot = (id: string) => realShots[id] || `/images/screenshots/${id}.svg`;
+
+// Stats for hero
+const totalTools = features.length;
+const totalSubTools = features.reduce((acc, f) => acc + f.data.subTools.length, 0);
+---
+
+<BaseLayout
+  title="Features"
+  description="Every SEO tool included with the AI Ranking community membership: keyword research, competitor analysis, AI visibility tracking, rank monitoring, AI SEO assistant, and content optimization. From $27/month, 7-day risk-free trial."
+>
+  <!-- ============================================= -->
+  <!-- HERO                                           -->
+  <!-- ============================================= -->
+  <section class="index-hero">
+    <div class="index-hero-bg" aria-hidden="true"></div>
+    <div class="index-hero-blob index-hero-blob--1" aria-hidden="true"></div>
+    <div class="index-hero-blob index-hero-blob--2" aria-hidden="true"></div>
+
+    <div class="index-hero-container">
+      <div class="index-hero-badge" id="features-hero-badge">
+        <Icon name="zap" size={14} />
+        <span>{totalTools} tools, {totalSubTools}+ sub-features, one membership</span>
+      </div>
+
+      <h1 id="features-hero-title" class="index-hero-title">
+        Every SEO tool you need,<br />
+        <span class="index-hero-accent">one membership</span>
+      </h1>
+
+      <p id="features-hero-sub" class="index-hero-sub">
+        Research keywords, analyze competitors, track rankings, monitor AI search visibility, chat with an SEO assistant, and refresh old content. Every tool is included with your AI Ranking community membership. 7-day risk-free trial.
+      </p>
+
+      <div class="index-hero-stats" id="features-hero-stats">
+        <div class="index-stat">
+          <div class="index-stat-value"><span data-counter data-target={totalTools}>0</span></div>
+          <div class="index-stat-label">Core tools</div>
+        </div>
+        <div class="index-stat-divider" aria-hidden="true"></div>
+        <div class="index-stat">
+          <div class="index-stat-value"><span data-counter data-target={totalSubTools}>0</span><span class="index-stat-suffix">+</span></div>
+          <div class="index-stat-label">Sub-features</div>
+        </div>
+        <div class="index-stat-divider" aria-hidden="true"></div>
+        <div class="index-stat">
+          <div class="index-stat-value"><span class="index-stat-dollar">$</span><span data-counter data-target={27}>0</span></div>
+          <div class="index-stat-label">From / month</div>
+        </div>
+      </div>
+
+      <div class="index-hero-ctas" id="features-hero-ctas">
+        <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+          Join AI Ranking
+        </Button>
+        <Button href="#feature-keyword-research" variant="ghost" size="lg">
+          Explore the tools
+        </Button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- STICKY TOOL QUICK NAV                          -->
+  <!-- ============================================= -->
+  <nav class="tool-nav" id="tool-nav" aria-label="Feature quick navigation">
+    <div class="tool-nav-container">
+      <div class="tool-nav-track">
+        {features.map((feature) => (
+          <a
+            href={`#feature-${feature.id}`}
+            class="tool-nav-item"
+            data-tool-nav-item
+            data-target-id={`feature-${feature.id}`}
+          >
+            <span class="tool-nav-icon">
+              <Icon name={iconMap[feature.data.icon] || 'search'} size={16} />
+            </span>
+            <span class="tool-nav-label">{feature.data.title}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </nav>
+
+  <!-- ============================================= -->
+  <!-- ALTERNATING FEATURE SHOWCASE BLOCKS            -->
+  <!-- ============================================= -->
+  <div class="showcase-wrap">
+    {features.map((feature, i) => {
+      const isReversed = i % 2 === 1;
+      const iconName = iconMap[feature.data.icon] || 'search';
+      const num = String(i + 1).padStart(2, '0');
+      return (
+        <section
+          id={`feature-${feature.id}`}
+          class:list={['showcase-block', isReversed && 'showcase-block--reversed']}
+          data-showcase-block
+        >
+          <div class="showcase-container">
+            <div class="showcase-text">
+              <div class="showcase-num">{num}</div>
+              <div class="showcase-icon">
+                <Icon name={iconName} size={26} />
+              </div>
+              <h2 class="showcase-title">{feature.data.title}</h2>
+              <p class="showcase-tagline">{feature.data.heroTagline}</p>
+              <p class="showcase-desc">{feature.data.description}</p>
+
+              <div class="showcase-subtools">
+                {feature.data.subTools.map((tool) => (
+                  <span class="showcase-chip">
+                    <Icon name="check" size={12} />
+                    <span>{tool.name}</span>
+                  </span>
+                ))}
+              </div>
+
+              <div class="showcase-cta">
+                <a href={`/features/${feature.id}`} class="showcase-link" data-showcase-link>
+                  <span>Explore {feature.data.title}</span>
+                  <span class="showcase-arrow" aria-hidden="true">
+                    <Icon name="arrow-right" size={18} />
+                  </span>
+                </a>
+              </div>
+            </div>
+
+            <div class="showcase-media">
+              <div class="showcase-media-frame">
+                <AppScreenshot
+                  src={getShot(feature.id)}
+                  alt={`${feature.data.title} interface in DataWise SEO`}
+                />
+              </div>
+              <div class="showcase-media-bg" aria-hidden="true"></div>
+            </div>
+          </div>
+        </section>
+      );
+    })}
+  </div>
+
+  <!-- ============================================= -->
+  <!-- VALUE BAND                                     -->
+  <!-- ============================================= -->
+  <section class="value-band">
+    <div class="value-band-container">
+      <div class="value-band-eyebrow">
+        <Icon name="shield" size={14} />
+        <span>How it works</span>
+      </div>
+      <h2 class="value-band-title">
+        Every tool you need, bundled into one AI Ranking membership.
+      </h2>
+      <p class="value-band-sub">
+        DataWise is funded by the AI Ranking Skool community, not by monthly SaaS fees. One membership ($27/mo, 7-day risk-free trial) covers every tool across every feature. No per-tool subscriptions, no upsells, no "starter" plans that hide the good stuff.
+      </p>
+      <div class="value-band-grid">
+        <div class="value-band-item">
+          <div class="value-band-item-icon"><Icon name="check-circle" size={20} /></div>
+          <div>
+            <div class="value-band-item-title">7-day risk-free trial</div>
+            <div class="value-band-item-desc">Try the full community and every tool for a week, then decide.</div>
+          </div>
+        </div>
+        <div class="value-band-item">
+          <div class="value-band-item-icon"><Icon name="check-circle" size={20} /></div>
+          <div>
+            <div class="value-band-item-title">No seat limits</div>
+            <div class="value-band-item-desc">Bring your whole team at no extra cost.</div>
+          </div>
+        </div>
+        <div class="value-band-item">
+          <div class="value-band-item-icon"><Icon name="check-circle" size={20} /></div>
+          <div>
+            <div class="value-band-item-title">No feature gates</div>
+            <div class="value-band-item-desc">Every sub-tool is unlocked. Nothing hidden behind a "pro" tier.</div>
+          </div>
+        </div>
+        <div class="value-band-item">
+          <div class="value-band-item-icon"><Icon name="check-circle" size={20} /></div>
+          <div>
+            <div class="value-band-item-title">Enterprise data</div>
+            <div class="value-band-item-desc">Powered by DataForSEO, the same source paid tools use.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- FINAL CTA                                      -->
+  <!-- ============================================= -->
+  <Section bg="dark">
+    <div class="text-center cta-block">
+      <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        Ready to try every tool?
+      </h2>
+      <p class="text-lg text-white/70 mb-8 max-w-xl mx-auto">
+        Unlimited access to all {totalTools} tools is included with your AI Ranking membership from $27/mo. One membership, every tool, 7-day risk-free trial.
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <Button href="https://www.skool.com/ai-ranking" variant="accent" size="lg" magnetic>
+          Join AI Ranking
+        </Button>
+        <Button href="/about" variant="ghost" size="lg" class="text-white/80 hover:text-white hover:bg-white/10">
+          Meet the founder
+        </Button>
+      </div>
+    </div>
+  </Section>
+</BaseLayout>
+
+<style>
+  /* ============================================= */
+  /* HERO                                           */
+  /* ============================================= */
+  .index-hero {
+    position: relative;
+    padding: 7rem 0 5rem;
+    overflow: hidden;
+    isolation: isolate;
+    text-align: center;
+  }
+
+  @media (min-width: 1024px) {
+    .index-hero { padding: 9rem 0 6rem; }
+  }
+
+  .index-hero-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background: linear-gradient(180deg, var(--dw-accent-bg) 0%, var(--dw-bg) 100%);
+  }
+
+  .index-hero-blob {
+    position: absolute;
+    z-index: -1;
+    border-radius: 9999px;
+    filter: blur(100px);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .index-hero-blob--1 {
+    width: 500px;
+    height: 500px;
+    top: -150px;
+    left: -100px;
+    background: radial-gradient(circle, rgba(46, 204, 113, 0.5), transparent 60%);
+  }
+
+  .index-hero-blob--2 {
+    width: 600px;
+    height: 600px;
+    top: 50px;
+    right: -200px;
+    background: radial-gradient(circle, rgba(0, 82, 50, 0.35), transparent 60%);
+  }
+
+  .index-hero-container {
+    max-width: 54rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    position: relative;
+  }
+
+  .index-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 9999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--color-primary);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    box-shadow: var(--shadow-card, 0 1px 3px rgba(0, 0, 0, 0.04));
+    margin-bottom: 1.5rem;
+  }
+
+  .index-hero-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(2.5rem, 6vw, 4.5rem);
+    font-weight: 800;
+    line-height: 1.05;
+    color: var(--dw-text);
+    letter-spacing: -0.025em;
+  }
+
+  .index-hero-accent {
+    background: linear-gradient(135deg, var(--color-primary) 0%, #2ecc71 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .index-hero-sub {
+    margin: 1.5rem auto 0;
+    max-width: 40rem;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+  }
+
+  .index-hero-stats {
+    margin: 2.5rem auto 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1rem 1.75rem;
+    border: 1px solid var(--dw-border);
+    border-radius: 20px;
+    background: var(--dw-surface);
+    box-shadow: var(--shadow-card, 0 4px 14px rgba(0, 0, 0, 0.04));
+  }
+
+  @media (min-width: 640px) {
+    .index-hero-stats { gap: 2.25rem; padding: 1.15rem 2.25rem; }
+  }
+
+  .index-stat {
+    text-align: center;
+    min-width: 0;
+  }
+
+  .index-stat-value {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.65rem, 3vw, 2.25rem);
+    font-weight: 800;
+    line-height: 1;
+    color: var(--dw-text);
+    display: inline-flex;
+    align-items: baseline;
+  }
+
+  .index-stat-suffix,
+  .index-stat-dollar {
+    color: var(--color-primary);
+  }
+
+  .index-stat-label {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--dw-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .index-stat-divider {
+    width: 1px;
+    height: 36px;
+    background: var(--dw-border);
+  }
+
+  .index-hero-ctas {
+    margin-top: 2rem;
+    display: flex;
+    justify-content: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+  }
+
+  /* ============================================= */
+  /* STICKY TOOL QUICK NAV                          */
+  /* ============================================= */
+  .tool-nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: color-mix(in srgb, var(--dw-bg) 85%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--dw-border);
+    padding: 0.75rem 0;
+    transition: background 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .tool-nav.is-stuck {
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.05);
+  }
+
+  .tool-nav-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+
+  .tool-nav-track {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding-bottom: 0.25rem;
+  }
+
+  .tool-nav-track::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tool-nav-item {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    border-radius: 9999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--dw-text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+  }
+
+  .tool-nav-item:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+  }
+
+  .tool-nav-item.is-active {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  .tool-nav-item.is-active .tool-nav-icon {
+    color: #fff;
+  }
+
+  .tool-nav-icon {
+    display: inline-flex;
+    color: var(--color-primary);
+    transition: color 0.3s ease;
+  }
+
+  .tool-nav-item:hover .tool-nav-icon {
+    color: var(--color-primary);
+  }
+
+  /* ============================================= */
+  /* SHOWCASE BLOCKS                                */
+  /* ============================================= */
+  .showcase-wrap {
+    background: var(--dw-bg);
+    overflow-x: hidden;
+  }
+
+  .showcase-block {
+    padding: 5rem 0;
+    scroll-margin-top: 80px; /* offset for sticky nav */
+  }
+
+  @media (min-width: 1024px) {
+    .showcase-block { padding: 7rem 0; }
+  }
+
+  .showcase-block:nth-child(even) {
+    background: var(--dw-surface);
+  }
+
+  .showcase-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3rem;
+    align-items: center;
+  }
+
+  @media (min-width: 640px) {
+    .showcase-container { padding: 0 1.5rem; }
+  }
+
+  @media (min-width: 1024px) {
+    .showcase-container {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+      gap: 4.5rem;
+    }
+  }
+
+  .showcase-block--reversed .showcase-container {
+    direction: ltr;
+  }
+
+  @media (min-width: 1024px) {
+    .showcase-block--reversed .showcase-text {
+      order: 2;
+    }
+    .showcase-block--reversed .showcase-media {
+      order: 1;
+    }
+  }
+
+  .showcase-text {
+    position: relative;
+  }
+
+  .showcase-num {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: var(--color-primary);
+    margin-bottom: 0.9rem;
+    display: inline-block;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    background: var(--dw-accent-bg);
+    border: 1px solid var(--dw-border);
+  }
+
+  .showcase-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+    background: var(--color-primary);
+    color: #ffffff;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 12px 28px -10px rgba(0, 82, 50, 0.4);
+  }
+
+  .showcase-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--dw-text);
+    letter-spacing: -0.02em;
+  }
+
+  .showcase-tagline {
+    margin-top: 0.5rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--color-primary);
+    letter-spacing: -0.005em;
+  }
+
+  .showcase-desc {
+    margin-top: 1rem;
+    font-size: 1.02rem;
+    line-height: 1.65;
+    color: var(--dw-text-secondary);
+    max-width: 32rem;
+  }
+
+  .showcase-subtools {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .showcase-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    border-radius: 9999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--dw-text);
+    transition: all 0.25s ease;
+  }
+
+  .showcase-block:nth-child(even) .showcase-chip {
+    background: var(--dw-bg);
+  }
+
+  .showcase-chip :global(svg) {
+    color: var(--color-primary);
+  }
+
+  .showcase-chip:hover {
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+  }
+
+  .showcase-cta {
+    margin-top: 2rem;
+  }
+
+  .showcase-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.85rem 1.4rem;
+    background: var(--color-primary);
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.95rem;
+    border-radius: 12px;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    box-shadow: 0 8px 20px -8px rgba(0, 82, 50, 0.4);
+  }
+
+  .showcase-link:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 28px -10px rgba(0, 82, 50, 0.5);
+  }
+
+  .showcase-link .showcase-arrow {
+    display: inline-flex;
+    transition: transform 0.3s ease;
+  }
+
+  .showcase-link:hover .showcase-arrow {
+    transform: translateX(4px);
+  }
+
+  .showcase-media {
+    position: relative;
+  }
+
+  .showcase-media-frame {
+    position: relative;
+    z-index: 2;
+  }
+
+  .showcase-media-bg {
+    position: absolute;
+    inset: -20px -30px -40px -30px;
+    z-index: 1;
+    border-radius: 32px;
+    background:
+      radial-gradient(ellipse at center, rgba(46, 204, 113, 0.18), transparent 65%);
+    pointer-events: none;
+  }
+
+  .showcase-block--reversed .showcase-media-bg {
+    background:
+      radial-gradient(ellipse at center, rgba(0, 82, 50, 0.15), transparent 65%);
+  }
+
+  /* ============================================= */
+  /* VALUE BAND                                     */
+  /* ============================================= */
+  .value-band {
+    background: var(--dw-surface-sunken, var(--dw-accent-bg));
+    padding: 6rem 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .value-band::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--dw-border) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--dw-border) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+    opacity: 0.3;
+    pointer-events: none;
+  }
+
+  .value-band-container {
+    position: relative;
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    text-align: center;
+  }
+
+  .value-band-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--dw-border);
+    background: var(--dw-surface);
+    color: var(--color-primary);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .value-band-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--dw-text);
+    letter-spacing: -0.015em;
+    max-width: 40rem;
+    margin: 0 auto;
+  }
+
+  .value-band-sub {
+    margin: 1rem auto 0;
+    max-width: 38rem;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+  }
+
+  .value-band-grid {
+    margin-top: 3rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    text-align: left;
+  }
+
+  @media (min-width: 640px) {
+    .value-band-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.25rem;
+    }
+  }
+
+  .value-band-item {
+    display: flex;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    border-radius: 16px;
+    transition: all 0.3s ease;
+  }
+
+  .value-band-item:hover {
+    border-color: var(--color-primary);
+    transform: translateY(-2px);
+    box-shadow: 0 14px 28px -12px rgba(0, 82, 50, 0.15);
+  }
+
+  .value-band-item-icon {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: var(--dw-accent-bg);
+    color: var(--color-primary);
+  }
+
+  .value-band-item-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--dw-text);
+    margin-bottom: 0.2rem;
+  }
+
+  .value-band-item-desc {
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: var(--dw-text-secondary);
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- Hero entrance ---------- */
+  if (!prefersReducedMotion) {
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.from('#features-hero-badge', { y: 14, opacity: 0, duration: 0.5 })
+      .from('#features-hero-title', { y: 40, opacity: 0, duration: 0.7 }, '-=0.2')
+      .from('#features-hero-sub', { y: 24, opacity: 0, duration: 0.6 }, '-=0.35')
+      .from('#features-hero-stats', { y: 24, opacity: 0, duration: 0.6 }, '-=0.35')
+      .from('#features-hero-ctas', { y: 20, opacity: 0, duration: 0.5 }, '-=0.35');
+  }
+
+  /* ---------- Counter-up for hero stats ---------- */
+  document.querySelectorAll<HTMLElement>('[data-counter]').forEach((el) => {
+    const target = Number(el.dataset.target || '0');
+    if (prefersReducedMotion) {
+      el.textContent = target.toLocaleString();
+      return;
+    }
+    const obj = { val: 0 };
+    gsap.to(obj, {
+      val: target,
+      duration: 1.6,
+      ease: 'power2.out',
+      snap: { val: 1 },
+      scrollTrigger: { trigger: el, start: 'top 92%', once: true },
+      onUpdate() {
+        el.textContent = obj.val.toLocaleString();
+      },
+    });
+  });
+
+  /* Showcase blocks are visible by default (no entrance animation).
+     Earlier versions animated opacity/x on scroll, which could leave blocks stuck
+     invisible if they mounted outside the trigger window. Keeping them always-visible
+     is faster, safer, and the scroll itself is the reveal. */
+
+  /* ---------- Sticky nav: active-item highlighting + stuck shadow ---------- */
+  const toolNav = document.getElementById('tool-nav');
+  const navItems = Array.from(document.querySelectorAll<HTMLElement>('[data-tool-nav-item]'));
+  const blocks = Array.from(document.querySelectorAll<HTMLElement>('[data-showcase-block]'));
+
+  if (toolNav && navItems.length && blocks.length) {
+    // Stuck-shadow detection
+    ScrollTrigger.create({
+      trigger: toolNav,
+      start: 'top 1px',
+      onEnter: () => toolNav.classList.add('is-stuck'),
+      onLeaveBack: () => toolNav.classList.remove('is-stuck'),
+    });
+
+    // Active item based on which block is in view
+    blocks.forEach((block) => {
+      ScrollTrigger.create({
+        trigger: block,
+        start: 'top 40%',
+        end: 'bottom 40%',
+        onToggle: (self) => {
+          if (self.isActive) {
+            navItems.forEach((item) => item.classList.remove('is-active'));
+            const target = navItems.find((n) => n.dataset.targetId === block.id);
+            if (target) {
+              target.classList.add('is-active');
+              // Auto-scroll nav horizontally so the active chip stays visible
+              const track = target.parentElement as HTMLElement | null;
+              if (track) {
+                const left = target.offsetLeft - track.clientWidth / 2 + target.clientWidth / 2;
+                track.scrollTo({ left, behavior: 'smooth' });
+              }
+            }
+          }
+        },
+      });
+    });
+  }
+
+  /* ---------- Value band items + final CTA reveal ---------- */
+  if (!prefersReducedMotion) {
+    gsap.from('.value-band-item', {
+      y: 30,
+      opacity: 0,
+      duration: 0.6,
+      ease: 'power3.out',
+      stagger: 0.1,
+      scrollTrigger: { trigger: '.value-band-grid', start: 'top 85%', once: true },
+    });
+    gsap.from('.cta-block', {
+      y: 30,
+      opacity: 0,
+      duration: 0.7,
+      ease: 'power3.out',
+      scrollTrigger: { trigger: '.cta-block', start: 'top 85%', once: true },
+    });
+  }
+</script>

@@ -1,0 +1,73 @@
+---
+import Section from '../ui/Section.astro';
+import Button from '../ui/Button.astro';
+---
+
+<Section id="final-cta" bg="dark">
+  <div class="text-center max-w-3xl mx-auto">
+    <h2 class="text-3xl sm:text-4xl font-bold text-white cta-heading">
+      Every SEO tool, one membership
+    </h2>
+    <p class="mt-4 text-lg text-white/70 max-w-xl mx-auto cta-heading">
+      Join the AI Ranking community from $27/mo and get unlimited access to every DataWise tool. 7-day risk-free trial, cancel anytime.
+    </p>
+    <div class="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4 cta-buttons">
+      <Button href="https://www.skool.com/ai-ranking" variant="accent" size="lg" magnetic>
+        Join AI Ranking
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      </Button>
+    </div>
+  </div>
+</Section>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    // Heading characters reveal with stagger
+    const heading = document.querySelector('.cta-heading');
+    if (heading) {
+      const text = heading.textContent || '';
+      const chars = text.split('');
+      heading.innerHTML = chars
+        .map(c => c === ' '
+          ? ' '
+          : `<span class="inline-block cta-char">${c}</span>`
+        )
+        .join('');
+
+      gsap.from('.cta-char', {
+        y: 30,
+        opacity: 0,
+        duration: 0.4,
+        ease: 'power3.out',
+        stagger: 0.02,
+        scrollTrigger: {
+          trigger: heading,
+          start: 'top 85%',
+          once: true,
+        },
+      });
+    }
+
+    // Buttons scale in with bounce
+    gsap.from('.cta-buttons', {
+      y: 20,
+      opacity: 0,
+      scale: 0.9,
+      duration: 0.5,
+      ease: 'back.out(1.7)',
+      delay: 0.3,
+      scrollTrigger: {
+        trigger: '.cta-buttons',
+        start: 'top 90%',
+        once: true,
+      },
+    });
+  }
+</script>

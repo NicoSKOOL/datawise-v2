@@ -1,0 +1,30 @@
+---
+interface Props {
+  href?: string;
+  variant?: 'default' | 'elevated' | 'feature';
+  class?: string;
+  [key: string]: any;
+}
+
+const { href, variant = 'default', class: className = '', ...rest } = Astro.props;
+const Tag = href ? 'a' : 'div';
+
+const variantClasses = {
+  default: 'border border-[var(--dw-border)] bg-[var(--dw-surface)]',
+  elevated: 'bg-[var(--dw-surface)] shadow-[var(--shadow-card)]',
+  feature: 'border-l-4 border-l-[var(--dw-primary-highlight)] border border-[var(--dw-border-light)] bg-[var(--dw-surface)]',
+};
+---
+
+<Tag
+  href={href}
+  class:list={[
+    'block rounded-xl p-6 transition-all duration-200',
+    variantClasses[variant],
+    href && 'hover:shadow-[var(--shadow-card-hover)] hover:border-[var(--color-primary)]/30 hover:-translate-y-1 cursor-pointer',
+    className,
+  ]}
+  {...rest}
+>
+  <slot />
+</Tag>

@@ -1,0 +1,113 @@
+---
+import Section from '../ui/Section.astro';
+import Icon from '../ui/Icon.astro';
+import Button from '../ui/Button.astro';
+
+const benefits = [
+  {
+    icon: 'zap',
+    title: 'Unlimited SEO Tools',
+    description: 'Full access to keyword research, competitor analysis, rank tracking, AI visibility, and content tools. No usage caps, no feature gates.',
+  },
+  {
+    icon: 'users',
+    title: 'Community of Practitioners',
+    description: 'Connect with 500+ SEO professionals sharing real strategies. Weekly case studies, live discussions, and proven tactics that work right now.',
+  },
+  {
+    icon: 'trending-up',
+    title: 'Continuous Updates',
+    description: 'DataWise is actively developed. New features, data sources, and AI capabilities ship regularly. Your feedback shapes the roadmap.',
+  },
+  {
+    icon: 'message-circle',
+    title: 'Direct Founder Access',
+    description: 'Ask questions, request features, and get support directly from the person who built it. No support tickets, no chatbots.',
+  },
+  {
+    icon: 'shield',
+    title: 'No Upsells, Ever',
+    description: 'No "pro" tier hiding the good features. No investor pressure to monetize you. One community membership unlocks every tool, forever.',
+  },
+  {
+    icon: 'target',
+    title: 'AI Search Strategies',
+    description: 'Learn how to optimize for Google AI Mode, ChatGPT citations, and Perplexity visibility. Strategies you will not find in generic SEO courses.',
+  },
+];
+---
+
+<Section id="why-join" bg="gradient">
+  <div class="text-center mb-14">
+    <span class="inline-flex items-center gap-2 rounded-full bg-[var(--color-primary)] px-4 py-1.5 text-sm font-semibold text-white mb-6">
+      Why join AI Ranking?
+    </span>
+    <h2 class="text-3xl sm:text-4xl font-bold text-[var(--color-text-primary)] join-heading">
+      One membership. Every tool. A community that makes it powerful.
+    </h2>
+    <p class="mt-4 text-lg text-[var(--color-text-primary)]/70 max-w-2xl mx-auto join-sub">
+      Join the AI Ranking Skool community from $27/mo and you get unlimited DataWise access plus a network of SEO professionals sharing what actually works.
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 join-card">
+    {benefits.map((benefit) => (
+      <div class="flex gap-4 items-start">
+        <div class="shrink-0 h-11 w-11 rounded-xl bg-[var(--color-primary)]/10 flex items-center justify-center text-[var(--color-primary)]" data-icon-hover>
+          <Icon name={benefit.icon} size={22} />
+        </div>
+        <div>
+          <h3 class="font-bold text-[var(--color-text-primary)] mb-1">{benefit.title}</h3>
+          <p class="text-sm text-[var(--color-text-primary)]/60 leading-relaxed">{benefit.description}</p>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <div class="mt-14 text-center join-cta">
+    <div class="inline-flex flex-col sm:flex-row items-center gap-4">
+      <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+        Join AI Ranking
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      </Button>
+      <p class="text-sm text-[var(--color-text-primary)]/50">
+        From $27/mo. 7-day risk-free trial. Cancel anytime.
+      </p>
+    </div>
+    <div class="mt-6">
+      <a href="/community" class="inline-flex items-center gap-2 text-sm font-medium text-[var(--color-primary)] hover:gap-3 transition-all">
+        Learn more about AI Ranking
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+      </a>
+    </div>
+  </div>
+</Section>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+  import { batchReveal } from '../../scripts/animations';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (!prefersReducedMotion) {
+    gsap.from('.join-heading', {
+      y: 30, opacity: 0, duration: 0.6, ease: 'power3.out',
+      scrollTrigger: { trigger: '.join-heading', start: 'top 85%', once: true },
+    });
+
+    gsap.from('.join-sub', {
+      y: 20, opacity: 0, duration: 0.5, ease: 'power3.out', delay: 0.1,
+      scrollTrigger: { trigger: '.join-sub', start: 'top 85%', once: true },
+    });
+
+    batchReveal('.join-card > div', { stagger: 0.08, y: 30 });
+
+    gsap.from('.join-cta', {
+      y: 20, opacity: 0, scale: 0.95, duration: 0.5, ease: 'back.out(1.5)',
+      scrollTrigger: { trigger: '.join-cta', start: 'top 90%', once: true },
+    });
+  }
+</script>

@@ -1,0 +1,418 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Section from '../../components/ui/Section.astro';
+import Button from '../../components/ui/Button.astro';
+import Card from '../../components/ui/Card.astro';
+import Icon from '../../components/ui/Icon.astro';
+import AppScreenshot from '../../components/ui/AppScreenshot.astro';
+import BentoGrid from '../../components/feature/BentoGrid.astro';
+import StatsStrip from '../../components/feature/StatsStrip.astro';
+import StoryScroller from '../../components/feature/StoryScroller.astro';
+import FAQSection from '../../components/feature/FAQSection.astro';
+import OpportunitiesGrid from '../../components/feature/OpportunitiesGrid.astro';
+import UseCases from '../../components/feature/UseCases.astro';
+import { getCollection } from 'astro:content';
+
+export async function getStaticPaths() {
+  const features = await getCollection('features');
+  return features.map((feature) => ({
+    params: { slug: feature.id },
+    props: { feature },
+  }));
+}
+
+const { feature } = Astro.props;
+const { title, description, metaDescription, icon, heroTagline, benefits, subTools, stats, story, faqs, opportunities, useCases } = feature.data;
+
+const iconMap: Record<string, string> = {
+  '🔍': 'search',
+  '📊': 'bar-chart',
+  '🤖': 'robot',
+  '📈': 'trending-up',
+  '💬': 'message-circle',
+  '✍️': 'pen-tool',
+};
+
+const iconName = iconMap[icon] || 'search';
+
+// Keyword-rich <title> overrides per feature (H1 stays as feature.data.title)
+const seoTitleMap: Record<string, string> = {
+  'keyword-research': 'Keyword Research Tool for SEO',
+  'competitor-analysis': 'SEO Competitor Analysis Tool',
+  'rank-tracking': 'SEO Rank Tracker Tool',
+  'ai-visibility': 'AI Search Visibility Tool for SEO',
+  'seo-assistant': 'AI SEO Assistant Tool',
+  'content-tools': 'SEO Content Optimization Tool',
+};
+const seoTitle = seoTitleMap[feature.id] || `${feature.data.title} SEO Tool`;
+
+// Real JPGs for every feature now
+const screenshotMap: Record<string, string> = {
+  'keyword-research': '/images/screenshots/keyword-research.jpg',
+  'competitor-analysis': '/images/screenshots/competitor-analysis.jpg',
+  'rank-tracking': '/images/screenshots/rank-tracking.jpg',
+  'ai-visibility': '/images/screenshots/ai-visibility.jpg',
+  'seo-assistant': '/images/screenshots/seo-assistant.jpg',
+  'content-tools': '/images/screenshots/content-tools.jpg',
+};
+const screenshotSrc = screenshotMap[feature.id] || `/images/screenshots/${feature.id}.svg`;
+
+const allFeatures = await getCollection('features');
+const relatedFeatures = allFeatures.filter((f) => f.id !== feature.id).slice(0, 3);
+
+// Default fallbacks if YAML doesn't define stats/story yet
+const defaultStats = [
+  { value: 10, suffix: 'M+', label: 'Data points' },
+  { value: 200, suffix: '+', label: 'Countries' },
+  { value: 99, suffix: '%', label: 'Uptime' },
+  { value: 0, suffix: '$', label: 'Cost to start' },
+];
+const resolvedStats = stats && stats.length > 0 ? stats : defaultStats;
+const resolvedStory =
+  story && story.length > 0
+    ? story
+    : [
+        { caption: 'Point it at any topic', highlight: 'Enter a keyword, URL, or competitor to start' },
+        { caption: 'See the full picture', highlight: 'Metrics, trends, and opportunities side-by-side' },
+        { caption: 'Act on what you learn', highlight: 'Export, track, and outrank the competition' },
+      ];
+---
+
+<BaseLayout title={seoTitle} description={metaDescription}>
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": `DataWise SEO - ${title}`,
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Web",
+    "description": description,
+    "offers": {
+      "@type": "Offer",
+      "price": "27",
+      "priceCurrency": "USD",
+      "description": "Included with AI Ranking community membership (from $27/month, 7-day risk-free trial)",
+    },
+  })} />
+
+  {faqs && faqs.length > 0 && (
+    <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": faqs.map((f) => ({
+        "@type": "Question",
+        "name": f.question,
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": f.answer,
+        },
+      })),
+    })} />
+  )}
+
+  <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.datawiseseo.com/" },
+      { "@type": "ListItem", "position": 2, "name": "Features", "item": "https://www.datawiseseo.com/features" },
+      { "@type": "ListItem", "position": 3, "name": title },
+    ],
+  })} />
+
+  <!-- ============================================= -->
+  <!-- HERO                                           -->
+  <!-- ============================================= -->
+  <section id="feature-hero" class="feature-hero" data-interpolate-bg>
+    <div class="feature-hero-bg" aria-hidden="true"></div>
+
+    <div class="feature-hero-container">
+      <div class="feature-hero-text">
+        <nav class="feature-breadcrumb">
+          <a href="/">Home</a>
+          <Icon name="chevron-right" size={14} />
+          <a href="/features">Features</a>
+          <Icon name="chevron-right" size={14} />
+          <span>{title}</span>
+        </nav>
+
+        <div id="feature-icon" class="feature-hero-badge">
+          <Icon name={iconName} size={24} />
+          <span>{heroTagline}</span>
+        </div>
+
+        <h1 id="feature-title" class="feature-hero-title">{title}</h1>
+        <p id="feature-desc" class="feature-hero-desc">{description}</p>
+
+        <div id="feature-ctas" class="feature-hero-ctas">
+          <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
+            Join AI Ranking
+          </Button>
+          <Button href="#story" variant="ghost" size="lg">
+            See how it works
+          </Button>
+        </div>
+      </div>
+
+      <div id="feature-shot" class="feature-hero-shot">
+        <AppScreenshot
+          src={screenshotSrc}
+          alt={`${title} tool interface in DataWise SEO`}
+          priority
+        />
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================= -->
+  <!-- STATS STRIP                                    -->
+  <!-- ============================================= -->
+  <StatsStrip stats={resolvedStats} />
+
+  <!-- ============================================= -->
+  <!-- BENTO GRID — sub-tools                         -->
+  <!-- ============================================= -->
+  <BentoGrid
+    subTools={subTools}
+    eyebrow="Inside the tool"
+    title={`Everything ${title} gives you`}
+    subtitle={`${subTools.length} focused sub-tools, one unified workflow.`}
+    glowColor="46, 204, 113"
+  />
+
+  <!-- ============================================= -->
+  <!-- PINNED STORY SCROLLER                          -->
+  <!-- ============================================= -->
+  <div id="story">
+    <StoryScroller
+      steps={resolvedStory}
+      image={screenshotSrc}
+      imageAlt={`${title} in action`}
+    />
+  </div>
+
+  <!-- ============================================= -->
+  <!-- OPPORTUNITIES GRID                             -->
+  <!-- ============================================= -->
+  {opportunities && opportunities.length > 0 && (
+    <OpportunitiesGrid opportunities={opportunities} />
+  )}
+
+  <!-- ============================================= -->
+  <!-- USE CASES                                      -->
+  <!-- ============================================= -->
+  {useCases && useCases.length > 0 && (
+    <UseCases
+      useCases={useCases}
+      title={`Who uses ${title}`}
+      subtitle="From solo creators to agency teams, every seat gets the same unlimited access."
+    />
+  )}
+
+  <!-- ============================================= -->
+  <!-- RELATED FEATURES                               -->
+  <!-- ============================================= -->
+  <Section>
+    <div class="text-center mb-10">
+      <span class="text-xs font-semibold tracking-widest uppercase text-[var(--color-primary)]">Explore more</span>
+      <h2 class="mt-2 text-2xl sm:text-3xl font-bold" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        Related tools
+      </h2>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+      {relatedFeatures.map((rel) => (
+        <Card href={`/features/${rel.id}`} variant="elevated" class="related-card" data-tilt>
+          <div class="inline-flex items-center justify-center h-11 w-11 rounded-xl bg-[var(--dw-accent-bg)] text-[var(--color-primary)] mb-3">
+            <Icon name={iconMap[rel.data.icon] || 'search'} size={20} />
+          </div>
+          <h3 class="text-base font-semibold mb-1" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+            {rel.data.title}
+          </h3>
+          <p class="text-sm text-[var(--dw-text-muted)]">{rel.data.description.slice(0, 90)}...</p>
+          <div class="mt-4 inline-flex items-center gap-1 text-sm font-medium text-[var(--color-primary)]">
+            Learn more <Icon name="arrow-right" size={14} />
+          </div>
+        </Card>
+      ))}
+    </div>
+  </Section>
+
+  <!-- ============================================= -->
+  <!-- FAQs                                           -->
+  <!-- ============================================= -->
+  {faqs && faqs.length > 0 && (
+    <FAQSection
+      faqs={faqs}
+      eyebrow="FAQ"
+      title={`${title} questions, answered`}
+      subtitle="Everything you wanted to know before you start."
+    />
+  )}
+
+  <!-- ============================================= -->
+  <!-- FINAL CTA                                      -->
+  <!-- ============================================= -->
+  <Section bg="dark">
+    <div class="text-center max-w-2xl mx-auto feature-cta">
+      <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4" style="font-family: var(--font-headline, 'Manrope', sans-serif);">
+        Get {title} with AI Ranking
+      </h2>
+      <p class="text-lg text-white/70 mb-8">
+        Every DataWise tool is included with your AI Ranking membership (from $27/mo). 7-day risk-free trial, no seat limits.
+      </p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <Button href="https://www.skool.com/ai-ranking" variant="accent" size="lg" magnetic>
+          Join AI Ranking
+        </Button>
+        <Button href="/features" variant="ghost" size="lg" class="text-white/80 hover:text-white hover:bg-white/10">
+          View all features
+        </Button>
+      </div>
+    </div>
+  </Section>
+</BaseLayout>
+
+<style>
+  /* Hero layout */
+  .feature-hero {
+    position: relative;
+    padding: 7rem 0 5rem;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  @media (min-width: 1024px) {
+    .feature-hero {
+      padding: 8rem 0 6rem;
+    }
+  }
+
+  .feature-hero-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(180deg, var(--dw-accent-bg) 0%, var(--dw-bg) 100%);
+    transition: background 0.2s linear;
+  }
+
+  .feature-hero-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 3rem;
+    align-items: center;
+  }
+
+  @media (min-width: 640px) {
+    .feature-hero-container { padding: 0 1.5rem; }
+  }
+
+  @media (min-width: 1024px) {
+    .feature-hero-container {
+      grid-template-columns: 1.05fr 1.25fr;
+      gap: 4rem;
+    }
+  }
+
+  .feature-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--dw-text-muted);
+    margin-bottom: 1.5rem;
+  }
+
+  .feature-breadcrumb a {
+    color: var(--dw-text-muted);
+    transition: color 0.2s;
+  }
+
+  .feature-breadcrumb a:hover {
+    color: var(--color-primary);
+  }
+
+  .feature-breadcrumb span:last-child {
+    color: var(--dw-text);
+    font-weight: 500;
+  }
+
+  .feature-hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--color-primary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-bottom: 1.25rem;
+    box-shadow: var(--shadow-card, 0 1px 3px rgba(0, 0, 0, 0.04));
+  }
+
+  .feature-hero-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(2.5rem, 6vw, 4.25rem);
+    font-weight: 800;
+    line-height: 1.05;
+    color: var(--dw-text);
+    letter-spacing: -0.02em;
+  }
+
+  .feature-hero-desc {
+    margin-top: 1.25rem;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+    max-width: 34rem;
+  }
+
+  .feature-hero-ctas {
+    margin-top: 2rem;
+    display: flex;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+  }
+
+  .feature-hero-shot {
+    position: relative;
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+  import { interpolateOnScroll } from '../../scripts/animations';
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Hero entrance timeline
+  if (!prefersReducedMotion) {
+    const tl = gsap.timeline({ defaults: { ease: 'power3.out' } });
+    tl.from('.feature-breadcrumb', { y: 10, opacity: 0, duration: 0.4 })
+      .from('#feature-icon', { y: 20, opacity: 0, duration: 0.5 }, '-=0.2')
+      .from('#feature-title', { y: 40, opacity: 0, duration: 0.7 }, '-=0.25')
+      .from('#feature-desc', { y: 24, opacity: 0, duration: 0.6 }, '-=0.35')
+      .from('#feature-ctas', { y: 20, opacity: 0, duration: 0.5 }, '-=0.3')
+      .from('#feature-shot', { x: 40, opacity: 0, duration: 0.9 }, '-=0.7');
+  }
+
+  // Scroll-driven hero background interpolation — uses gsap.utils.interpolate under the hood
+  const heroBg = document.querySelector('.feature-hero-bg') as HTMLElement | null;
+  const heroSection = document.querySelector('.feature-hero') as HTMLElement | null;
+  if (heroBg && heroSection) {
+    interpolateOnScroll(
+      heroSection,
+      { bg: 'rgba(224, 242, 231, 1)' },   // from: soft green
+      { bg: 'rgba(255, 255, 255, 1)' },   // to: neutral
+      (val: any) => {
+        heroBg.style.background = `linear-gradient(180deg, ${val.bg} 0%, var(--dw-bg) 100%)`;
+      },
+      { start: 'top top', end: 'bottom top', scrub: 0.6 }
+    );
+  }
+
+</script>

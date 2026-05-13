@@ -1,0 +1,285 @@
+---
+import Icon from '../ui/Icon.astro';
+
+interface Opportunity {
+  icon: string;
+  title: string;
+  description: string;
+}
+
+interface Props {
+  opportunities: Opportunity[];
+  eyebrow?: string;
+  title?: string;
+  subtitle?: string;
+}
+
+const {
+  opportunities,
+  eyebrow = 'Discover',
+  title = 'Opportunities keyword research unlocks',
+  subtitle = 'A good keyword research tool does not just hand you a list of words: it reveals where the winnable traffic actually lives. Here is what you will uncover in your first hour.',
+} = Astro.props;
+---
+
+<section class="opportunities-section">
+  <div class="opportunities-container">
+    <div class="opportunities-header">
+      <span class="opportunities-eyebrow">{eyebrow}</span>
+      <h2 class="opportunities-title">{title}</h2>
+      {subtitle && <p class="opportunities-subtitle">{subtitle}</p>}
+    </div>
+
+    <div class="opportunities-grid">
+      {opportunities.map((opp, i) => (
+        <article class="opp-card" data-opp-card style={`--delay: ${i * 0.08}s`}>
+          <div class="opp-icon-wrap">
+            <div class="opp-icon-bg" aria-hidden="true"></div>
+            <div class="opp-icon">
+              <Icon name={opp.icon} size={24} />
+            </div>
+          </div>
+          <h3 class="opp-card-title">{opp.title}</h3>
+          <p class="opp-card-desc">{opp.description}</p>
+          <div class="opp-card-corner" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="7" y1="17" x2="17" y2="7" />
+              <polyline points="7 7 17 7 17 17" />
+            </svg>
+          </div>
+        </article>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .opportunities-section {
+    position: relative;
+    background: var(--dw-surface-sunken, var(--dw-bg));
+    padding: 6rem 0;
+    overflow: hidden;
+  }
+
+  /* Subtle decorative grid background */
+  .opportunities-section::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--dw-border) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--dw-border) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .opportunities-container {
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+    position: relative;
+  }
+
+  @media (min-width: 640px) {
+    .opportunities-container { padding: 0 1.5rem; }
+  }
+
+  .opportunities-header {
+    text-align: center;
+    max-width: 44rem;
+    margin: 0 auto 3.5rem;
+  }
+
+  .opportunities-eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+    padding: 0.35rem 0.85rem;
+    border: 1px solid var(--dw-border);
+    border-radius: 999px;
+    background: var(--dw-accent-bg);
+  }
+
+  .opportunities-title {
+    margin-top: 1rem;
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--dw-text);
+    letter-spacing: -0.01em;
+  }
+
+  .opportunities-subtitle {
+    margin-top: 0.85rem;
+    font-size: 1.05rem;
+    color: var(--dw-text-secondary);
+    line-height: 1.6;
+  }
+
+  .opportunities-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  @media (min-width: 640px) {
+    .opportunities-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.25rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .opportunities-grid {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+  }
+
+  .opp-card {
+    position: relative;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    border-radius: 20px;
+    padding: 1.75rem;
+    overflow: hidden;
+    transition: transform 0.35s ease, border-color 0.3s ease, box-shadow 0.35s ease;
+    isolation: isolate;
+  }
+
+  /* Animated gradient border on hover */
+  .opp-card::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, var(--color-primary), transparent 40%, transparent 60%, var(--color-primary));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+  }
+
+  .opp-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 40px -12px rgba(0, 82, 50, 0.15);
+    border-color: transparent;
+  }
+
+  .opp-card:hover::before {
+    opacity: 1;
+  }
+
+  .opp-icon-wrap {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 1.25rem;
+  }
+
+  .opp-icon-bg {
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    background: var(--dw-accent-bg);
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s ease;
+  }
+
+  .opp-card:hover .opp-icon-bg {
+    transform: scale(1.08) rotate(-6deg);
+    background: var(--color-primary);
+  }
+
+  .opp-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-primary);
+    transition: color 0.3s ease, transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    z-index: 2;
+  }
+
+  .opp-card:hover .opp-icon {
+    color: #ffffff;
+    transform: scale(1.1);
+  }
+
+  .opp-card-title {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--dw-text);
+    line-height: 1.3;
+    margin-bottom: 0.6rem;
+  }
+
+  .opp-card-desc {
+    font-size: 0.925rem;
+    line-height: 1.6;
+    color: var(--dw-text-secondary);
+    margin: 0;
+  }
+
+  .opp-card-corner {
+    position: absolute;
+    top: 1.25rem;
+    right: 1.25rem;
+    width: 22px;
+    height: 22px;
+    color: var(--dw-text-muted);
+    opacity: 0;
+    transform: translate(-6px, 6px);
+    transition: opacity 0.35s ease, transform 0.35s ease, color 0.3s ease;
+  }
+
+  .opp-card-corner svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .opp-card:hover .opp-card-corner {
+    opacity: 1;
+    transform: translate(0, 0);
+    color: var(--color-primary);
+  }
+</style>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (prefersReducedMotion) {
+    /* no-op */
+  } else {
+    ScrollTrigger.batch('[data-opp-card]', {
+      onEnter: (elements) => {
+        gsap.from(elements, {
+          y: 50,
+          opacity: 0,
+          duration: 0.75,
+          ease: 'power3.out',
+          stagger: 0.1,
+          overwrite: true,
+        });
+      },
+      start: 'top 85%',
+      once: true,
+    });
+  }
+</script>

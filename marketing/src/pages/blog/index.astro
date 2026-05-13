@@ -1,0 +1,68 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import Section from '../../components/ui/Section.astro';
+import Card from '../../components/ui/Card.astro';
+import Badge from '../../components/ui/Badge.astro';
+import { getCollection } from 'astro:content';
+
+const posts = (await getCollection('blog', ({ data }) => !data.draft))
+  .sort((a, b) => b.data.date.getTime() - a.data.date.getTime());
+---
+
+<BaseLayout
+  title="Blog"
+  description="SEO strategies, AI search insights, and data-driven optimization tips from the DataWise team."
+>
+  <section class="pt-24 pb-8 lg:pt-32 lg:pb-12 text-center bg-gradient-to-b from-[var(--color-primary-50)] to-[var(--color-surface)]">
+    <div class="mx-auto max-w-3xl px-4">
+      <h1 id="blog-title" class="text-4xl sm:text-5xl font-extrabold leading-tight">
+        Blog
+      </h1>
+      <p id="blog-sub" class="mt-4 text-lg text-[var(--color-text-secondary)] max-w-xl mx-auto">
+        SEO strategies, AI search insights, and data-driven optimization tips.
+      </p>
+    </div>
+  </section>
+
+  <Section>
+    {posts.length === 0 ? (
+      <p class="text-center text-[var(--color-text-muted)]">
+        No posts yet. Check back soon.
+      </p>
+    ) : (
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {posts.map((post) => (
+          <Card href={`/blog/${post.id}`} variant="elevated" class="blog-card">
+            <div class="flex flex-wrap gap-2 mb-3">
+              {post.data.tags.map((tag) => (
+                <Badge variant="accent" size="sm">{tag}</Badge>
+              ))}
+            </div>
+            <h2 class="text-lg font-bold mb-2">{post.data.title}</h2>
+            <p class="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-3">
+              {post.data.description}
+            </p>
+            <time
+              datetime={post.data.date.toISOString()}
+              class="text-xs text-[var(--color-text-muted)]"
+            >
+              {post.data.date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+            </time>
+          </Card>
+        ))}
+      </div>
+    )}
+  </Section>
+</BaseLayout>
+
+<script>
+  import { gsap } from 'gsap';
+  import { staggerIn } from '../../scripts/animations';
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!prefersReducedMotion) {
+    gsap.from('#blog-title', { y: 30, opacity: 0, duration: 0.6, ease: 'power3.out' });
+    gsap.from('#blog-sub', { y: 20, opacity: 0, duration: 0.5, ease: 'power3.out', delay: 0.15 });
+  }
+  staggerIn('.blog-card', 0.08);
+</script>

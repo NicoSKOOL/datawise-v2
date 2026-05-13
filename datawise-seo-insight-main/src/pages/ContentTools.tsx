@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useTabParam } from '@/hooks/use-tab-param';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Globe, Upload, Play, Square, Copy, Download, ChevronDown, ChevronUp,
   CheckCircle, XCircle, Loader2, AlertCircle, FileText, Search,
@@ -22,6 +24,10 @@ import {
   type SitePage, type PostData, type AuditResult, type UsageInfo,
   type ServicePageData, type ServicePageAnalysis,
 } from '@/lib/content-tools';
+import { useDefaults } from '@/hooks/use-defaults';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildServicePageOptimizerReport } from '@/lib/export/adapters/servicePageOptimizer';
+import { buildContentRevivalReport } from '@/lib/export/adapters/contentRevival';
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -193,7 +199,8 @@ function severityColor(severity: string): string {
 
 function ContentRevival() {
   const { toast } = useToast();
-  const [domain, setDomain] = useState('');
+  const { defaultDomain } = useDefaults();
+  const [domain, setDomain] = useState(defaultDomain);
   const [urlsText, setUrlsText] = useState('');
   const [inputMode, setInputMode] = useState<'paste' | 'csv'>('paste');
   const [sitePages, setSitePages] = useState<SitePage[]>([]);
@@ -510,6 +517,29 @@ function ContentRevival() {
 
           {!processing && donePosts > 0 && (
             <>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-muted-foreground">
+                  {donePosts} {donePosts === 1 ? 'post' : 'posts'} analyzed
+                </h3>
+                <ExportMenu
+                  surface="content-revival"
+                  identifier={domain}
+                  buildPayload={() =>
+                    buildContentRevivalReport({
+                      domain,
+                      posts: posts
+                        .filter((p) => p.status === 'done' && p.audit)
+                        .map((p) => ({
+                          url: p.url,
+                          title: p.post?.title ?? p.post?.slug ?? p.url,
+                          audit: p.audit ?? null,
+                          rewritten: p.rewritten,
+                          word_count: p.post?.word_count,
+                        })),
+                    })
+                  }
+                />
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -550,9 +580,19 @@ function ContentRevival() {
                             {delta > 0 ? '+' : ''}{delta.toLocaleString()}
                           </td>
                           <td className="py-2 text-center">
-                            <Badge variant="secondary" className={verdictColor(p.audit?.verdict || '')}>
-                              {p.audit?.verdict || 'n/a'}
-                            </Badge>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="secondary" className={`cursor-help ${verdictColor(p.audit?.verdict || '')}`}>
+                                  {p.audit?.verdict || 'n/a'}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-[220px] text-xs">
+                                {p.audit?.verdict === 'thin' && 'Under 800 words. Needs significant expansion to rank competitively.'}
+                                {p.audit?.verdict === 'average' && '800-1,200 words. Adequate but could benefit from more depth.'}
+                                {p.audit?.verdict === 'good' && 'Over 1,200 words. Strong content depth for SEO.'}
+                                {!p.audit?.verdict && 'Analysis not yet complete.'}
+                              </TooltipContent>
+                            </Tooltip>
                           </td>
                           <td className="py-2 text-right tabular-nums text-muted-foreground">{totalTokens.toLocaleString()}</td>
                           <td className="py-2 text-center">
@@ -797,14 +837,25 @@ function ServicePageOptimizer() {
         meta_description: data.meta_description,
         headings: data.headings,
         body_text: data.body_text,
+        section_outline: data.section_outline,
         word_count: data.word_count,
         schema_json_ld: data.schema_json_ld,
         images: data.images,
       });
       setAnalysis(result.analysis);
       setUsage(result.usage);
-      setStatus('done');
-      setStatusMessage('');
+      if (result.analysis?._parse_error) {
+        setStatus('done');
+        setStatusMessage('');
+        toast({ variant: 'destructive', title: 'Partial analysis', description: 'The LLM response was truncated or malformed. Results may be incomplete. Try again or switch to a model with higher output limits.' });
+      } else if (result.analysis?._truncated) {
+        setStatus('done');
+        setStatusMessage('');
+        toast({ title: 'Note', description: 'The LLM response was slightly truncated. Some fields may be incomplete.' });
+      } else {
+        setStatus('done');
+        setStatusMessage('');
+      }
     } catch (err) {
       setStatus('error');
       setStatusMessage(err instanceof Error ? err.message : 'Analysis failed');
@@ -871,6 +922,20 @@ function ServicePageOptimizer() {
       {/* Results */}
       {status === 'done' && analysis && (
         <>
+          <div className="flex items-center justify-end">
+            <ExportMenu
+              surface="service-page-optimizer"
+              identifier={url}
+              buildPayload={() =>
+                buildServicePageOptimizerReport({
+                  analysis,
+                  pageUrl: url,
+                  pageTitle: pageData?.title,
+                  generatedSections,
+                })
+              }
+            />
+          </div>
           {/* Score Overview Card */}
           <div className="rounded-xl border bg-card overflow-hidden">
             <div className="p-6">
@@ -1548,6 +1613,8 @@ function ServicePageOptimizer() {
 // ---------------------------------------------------------------------------
 
 export default function ContentTools() {
+  const [tab, setTab] = useTabParam('revival');
+
   return (
     <div className="space-y-6 max-w-4xl">
       <div>
@@ -1555,7 +1622,7 @@ export default function ContentTools() {
         <p className="text-muted-foreground">Optimize and revive your content for better search performance</p>
       </div>
 
-      <Tabs defaultValue="revival" className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList>
           <TabsTrigger value="revival">Content Revival</TabsTrigger>
           <TabsTrigger value="optimizer">Service Page Optimizer</TabsTrigger>

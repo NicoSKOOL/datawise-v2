@@ -1,0 +1,19 @@
+---
+interface Props {
+  value: string | number;
+  suffix?: string;
+  label: string;
+  class?: string;
+}
+
+const { value, suffix = '', label, class: className = '' } = Astro.props;
+---
+
+<div class:list={['text-center', className]}>
+  <div class="text-4xl sm:text-5xl font-extrabold font-[var(--font-headline)] text-[var(--color-primary)]">
+    <span class="counter-value">{value}</span>{suffix}
+  </div>
+  <p class="mt-2 text-sm font-medium text-[var(--color-text-secondary)]">
+    {label}
+  </p>
+</div>

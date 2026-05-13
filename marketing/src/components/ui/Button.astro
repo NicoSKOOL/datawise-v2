@@ -1,0 +1,34 @@
+---
+interface Props {
+  href: string;
+  variant?: 'primary' | 'secondary' | 'accent' | 'ghost';
+  size?: 'sm' | 'md' | 'lg';
+  class?: string;
+  magnetic?: boolean;
+}
+
+const { href, variant = 'primary', size = 'md', class: className = '', magnetic = false } = Astro.props;
+
+const baseClasses = 'inline-flex items-center justify-center gap-2 font-semibold rounded-lg transition-all duration-200';
+
+const variantClasses = {
+  primary: 'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-light)] hover:shadow-lg hover:shadow-[var(--color-primary)]/20',
+  secondary: 'border border-[var(--color-border)] text-[var(--color-text-primary)] hover:bg-[var(--color-accent)] hover:border-[var(--color-primary)]/30',
+  accent: 'bg-[var(--color-primary-100)] text-[var(--color-primary)] hover:bg-[var(--color-primary-200)]',
+  ghost: 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface-sunken)]',
+};
+
+const sizeClasses = {
+  sm: 'px-3 py-1.5 text-sm',
+  md: 'px-5 py-2.5 text-sm',
+  lg: 'px-7 py-3.5 text-base',
+};
+---
+
+<a
+  href={href}
+  class:list={[baseClasses, variantClasses[variant], sizeClasses[size], className]}
+  data-magnetic={magnetic ? '' : undefined}
+>
+  <slot />
+</a>
