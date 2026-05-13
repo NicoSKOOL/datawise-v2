@@ -74,6 +74,55 @@ function GlobalCreditsDialog() {
   return <OutOfCreditsDialog open={open} onOpenChange={setOpen} />;
 }
 
+function DeployRefreshGuard() {
+  useEffect(() => {
+    const currentScript = Array.from(document.scripts).find((script) => {
+      return script.type === 'module' && script.src.includes('/assets/index-');
+    });
+    const currentPath = currentScript ? new URL(currentScript.src).pathname : null;
+    if (!currentPath) return;
+
+    let inFlight = false;
+    const checkForNewBundle = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const response = await fetch(`/?deploy-check=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const html = await response.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const latestScript = doc.querySelector<HTMLScriptElement>('script[type="module"][src*="/assets/index-"]');
+        const latestSrc = latestScript?.getAttribute('src');
+        if (!latestSrc) return;
+
+        const latestPath = new URL(latestSrc, window.location.origin).pathname;
+        if (latestPath !== currentPath) {
+          window.location.reload();
+        }
+      } catch {
+        // Ignore update-check failures; they should not affect app usage.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkForNewBundle();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const interval = window.setInterval(checkForNewBundle, 5 * 60 * 1000);
+    void checkForNewBundle();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -82,6 +131,7 @@ const App = () => (
         <Toaster />
         <Sonner />
         <GlobalCreditsDialog />
+        <DeployRefreshGuard />
         <BrowserRouter>
           <AnalyticsTracker />
           <Routes>

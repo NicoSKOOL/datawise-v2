@@ -50,6 +50,8 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Dashboard fetches sitemap indexation data', 'src/pages/Dashboard.tsx', 'getGSCSitemaps'],
   ['Dashboard renders indexation chart', 'src/pages/Dashboard.tsx', '<IndexationChart'],
   ['GSC lib exposes sitemap indexation API', 'src/lib/gsc.ts', 'getGSCSitemaps'],
+  ['App checks for newer deployed bundle', 'src/App.tsx', 'DeployRefreshGuard'],
+  ['App refreshes stale SPA bundle', 'src/App.tsx', 'window.location.reload()'],
   ['AI Visibility imports Brand Tracker', 'src/pages/AIVisibility.tsx', "import BrandTracker from './BrandTracker';"],
   ['AI Visibility syncs sidebar tab params', 'src/pages/AIVisibility.tsx', 'useTabParam'],
   ['AI Visibility Brand Tracker tab trigger', 'src/pages/AIVisibility.tsx', '<TabsTrigger value="brand-tracker">Brand Tracker</TabsTrigger>'],
