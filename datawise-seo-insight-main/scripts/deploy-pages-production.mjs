@@ -32,6 +32,15 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric amber state', 'bg-amber-50'],
   ['Keyword metric red state', 'bg-red-50'],
 ];
+const REQUIRED_SOURCE_MARKERS = [
+  ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
+  ['Keyword Research imports Fan-out Queries', 'src/pages/KeywordResearch.tsx', "import FanOutQueries from './FanOutQueries';"],
+  ['Keyword Research People Also Ask tab trigger', 'src/pages/KeywordResearch.tsx', '<TabsTrigger value="people-also-ask">People Also Ask</TabsTrigger>'],
+  ['Keyword Research Fan-out Queries tab trigger', 'src/pages/KeywordResearch.tsx', '<TabsTrigger value="fan-out">Fan-out Queries</TabsTrigger>'],
+  ['Keyword Research People Also Ask tab panel', 'src/pages/KeywordResearch.tsx', '<PeopleAlsoAsk />'],
+  ['Keyword Research Fan-out Queries tab panel', 'src/pages/KeywordResearch.tsx', '<FanOutQueries />'],
+  ['Keyword Research sidebar tab sync', 'src/pages/KeywordResearch.tsx', 'useSearchParams'],
+];
 
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
@@ -120,6 +129,27 @@ async function validateDist(distDir) {
   }
 }
 
+async function validateSourceMarkers() {
+  const missing = [];
+
+  for (const [name, relativePath, marker] of REQUIRED_SOURCE_MARKERS) {
+    const source = await readFile(path.join(appRoot, relativePath), 'utf8');
+    if (!source.includes(marker)) {
+      missing.push(`${name}: ${relativePath} must include ${marker}`);
+    }
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      [
+        'Production deploy guard failed.',
+        'Missing required source markers:',
+        ...missing.map((item) => `- ${item}`),
+      ].join('\n'),
+    );
+  }
+}
+
 async function directorySize(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
   let total = 0;
@@ -148,6 +178,7 @@ async function archiveDist({ distDir, branch, commit, appStatus }) {
       deploymentId: '079cdbe3-cef8-4df0-b7ed-c429f4f27c55',
       deploymentUrl: 'https://079cdbe3.datawise-118.pages.dev',
     },
+    requiredSourceMarkers: REQUIRED_SOURCE_MARKERS.map(([name, file, marker]) => ({ name, file, marker })),
     requiredBundleMarkers: REQUIRED_BUNDLE_MARKERS.map(([name, marker]) => ({ name, marker })),
     forbiddenBundleMarkers: FORBIDDEN_BUNDLE_MARKERS.map(([name, marker]) => ({ name, marker })),
     archiveDistDir,
@@ -192,6 +223,8 @@ async function main() {
       throw new Error('Refusing production deploy with uncommitted app changes.');
     }
   }
+
+  await validateSourceMarkers();
 
   if (!skipBuild) {
     run('npm', ['run', 'build']);
