@@ -27,6 +27,10 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Content Planner surface', 'Content Planner'],
   ['Content Tools surface', 'Content Tools'],
   ['Production Worker API URL', EXPECTED_API_URL],
+  ['Keyword CPC tooltip text', 'Green means higher CPC and stronger commercial value.'],
+  ['Keyword metric green state', 'bg-emerald-50'],
+  ['Keyword metric amber state', 'bg-amber-50'],
+  ['Keyword metric red state', 'bg-red-50'],
 ];
 
 function run(command, commandArgs, options = {}) {

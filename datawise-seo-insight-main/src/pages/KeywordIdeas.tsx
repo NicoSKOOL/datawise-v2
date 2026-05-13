@@ -171,6 +171,7 @@ export default function KeywordIdeas() {
         title="Keyword Ideas"
         description="Fresh keyword ideas and opportunities for your content"
         loading={loading}
+        metricMode="keyword-research"
       />
 
     </div>

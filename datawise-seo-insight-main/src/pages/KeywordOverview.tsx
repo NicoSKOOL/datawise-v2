@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Eye } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { DataTable } from "@/components/DataTable";
+import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
+import { formatKeywordMetricValue } from "@/lib/keyword-metrics";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordOverview } from "@/lib/dataforseo";
 
@@ -152,11 +154,13 @@ export default function KeywordOverview() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Search Volume</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <KeywordMetricLabel metric="search_volume" />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? "--" : (metrics?.search_volume?.toLocaleString() || "--")}
+              {loading || !metrics ? "--" : <KeywordMetricBadge metric="search_volume" value={metrics.search_volume} />}
             </div>
             <p className="text-xs text-muted-foreground">monthly searches</p>
           </CardContent>
@@ -164,11 +168,13 @@ export default function KeywordOverview() {
         
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Keyword Difficulty</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <KeywordMetricLabel metric="keyword_difficulty" />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? "--" : (metrics?.keyword_difficulty || "--")}
+              {loading || !metrics ? "--" : <KeywordMetricBadge metric="keyword_difficulty" value={metrics.keyword_difficulty} />}
             </div>
             <p className="text-xs text-muted-foreground">out of 100</p>
           </CardContent>
@@ -176,11 +182,13 @@ export default function KeywordOverview() {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">CPC</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <KeywordMetricLabel metric="cpc" />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? "$--" : `$${metrics?.cpc || "--"}`}
+              {loading || !metrics ? "$--" : formatKeywordMetricValue("cpc", metrics.cpc)}
             </div>
             <p className="text-xs text-muted-foreground">cost per click</p>
           </CardContent>
@@ -188,11 +196,13 @@ export default function KeywordOverview() {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Competition</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              <KeywordMetricLabel metric="competition" />
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {loading ? "--" : (metrics?.competition || "--")}
+              {loading || !metrics ? "--" : <KeywordMetricBadge metric="competition" value={metrics.competition} />}
             </div>
             <p className="text-xs text-muted-foreground">competition level</p>
           </CardContent>
@@ -204,6 +214,7 @@ export default function KeywordOverview() {
         title="Detailed Keyword Analysis"
         description="Complete keyword metrics, trends, and SERP analysis"
         loading={loading}
+        metricMode="keyword-research"
       />
 
     </div>

@@ -174,6 +174,7 @@ export default function KeywordSuggestions() {
         title="Keyword Suggestions"
         description="AI-powered keyword suggestions based on your seed keyword"
         loading={loading}
+        metricMode="keyword-research"
       />
 
     </div>

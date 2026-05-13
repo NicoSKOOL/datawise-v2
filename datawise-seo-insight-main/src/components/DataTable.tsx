@@ -5,16 +5,26 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Download } from "lucide-react";
 import { downloadCSV } from "@/lib/csvUtils";
 import { cn, isNumericColumn, getComparisonColor, calculateColumnStats } from "@/lib/utils";
+import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
+import { getKeywordMetricStats, isKeywordMetricKey } from "@/lib/keyword-metrics";
 
 interface DataTableProps {
-  data: any[];
+  data: object[];
   title: string;
   description?: string;
   loading?: boolean;
   enableComparison?: boolean;
+  metricMode?: 'none' | 'keyword-research';
 }
 
-export function DataTable({ data, title, description, loading = false, enableComparison = false }: DataTableProps) {
+export function DataTable({
+  data,
+  title,
+  description,
+  loading = false,
+  enableComparison = false,
+  metricMode = 'none',
+}: DataTableProps) {
   if (loading) {
     return (
       <Card>
@@ -51,9 +61,10 @@ export function DataTable({ data, title, description, loading = false, enableCom
   const handleDownloadCSV = () => {
     // Filter out React elements from data for CSV export
     const csvData = data.map(row => {
-      const cleanRow: any = {};
-      Object.keys(row).forEach(key => {
-        const value = row[key];
+      const rowRecord = row as Record<string, unknown>;
+      const cleanRow: Record<string, unknown> = {};
+      Object.keys(rowRecord).forEach(key => {
+        const value = rowRecord[key];
         if (React.isValidElement(value)) {
           // Skip React elements in CSV export
           return;
@@ -66,14 +77,15 @@ export function DataTable({ data, title, description, loading = false, enableCom
   };
 
   // Get columns from the first data item
-  const columns = Object.keys(data[0]);
+  const columns = Object.keys(data[0] as Record<string, unknown>);
+  const keywordMetricStats = metricMode === 'keyword-research' ? getKeywordMetricStats(data) : {};
   
   // Calculate column statistics for comparison mode
   const columnStats = enableComparison && data.length > 1 ? 
     columns.reduce((stats, column) => {
       stats[column] = calculateColumnStats(data, column);
       return stats;
-    }, {} as Record<string, any>) : {};
+    }, {} as Record<string, ReturnType<typeof calculateColumnStats>>) : {};
 
   return (
     <Card>
@@ -94,7 +106,11 @@ export function DataTable({ data, title, description, loading = false, enableCom
               <TableRow>
                 {columns.map((column) => (
                   <TableHead key={column} className="whitespace-nowrap">
-                    {column.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    {metricMode === 'keyword-research' && isKeywordMetricKey(column) ? (
+                      <KeywordMetricLabel metric={column} labelVariant="short" />
+                    ) : (
+                      column.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                    )}
                   </TableHead>
                 ))}
               </TableRow>
@@ -103,7 +119,8 @@ export function DataTable({ data, title, description, loading = false, enableCom
               {data.map((row, index) => (
                 <TableRow key={index}>
                   {columns.map((column) => {
-                  const value = row[column];
+                    const rowRecord = row as Record<string, unknown>;
+                    const value = rowRecord[column];
                     const displayValue = typeof value === 'object' && value !== null ?
                       (React.isValidElement(value) ? value : JSON.stringify(value)) :
                       value?.toString() || '-';
@@ -116,10 +133,14 @@ export function DataTable({ data, title, description, loading = false, enableCom
                       const colorClass = getComparisonColor(Number(value), min, max);
                       cellClassName = cn(cellClassName, colorClass);
                     }
+
+                    const content = metricMode === 'keyword-research' && isKeywordMetricKey(column) ? (
+                      <KeywordMetricBadge metric={column} value={value} stats={keywordMetricStats[column]} />
+                    ) : displayValue;
                     
                     return (
                       <TableCell key={column} className={cellClassName}>
-                        {React.isValidElement(displayValue) ? displayValue : displayValue}
+                        {content}
                       </TableCell>
                     );
                   })}

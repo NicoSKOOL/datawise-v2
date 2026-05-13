@@ -184,6 +184,7 @@ export default function RelatedKeywords() {
         title="Related Keywords"
         description="Keywords related to your target term"
         loading={loading}
+        metricMode="keyword-research"
       />
 
     </div>

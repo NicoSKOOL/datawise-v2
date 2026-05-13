@@ -114,6 +114,7 @@ export default function KeywordDifficulty() {
         title="Keyword Difficulty Analysis"
         description="Competition scores and difficulty metrics for your keywords"
         loading={loading}
+        metricMode="keyword-research"
       />
     </div>
   );
