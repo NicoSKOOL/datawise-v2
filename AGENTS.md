@@ -2,6 +2,18 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+## Deployment Safety
+
+- Read `DEPLOY.md` before any deploy, release, staging, preview, or Cloudflare task.
+- `production` is the live source branch. `main` is stale legacy and must not be used for app source work.
+- App changes go staging or preview first, production last. Never use `https://datawiseseo.com` as the first test target.
+- `https://datawiseseo.com` is the app. `https://www.datawiseseo.com` is the marketing site.
+- Production app deploys must use `npm run deploy:pages:production` from a clean `production` checkout. Never deploy production with raw `wrangler pages deploy`.
+- Before frontend edits, verify the current app surface includes Content Writer:
+  `rg -n "ContentWriter|/content-writer" datawise-seo-insight-main/src/App.tsx datawise-seo-insight-main/src/pages/ContentWriter.tsx`
+- Stage specific files only. Do not use `git add .` or `git add -A`.
+- Never commit secret values, staging login URLs, Cloudflare tokens, Google secrets, or API keys. Mention secret names only.
+
 ## Project Overview
 
 DataWise V2 is an SEO analytics platform. The codebase lives in `datawise-seo-insight-main/` and consists of two independent apps: a React frontend and a Cloudflare Workers API backend.
@@ -40,24 +52,25 @@ The project is being modernized from Supabase to Cloudflare (D1 + KV + Workers).
 
 ### Frontend (run from `datawise-seo-insight-main/`)
 ```sh
-npm install          # Install dependencies
-npm run dev          # Start dev server (port 8080)
-npm run build        # Production build
-npm run build:dev    # Development build
-npm run lint         # ESLint
+npm ci --legacy-peer-deps     # Clean install for this dependency graph
+npm run dev                   # Start dev server (port 8080)
+npm run build                 # Plain Vite build
+npm run deploy:pages:check    # Guarded build/check, no upload
+npm run deploy:pages:production # Guarded production Pages deploy from clean production only
+npm run lint                  # ESLint
 ```
 
 ### Workers API (run from `datawise-seo-insight-main/workers/`)
 ```sh
 npm install          # Install dependencies
 npm run dev          # Start local worker (wrangler dev)
-npm run deploy       # Deploy to Cloudflare
-npm run deploy:staging
-npm run deploy:production
+npm run deploy       # Deploy production Worker as datawise-api
+npm run deploy:staging # Deploy staging Worker only when staging env exists on branch
 npm run db:migrate   # Run D1 schema migration (dev)
 npm run db:migrate:staging
-npm run db:migrate:production
 ```
+
+Do not use Worker `npm run deploy:production` unless `wrangler.toml` explicitly defines a production env. The production Worker currently deploys with `npm run deploy`.
 
 ### Environment
 - Frontend: copy `.env.example` to `.env`, set `VITE_API_URL`
@@ -96,9 +109,14 @@ npm run db:migrate:production
 - After compacting, re-read `tasks/todo.md` and `tasks/lessons.md`
 
 ### Session Startup
-1. Read `tasks/todo.md` and `tasks/lessons.md`
-2. Confirm the current task before writing code
-3. If context is already high from startup reads, compact before starting
+1. Read `DEPLOY.md`, `tasks/todo.md`, and `tasks/lessons.md`
+2. Before frontend work or `npm run dev`, verify the active app is the latest Writer-enabled surface:
+   - `datawise-seo-insight-main/src/App.tsx` must import `ContentWriter`
+   - `datawise-seo-insight-main/src/App.tsx` must route `/content-writer`
+   - `datawise-seo-insight-main/src/pages/ContentWriter.tsx` must exist
+   - If any check fails, stop immediately and locate/consolidate the correct worktree/branch before editing or running the app
+3. Confirm the current task before writing code
+4. If context is already high from startup reads, compact before starting
 
 ### Self-Improvement
 - After any user correction: update `tasks/lessons.md`
