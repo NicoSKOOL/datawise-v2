@@ -1,64 +1,63 @@
-# DataWise Production Deployment Safety
+# DataWise App Deployment Notes
 
-Production deploys must use the `production` branch as the source of truth.
-Do not deploy from `main`, temporary worktrees, reconstructed local folders, or a raw `dist` directory.
+The canonical deployment runbook is the root `DEPLOY.md`. Read that file first.
 
-## Current Rollback Target
+## App URLs
 
-- Deployment ID: `079cdbe3-cef8-4df0-b7ed-c429f4f27c55`
-- Deployment URL: `https://079cdbe3.datawise-118.pages.dev`
-- Custom domain: `https://datawiseseo.com`
+- Production app: `https://datawiseseo.com`
+- Marketing site: `https://www.datawiseseo.com`
+- Staging preview app: `https://preview-1.datawise-118.pages.dev`
+- Production API: `https://datawise-api.nico-510.workers.dev`
+- Staging API: `https://datawise-api-staging.nico-510.workers.dev`
 
-## Required Production Markers
+## Frontend Commands
 
-Every production build must include:
-
-- `/content-writer`
-- `Content Writer`
-- `People Also Ask`
-- `Fan-out Queries`
-- `Content Planner`
-- `Content Tools`
-- `https://datawise-api.nico-510.workers.dev`
-
-Every production build must exclude:
-
-- `http://localhost:8787`
-
-## Standard Flow
-
-Run feature work from a branch created off `production`.
+Run from `datawise-seo-insight-main/`.
 
 ```sh
-git switch production
-git pull origin production
-git switch -c codex/<feature-name>
-```
-
-Check the deployable bundle:
-
-```sh
-cd datawise-seo-insight-main
+npm ci --legacy-peer-deps
+npm run dev
+npm run build
 npm run deploy:pages:check
+npm run deploy:pages:production
 ```
 
-After review, merge the feature branch into `production`, push it, and run the
-manual GitHub Actions workflow named `Deploy DataWise Pages Production`.
+Use `npm run deploy:pages:production` only from a clean `production` checkout after staging or preview verification. Do not deploy production with raw `wrangler pages deploy`.
 
-## Local Emergency Rollback
+## Worker Commands
 
-If a bad deployment reaches production, redeploy the rollback target archive or
-use Cloudflare Pages deployment history to restore `079cdbe3`.
-
-Then verify:
+Run from `datawise-seo-insight-main/workers/`.
 
 ```sh
-curl -s -o /dev/null -w "%{http_code}\n" https://datawiseseo.com/
-curl -s -o /dev/null -w "%{http_code}\n" https://datawiseseo.com/auth
-curl -s -o /dev/null -w "%{http_code}\n" https://datawiseseo.com/content-writer
-curl -s -o /dev/null -w "%{http_code}\n" https://datawiseseo.com/keyword-research
-curl -s -X POST https://datawise-api.nico-510.workers.dev/auth/google \
-  -H "Origin: https://datawiseseo.com" \
-  -H "content-type: application/json" \
-  -d "{}"
+npm install
+npm run dev
+npm run deploy
 ```
+
+When a branch contains the staging Worker env, staging deploys use:
+
+```sh
+npm run deploy:staging
+```
+
+Do not run Worker deploys for frontend-only or docs-only changes.
+
+## Staging Login
+
+Staging can use protected test login when Google OAuth is not configured for the preview origin.
+
+- Worker secret name: `STAGING_LOGIN_SECRET`
+- Optional Worker var: `STAGING_LOGIN_EMAIL`
+- URL shape: `/auth/test-login#token=<secret>`
+
+Do not commit the real test-login URL or token.
+
+## Production Verification
+
+After deploy, verify the app domain serves the expected bundle:
+
+```sh
+curl -sL https://datawiseseo.com/ | rg "assets/index-"
+```
+
+Then inspect the asset to confirm it references the production API, not staging or localhost.

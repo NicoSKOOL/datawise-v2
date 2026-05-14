@@ -15,6 +15,12 @@
 - Site Audit running states should keep the bundled `/loading.lottie` animation visible. When changing async audit copy, avoid exposing implementation phrases such as "browser polling" in user-facing text, and guard both the Lottie loader and forbidden wording before deploy.
 - After a Pages deploy, an already-open SPA tab can keep running the old hashed JS bundle even when live HTML points at the new bundle. Keep the deploy refresh guard in `App.tsx`, and if a user is checking immediately after deploy, tell them to hard refresh or open the cache-busted URL before assuming production still has old copy.
 - Admin access must bypass the free credit gate in both places: Worker `checkAndDeductCredit` and frontend `AuthContext` credit display. An admin row can still have `subscription_tier='free'` and `credits_used >= 5`, so checking only pro/community status will incorrectly block admin tools.
+- Production must be last in the promotion order: build/test locally, deploy and verify a Cloudflare Pages preview or staging URL, then deploy production. Never use `datawiseseo.com` as the first test target.
+- Staging-only protected test login makes preview testing practical when Google OAuth is not configured for a preview origin, but the real `STAGING_LOGIN_SECRET` and full test-login URL must never be committed.
+- Google OAuth on preview requires the preview origin to be authorized in Google Cloud. If that is not set up, use the protected staging test login instead of weakening auth for production.
+- The 2026-05-14 keyword tab-state fix proved the safe promotion flow: verify on `https://preview-1.datawise-118.pages.dev`, then promote only the tested two-file production hotfix from current `production`.
+- Production hotfixes should branch from the current `production` commit and include only the verified scope. Do not promote an entire staging/setup branch just because one fix inside it passed.
+- After production deploys, verify the live HTML asset hash and inspect the JS bundle for the expected API URL. Open SPA tabs may keep old bundles until refresh.
 
 ## Architecture
 - Project lives in `datawise-seo-insight-main/` subdirectory
