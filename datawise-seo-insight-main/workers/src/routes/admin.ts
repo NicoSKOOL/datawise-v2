@@ -1,11 +1,103 @@
 import type { Env } from '../index';
 import type { AuthUser } from '../auth/google';
 import { sendInviteEmail } from '../email/resend';
+import { cancelUserSequences, startWinbackSequence } from '../email/sequences';
+import { logTierChange } from '../lib/tier-changes';
 
 const ADMIN_EMAIL = 'nico@airankingskool.com';
 
 export function isAdmin(user: AuthUser): boolean {
-  return user.email === ADMIN_EMAIL;
+  return isTruthyFlag(user.is_admin) || user.email === ADMIN_EMAIL;
+}
+
+interface CommunitySyncUser {
+  id: string;
+  email: string;
+  name: string | null;
+  subscription_tier: string | null;
+  is_community_member: number | boolean | null;
+  is_admin: number | boolean | null;
+}
+
+interface CommunitySyncResult {
+  granted: number;
+  revoked: number;
+  preserved_pro: number;
+  winback_started: number;
+}
+
+function isTruthyFlag(value: number | boolean | null | undefined): boolean {
+  return value === true || value === 1;
+}
+
+async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promise<CommunitySyncResult> {
+  const { results } = await env.DB.prepare(`
+    SELECT id, email, name, subscription_tier, is_community_member, is_admin
+    FROM users
+  `).all<CommunitySyncUser>();
+
+  let granted = 0;
+  let revoked = 0;
+  let preservedPro = 0;
+  let winbackStarted = 0;
+
+  for (const user of results || []) {
+    const email = String(user.email || '').trim().toLowerCase();
+    if (!email) continue;
+
+    const tier = user.subscription_tier || 'free';
+    const isCommunityMember = isTruthyFlag(user.is_community_member);
+    const isAdminUser = isTruthyFlag(user.is_admin) || email === ADMIN_EMAIL;
+    const inCsv = csvEmails.has(email);
+
+    if (inCsv) {
+      if (tier === 'pro') {
+        if (!isCommunityMember) {
+          await env.DB.prepare(
+            "UPDATE users SET is_community_member = 1, updated_at = datetime('now') WHERE id = ?"
+          ).bind(user.id).run();
+          granted++;
+        }
+        await cancelUserSequences(env, user.id);
+        continue;
+      }
+
+      if (tier !== 'community' || !isCommunityMember) {
+        await logTierChange(env.DB, user.id, tier, 'community', 'csv_upload');
+        await env.DB.prepare(
+          "UPDATE users SET is_community_member = 1, subscription_tier = 'community', updated_at = datetime('now') WHERE id = ?"
+        ).bind(user.id).run();
+        granted++;
+      }
+
+      await cancelUserSequences(env, user.id);
+      continue;
+    }
+
+    if (isAdminUser) continue;
+
+    if (tier === 'pro') {
+      if (isCommunityMember) {
+        await env.DB.prepare(
+          "UPDATE users SET is_community_member = 0, updated_at = datetime('now') WHERE id = ?"
+        ).bind(user.id).run();
+        preservedPro++;
+      }
+      continue;
+    }
+
+    if (tier === 'community' || isCommunityMember) {
+      await logTierChange(env.DB, user.id, tier, 'free', 'csv_upload');
+      await env.DB.prepare(
+        "UPDATE users SET subscription_tier = 'free', is_community_member = 0, updated_at = datetime('now') WHERE id = ?"
+      ).bind(user.id).run();
+      await startWinbackSequence(env, user.id);
+      revoked++;
+      winbackStarted++;
+    }
+  }
+
+  return { granted, revoked, preserved_pro: preservedPro, winback_started: winbackStarted };
 }
 
 // POST /api/admin/upload-members
@@ -44,11 +136,13 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
   const BATCH_SIZE = 80;
   let inserted = 0;
   const statements: D1PreparedStatement[] = [];
+  const csvEmails = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
     const cols = parseCSVLine(lines[i]);
     const email = cols[emailIdx]?.trim().toLowerCase();
     if (!email) continue;
+    csvEmails.add(email);
 
     const firstName = firstNameIdx >= 0 ? cols[firstNameIdx]?.trim() || null : null;
     const lastName = lastNameIdx >= 0 ? cols[lastNameIdx]?.trim() || null : null;
@@ -70,7 +164,9 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
     await env.DB.batch(batch);
   }
 
-  return new Response(JSON.stringify({ success: true, imported: inserted }), {
+  const sync = await reconcileCommunityAccess(env, csvEmails);
+
+  return new Response(JSON.stringify({ success: true, imported: inserted, ...sync }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

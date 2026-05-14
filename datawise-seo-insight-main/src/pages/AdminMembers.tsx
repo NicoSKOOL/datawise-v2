@@ -265,7 +265,46 @@ export default function AdminMembers() {
     try {
       const csvText = await file.text();
       const result = await uploadMembers(csvText);
-      toast({ title: 'Upload complete', description: `Imported ${result.imported} community members.` });
+      toast({
+        title: (
+          <div className="flex items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+            <span>Community CSV synced</span>
+          </div>
+        ),
+        description: (
+          <div className="mt-2 space-y-3 text-foreground">
+            <p className="text-sm text-muted-foreground">
+              Access was updated from the latest full member list.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md bg-muted p-3">
+                <div className="text-xl font-semibold text-foreground">{result.imported}</div>
+                <div className="text-xs font-medium text-muted-foreground">Imported</div>
+              </div>
+              <div className="rounded-md bg-emerald-50 p-3 dark:bg-emerald-950/30">
+                <div className="text-xl font-semibold text-emerald-700 dark:text-emerald-300">{result.granted}</div>
+                <div className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Granted access</div>
+              </div>
+              <div className="rounded-md bg-red-50 p-3 dark:bg-red-950/30">
+                <div className="text-xl font-semibold text-red-700 dark:text-red-300">{result.revoked}</div>
+                <div className="text-xs font-medium text-red-700 dark:text-red-300">Revoked access</div>
+              </div>
+              <div className="rounded-md bg-amber-50 p-3 dark:bg-amber-950/30">
+                <div className="text-xl font-semibold text-amber-700 dark:text-amber-300">{result.winback_started}</div>
+                <div className="text-xs font-medium text-amber-700 dark:text-amber-300">Emails queued</div>
+              </div>
+            </div>
+            {result.preserved_pro > 0 && (
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                Kept {result.preserved_pro} paid pro user(s) on pro access.
+              </div>
+            )}
+          </div>
+        ),
+      });
       await Promise.all([loadCrossReference(), loadUsers()]);
       setActiveTab('non-members');
     } catch (err) {

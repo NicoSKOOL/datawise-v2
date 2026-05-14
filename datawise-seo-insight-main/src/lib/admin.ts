@@ -5,6 +5,8 @@ interface UploadResult {
   imported: number;
   granted: number;
   revoked: number;
+  preserved_pro: number;
+  winback_started: number;
 }
 
 interface CrossReferenceResult {
