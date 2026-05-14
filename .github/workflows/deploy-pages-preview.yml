@@ -1,0 +1,67 @@
+name: Deploy DataWise Pages Preview
+
+on:
+  pull_request:
+    branches:
+      - production
+    paths:
+      - datawise-seo-insight-main/**
+      - .github/workflows/deploy-pages-preview.yml
+  workflow_dispatch:
+
+concurrency:
+  group: datawise-pages-preview-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Build, guard, and deploy preview
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 510d0ac03a3a8f5ebeac39be4926ed77
+      VITE_API_URL: https://datawise-api-staging.nico-510.workers.dev
+    steps:
+      - name: Checkout change
+        uses: actions/checkout@v4
+
+      - name: Require Cloudflare deploy secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing GitHub repo secret CLOUDFLARE_API_TOKEN. Add a Cloudflare API token that can deploy the datawise Pages project."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: datawise-seo-insight-main/package-lock.json
+
+      - name: Install dependencies
+        working-directory: datawise-seo-insight-main
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build and run deploy guard
+        working-directory: datawise-seo-insight-main
+        run: npm run deploy:pages:check:preview
+
+      - name: Deploy preview
+        working-directory: datawise-seo-insight-main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PREVIEW_BRANCH: preview-${{ github.event.pull_request.number || github.run_number }}
+        run: |
+          npx wrangler pages deploy dist \
+            --project-name=datawise \
+            --branch="$PREVIEW_BRANCH" \
+            --commit-dirty=true
+
+      - name: Summary
+        run: |
+          echo "Preview deployment completed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Verify the Cloudflare Pages preview URL before merging or deploying production." >> "$GITHUB_STEP_SUMMARY"

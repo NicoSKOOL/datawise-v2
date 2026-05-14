@@ -18,6 +18,8 @@ export interface Env {
   DATAFORSEO_PASSWORD: string;
   RESEND_API_KEY: string;
   SKOOL_WEBHOOK_SECRET: string;
+  STAGING_LOGIN_SECRET?: string;
+  STAGING_LOGIN_EMAIL?: string;
   // LLM config (external providers — Workers AI is the free fallback)
   LLM_PROVIDER: string;
   LLM_MODEL: string;
@@ -30,7 +32,7 @@ export interface Env {
 
 import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe, handleUpdateDefaults } from './auth/google';
 import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetPassword } from './auth/email';
-import { handleDevLogin } from './auth/dev';
+import { handleDevLogin, handleStagingTestLogin } from './auth/dev';
 import { authMiddleware } from './middleware/auth';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
@@ -167,15 +169,18 @@ export default {
     const method = request.method;
 
     // CORS + security headers.
-    // Reflect the request Origin when it matches an allowlist: env.FRONTEND_URL
-    // plus any localhost/127.0.0.1 origin on any port (dev workflows against
-    // either a local or prod worker). Localhost is safe to reflect in prod:
-    // a page at evil.com cannot cause a browser to send Origin: localhost:*.
+    // Reflect the request Origin when it matches an allowlist: env.FRONTEND_URL,
+    // env.MARKETING_URL, Cloudflare Pages previews for the app, plus any
+    // localhost/127.0.0.1 origin on any port (dev workflows against either a
+    // local or prod worker). Localhost is safe to reflect in prod: a page at
+    // evil.com cannot cause a browser to send Origin: localhost:*.
     const requestOrigin = request.headers.get('Origin') || '';
     const isLocalhostOrigin = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(requestOrigin);
+    const isPagesPreviewOrigin = /^https:\/\/[a-z0-9-]+\.datawise-118\.pages\.dev$/.test(requestOrigin);
     const isAllowedOrigin =
       requestOrigin === env.FRONTEND_URL ||
       requestOrigin === env.MARKETING_URL ||
+      isPagesPreviewOrigin ||
       isLocalhostOrigin;
 
     const corsHeaders: Record<string, string> = {
@@ -232,6 +237,9 @@ export default {
       }
       if (path === '/auth/dev-login' && method === 'POST') {
         return addCors(await handleDevLogin(request, env));
+      }
+      if (path === '/auth/staging-test-login' && method === 'POST') {
+        return addCors(await handleStagingTestLogin(request, env));
       }
 
       // Email unsubscribe (public, no auth)

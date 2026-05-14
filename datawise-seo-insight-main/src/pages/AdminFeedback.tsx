@@ -69,7 +69,7 @@ export default function AdminFeedback() {
     const token = localStorage.getItem('datawise_session_token');
     fetch(`${API_BASE}/api/feedback/screenshot/${selectedReport.id}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-      credentials: 'include',
+      credentials: 'omit',
     })
       .then((res) => {
         if (!res.ok) throw new Error('not found');

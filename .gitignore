@@ -9,6 +9,7 @@ node_modules/
 # Build outputs
 dist/
 .wrangler/
+deploy-archives/
 
 # OS files
 .DS_Store

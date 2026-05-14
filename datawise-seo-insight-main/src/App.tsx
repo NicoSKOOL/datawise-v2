@@ -20,6 +20,7 @@ initAttribution();
 import Dashboard from './pages/Dashboard';
 import Auth from './pages/Auth';
 import AuthCallback from './pages/AuthCallback';
+import StagingTestLogin from './pages/StagingTestLogin';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import SEOAssistant from './pages/SEOAssistant';
@@ -138,6 +139,7 @@ const App = () => (
             {/* Public routes */}
             <Route path="/auth" element={<Auth />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/test-login" element={<StagingTestLogin />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
 

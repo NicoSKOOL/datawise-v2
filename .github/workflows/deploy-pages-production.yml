@@ -2,6 +2,10 @@ name: Deploy DataWise Pages Production
 
 on:
   workflow_dispatch:
+    inputs:
+      preview_verified:
+        description: "Type PREVIEW_VERIFIED after verifying the staging/preview URL."
+        required: true
 
 concurrency:
   group: datawise-pages-production
@@ -17,6 +21,22 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: 510d0ac03a3a8f5ebeac39be4926ed77
       VITE_API_URL: https://datawise-api.nico-510.workers.dev
     steps:
+      - name: Require preview verification
+        run: |
+          if [ "${{ github.event.inputs.preview_verified }}" != "PREVIEW_VERIFIED" ]; then
+            echo "Production deploy blocked. Verify a staging/preview URL first, then rerun with PREVIEW_VERIFIED."
+            exit 1
+          fi
+
+      - name: Require Cloudflare deploy secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing GitHub repo secret CLOUDFLARE_API_TOKEN. Add a Cloudflare API token that can deploy the datawise Pages project."
+            exit 1
+          fi
+
       - name: Checkout production
         uses: actions/checkout@v4
         with:
@@ -31,7 +51,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: datawise-seo-insight-main
-        run: npm ci
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
 
       - name: Build, guard, and deploy
         working-directory: datawise-seo-insight-main
