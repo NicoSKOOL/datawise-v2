@@ -15,6 +15,7 @@ FRONTEND_URL = "https://datawiseseo.com"
 # ENCRYPTION_KEY
 # DATAFORSEO_EMAIL
 # DATAFORSEO_PASSWORD
+# STAGING_LOGIN_SECRET (staging only)
 
 [[d1_databases]]
 binding = "DB"
@@ -25,3 +26,36 @@ database_id = "b9355723-e02c-4877-8dce-c57cc1965068"
 binding = "KV"
 id = "2302e0b0369842e799b5f4a144d6dce4"
 preview_id = "30288cb442c84e038406b0e174f90398"
+
+[env.staging]
+name = "datawise-api-staging"
+workers_dev = true
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+FRONTEND_URL = "https://preview-1.datawise-118.pages.dev"
+MARKETING_URL = "https://www.datawiseseo.com"
+WORKER_URL = "https://datawise-api-staging.nico-510.workers.dev"
+
+[env.staging.triggers]
+crons = []
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "datawise-db-staging"
+database_id = "b8a80410-9c54-4ce0-a285-0b0d4e5cbc45"
+
+[[env.staging.kv_namespaces]]
+binding = "KV"
+id = "b37a4c2271224f61adf2065e763c14ff"
+
+[[env.staging.kv_namespaces]]
+binding = "DFS_CACHE"
+id = "ef5be21c8e954386af9690fc1e95cf22"
+
+[[env.staging.r2_buckets]]
+binding = "TASK_ATTACHMENTS"
+bucket_name = "datawise-task-attachments-staging"
+
+[env.staging.ai]
+binding = "AI"

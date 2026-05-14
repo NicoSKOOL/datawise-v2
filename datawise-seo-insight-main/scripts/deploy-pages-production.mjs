@@ -15,10 +15,16 @@ const confirmProduction = args.has('--confirm-production');
 const skipBuild = args.has('--skip-build');
 
 const EXPECTED_BRANCH = 'production';
-const EXPECTED_API_URL = 'https://datawise-api.nico-510.workers.dev';
+const DEPLOY_TARGET = process.env.DEPLOY_TARGET || 'production';
+const EXPECTED_API_URL =
+  DEPLOY_TARGET === 'preview'
+    ? 'https://datawise-api-staging.nico-510.workers.dev'
+    : 'https://datawise-api.nico-510.workers.dev';
 const FORBIDDEN_BUNDLE_MARKERS = [
   ['Local development API URL', 'http://localhost:8787'],
   ['Removed Site Audit browser-polling wording', 'completion no longer depends on browser polling'],
+  ['Credentialed cross-site fetch', 'credentials:"include"'],
+  ['Credentialed cross-site fetch', "credentials:'include'"],
 ];
 const REQUIRED_BUNDLE_MARKERS = [
   ['Content Writer route', '/content-writer'],
@@ -29,7 +35,7 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Content Tools surface', 'Content Tools'],
   ['AI Visibility Brand Tracker tab', 'Brand Tracker'],
   ['AI Visibility Brand Tracker answer table', 'LLM answers mentioning you'],
-  ['Production Worker API URL', EXPECTED_API_URL],
+  [`${DEPLOY_TARGET === 'preview' ? 'Preview' : 'Production'} Worker API URL`, EXPECTED_API_URL],
   ['Keyword CPC tooltip text', 'Green means higher CPC and stronger commercial value.'],
   ['Keyword metric green state', 'bg-emerald-50'],
   ['Keyword metric amber state', 'bg-amber-50'],
@@ -45,6 +51,13 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research Fan-out Queries tab trigger', 'src/pages/KeywordResearch.tsx', '<TabsTrigger value="fan-out">Fan-out Queries</TabsTrigger>'],
   ['Keyword Research People Also Ask tab panel', 'src/pages/KeywordResearch.tsx', '<PeopleAlsoAsk />'],
   ['Keyword Research Fan-out Queries tab panel', 'src/pages/KeywordResearch.tsx', '<FanOutQueries />'],
+  ['Keyword Research keeps Overview mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="overview" className="mt-6">'],
+  ['Keyword Research keeps Related mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="related" className="mt-6">'],
+  ['Keyword Research keeps Suggestions mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="suggestions" className="mt-6">'],
+  ['Keyword Research keeps Ideas mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="ideas" className="mt-6">'],
+  ['Keyword Research keeps Difficulty mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="difficulty" className="mt-6">'],
+  ['Keyword Research keeps People Also Ask mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="people-also-ask" className="mt-6">'],
+  ['Keyword Research keeps Fan-out mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="fan-out" className="mt-6">'],
   ['Keyword Research sidebar tab sync', 'src/pages/KeywordResearch.tsx', 'useSearchParams'],
   ['Dashboard uses indexation chart', 'src/pages/Dashboard.tsx', "import IndexationChart from '@/components/dashboard/IndexationChart';"],
   ['Dashboard fetches sitemap indexation data', 'src/pages/Dashboard.tsx', 'getGSCSitemaps'],
@@ -63,11 +76,15 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Site Audit imports Lottie loader', 'src/pages/SiteAudit.tsx', "import DotLottieLoader from '@/components/DotLottieLoader';"],
   ['Site Audit running state renders Lottie loader', 'src/pages/SiteAudit.tsx', '<DotLottieLoader size={112}'],
   ['DotLottie loader uses bundled asset', 'src/components/DotLottieLoader.tsx', "dotlottieElement.setAttribute('src', '/loading.lottie');"],
+  ['API helper omits cross-site credentials', 'src/lib/api.ts', "credentials: 'omit',"],
+  ['Admin feedback screenshot fetch omits cross-site credentials', 'src/pages/AdminFeedback.tsx', "credentials: 'omit',"],
 ];
 const FORBIDDEN_SOURCE_MARKERS = [
   ['Dashboard must not render rank position distribution', 'src/pages/Dashboard.tsx', '<RankDistributionChart'],
   ['Dashboard must not import rank distribution chart', 'src/pages/Dashboard.tsx', "import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';"],
   ['Site Audit must not mention browser polling in user copy', 'src/pages/SiteAudit.tsx', 'completion no longer depends on browser polling'],
+  ['API helper must not send cross-site credentials', 'src/lib/api.ts', "credentials: 'include'"],
+  ['Admin feedback screenshot fetch must not send cross-site credentials', 'src/pages/AdminFeedback.tsx', "credentials: 'include'"],
 ];
 
 function run(command, commandArgs, options = {}) {
@@ -109,6 +126,10 @@ async function collectTextFiles(dir) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...await collectTextFiles(fullPath));
+      continue;
+    }
+
+    if (entry.name === 'deploy-manifest.json') {
       continue;
     }
 
@@ -242,6 +263,7 @@ async function main() {
   const distDir = path.join(appRoot, 'dist');
 
   console.log('DataWise Pages production guard');
+  console.log(`Target: ${DEPLOY_TARGET}`);
   console.log(`App: ${appRoot}`);
   console.log(`Branch: ${branch}`);
   console.log(`Commit: ${commit}`);
@@ -252,6 +274,9 @@ async function main() {
   }
 
   if (deploy) {
+    if (DEPLOY_TARGET !== 'production') {
+      throw new Error('Refusing production deploy unless DEPLOY_TARGET=production.');
+    }
     if (!confirmProduction) {
       throw new Error('Refusing production deploy without --confirm-production.');
     }

@@ -50,7 +50,7 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
     method: options.method || 'GET',
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
-    credentials: 'include',
+    credentials: 'omit',
   });
 
   if (response.status === 401) {
@@ -105,7 +105,7 @@ export async function apiStream(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
-    credentials: 'include',
+    credentials: 'omit',
   });
 
   if (!response.ok) {
