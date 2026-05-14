@@ -53,25 +53,25 @@ export default function KeywordResearch() {
           <TabsTrigger value="fan-out">Fan-out Queries</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-6">
+        <TabsContent forceMount value="overview" className="mt-6">
           <KeywordOverview />
         </TabsContent>
-        <TabsContent value="related" className="mt-6">
+        <TabsContent forceMount value="related" className="mt-6">
           <RelatedKeywords />
         </TabsContent>
-        <TabsContent value="suggestions" className="mt-6">
+        <TabsContent forceMount value="suggestions" className="mt-6">
           <KeywordSuggestions />
         </TabsContent>
-        <TabsContent value="ideas" className="mt-6">
+        <TabsContent forceMount value="ideas" className="mt-6">
           <KeywordIdeas />
         </TabsContent>
-        <TabsContent value="difficulty" className="mt-6">
+        <TabsContent forceMount value="difficulty" className="mt-6">
           <KeywordDifficulty />
         </TabsContent>
-        <TabsContent value="people-also-ask" className="mt-6">
+        <TabsContent forceMount value="people-also-ask" className="mt-6">
           <PeopleAlsoAsk />
         </TabsContent>
-        <TabsContent value="fan-out" className="mt-6">
+        <TabsContent forceMount value="fan-out" className="mt-6">
           <FanOutQueries />
         </TabsContent>
       </Tabs>
