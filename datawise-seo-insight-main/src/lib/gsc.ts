@@ -109,7 +109,16 @@ export async function deleteManualProperty(propertyId: string) {
 }
 
 export async function syncGSCProperty(propertyId: string) {
-  return api<{ success: boolean; rows_synced: number; property: string }>('/gsc/sync', {
+  return api<{
+    success: boolean;
+    rows_synced: number;
+    daily_rows: number;
+    query_7d_rows: number;
+    query_30d_rows: number;
+    total_clicks: number;
+    total_impressions: number;
+    property: string;
+  }>('/gsc/sync', {
     method: 'POST',
     body: { property_id: propertyId },
   });

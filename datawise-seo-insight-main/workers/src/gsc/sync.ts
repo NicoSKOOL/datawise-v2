@@ -61,6 +61,8 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
 
   const dailyData = await dailyResponse.json() as { rows?: SearchAnalyticsRow[] };
   const dailyRows = dailyData.rows || [];
+  const totalClicks = dailyRows.reduce((sum, row) => sum + Number(row.clicks || 0), 0);
+  const totalImpressions = dailyRows.reduce((sum, row) => sum + Number(row.impressions || 0), 0);
 
   // --- Pass 2: Query+page data per 30-day batch (dimensions: ['query', 'page']) ---
   // Each batch gets its own 25K row budget for query-level detail
@@ -168,6 +170,8 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
     daily_rows: dailyRows.length,
     query_7d_rows: query7dRows.length,
     query_30d_rows: queryRows.length,
+    total_clicks: totalClicks,
+    total_impressions: totalImpressions,
     property: siteUrl,
   }), { headers: { 'Content-Type': 'application/json' } });
 }
