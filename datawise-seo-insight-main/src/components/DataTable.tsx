@@ -1,6 +1,7 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Download } from "lucide-react";
 import { downloadCSV } from "@/lib/csvUtils";
@@ -8,13 +9,20 @@ import { cn, isNumericColumn, getComparisonColor, calculateColumnStats } from "@
 import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
 import { getKeywordMetricStats, isKeywordMetricKey } from "@/lib/keyword-metrics";
 
-interface DataTableProps {
+export interface DataTableProps {
   data: object[];
   title: string;
   description?: string;
   loading?: boolean;
   enableComparison?: boolean;
   metricMode?: 'none' | 'keyword-research';
+  toolbarActions?: React.ReactNode;
+  getRowId?: (row: Record<string, unknown>, index: number) => string;
+  selectedRowIds?: Set<string>;
+  onSelectedRowIdsChange?: (next: Set<string>) => void;
+  isRowSelectable?: (row: Record<string, unknown>, index: number) => boolean;
+  renderRowActions?: (row: Record<string, unknown>, index: number) => React.ReactNode;
+  rowActionsHeader?: string;
 }
 
 export function DataTable({
@@ -24,7 +32,17 @@ export function DataTable({
   loading = false,
   enableComparison = false,
   metricMode = 'none',
+  toolbarActions,
+  getRowId,
+  selectedRowIds,
+  onSelectedRowIdsChange,
+  isRowSelectable,
+  renderRowActions,
+  rowActionsHeader = 'Actions',
 }: DataTableProps) {
+  const hasSelection = Boolean(getRowId && selectedRowIds && onSelectedRowIdsChange);
+  const hasRowActions = Boolean(renderRowActions);
+
   if (loading) {
     return (
       <Card>
@@ -79,6 +97,17 @@ export function DataTable({
   // Get columns from the first data item
   const columns = Object.keys(data[0] as Record<string, unknown>);
   const keywordMetricStats = metricMode === 'keyword-research' ? getKeywordMetricStats(data) : {};
+  const selectableRowIds = hasSelection
+    ? data
+        .map((row, index) => {
+          const rowRecord = row as Record<string, unknown>;
+          const selectable = isRowSelectable ? isRowSelectable(rowRecord, index) : true;
+          return selectable ? getRowId!(rowRecord, index) : '';
+        })
+        .filter(Boolean)
+    : [];
+  const allSelected = selectableRowIds.length > 0 && selectableRowIds.every((id) => selectedRowIds!.has(id));
+  const someSelected = !allSelected && selectableRowIds.some((id) => selectedRowIds!.has(id));
   
   // Calculate column statistics for comparison mode
   const columnStats = enableComparison && data.length > 1 ? 
@@ -89,21 +118,42 @@ export function DataTable({
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <CardTitle>{title}</CardTitle>
           {description && <CardDescription>{description}</CardDescription>}
         </div>
-        <Button onClick={handleDownloadCSV} variant="outline" size="sm">
-          <Download className="h-4 w-4 mr-2" />
-          Export CSV
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {toolbarActions}
+          <Button onClick={handleDownloadCSV} variant="outline" size="sm">
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
+                {hasSelection && (
+                  <TableHead className="w-10">
+                    <Checkbox
+                      aria-label="Select all keywords"
+                      checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                      disabled={selectableRowIds.length === 0}
+                      onCheckedChange={(checked) => {
+                        const next = new Set(selectedRowIds);
+                        if (checked === true) {
+                          selectableRowIds.forEach((id) => next.add(id));
+                        } else {
+                          selectableRowIds.forEach((id) => next.delete(id));
+                        }
+                        onSelectedRowIdsChange?.(next);
+                      }}
+                    />
+                  </TableHead>
+                )}
                 {columns.map((column) => (
                   <TableHead key={column} className="whitespace-nowrap">
                     {metricMode === 'keyword-research' && isKeywordMetricKey(column) ? (
@@ -113,13 +163,37 @@ export function DataTable({
                     )}
                   </TableHead>
                 ))}
+                {hasRowActions && (
+                  <TableHead className="w-16 text-right">{rowActionsHeader}</TableHead>
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.map((row, index) => (
-                <TableRow key={index}>
-                  {columns.map((column) => {
-                    const rowRecord = row as Record<string, unknown>;
+              {data.map((row, index) => {
+                const rowRecord = row as Record<string, unknown>;
+                const rowId = getRowId?.(rowRecord, index) || String(index);
+                const selectable = hasSelection
+                  ? (isRowSelectable ? isRowSelectable(rowRecord, index) : true)
+                  : false;
+
+                return (
+                  <TableRow key={`${rowId}-${index}`}>
+                    {hasSelection && (
+                      <TableCell className="w-10">
+                        <Checkbox
+                          aria-label={`Select ${rowRecord.keyword || 'row'}`}
+                          checked={selectable && selectedRowIds!.has(rowId)}
+                          disabled={!selectable}
+                          onCheckedChange={(checked) => {
+                            const next = new Set(selectedRowIds);
+                            if (checked === true) next.add(rowId);
+                            else next.delete(rowId);
+                            onSelectedRowIdsChange?.(next);
+                          }}
+                        />
+                      </TableCell>
+                    )}
+                    {columns.map((column) => {
                     const value = rowRecord[column];
                     const displayValue = typeof value === 'object' && value !== null ?
                       (React.isValidElement(value) ? value : JSON.stringify(value)) :
@@ -143,9 +217,15 @@ export function DataTable({
                         {content}
                       </TableCell>
                     );
-                  })}
-                </TableRow>
-              ))}
+                    })}
+                    {hasRowActions && (
+                      <TableCell className="w-16 text-right">
+                        {renderRowActions?.(rowRecord, index)}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>

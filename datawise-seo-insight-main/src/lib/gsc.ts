@@ -89,10 +89,11 @@ export async function updateGSCProperty(propertyId: string, data: { color?: stri
 }
 
 export async function createManualProperty(siteUrl: string, color?: string) {
-  return api<GSCProperty>('/api/properties/manual', {
+  const result = await api<{ property: GSCProperty }>('/api/properties/manual', {
     method: 'POST',
     body: { site_url: siteUrl, color },
   });
+  return result.property;
 }
 
 export async function deleteManualProperty(propertyId: string) {

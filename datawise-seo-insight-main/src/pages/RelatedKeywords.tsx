@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { DataTable } from "@/components/DataTable";
+import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchRelatedKeywords } from "@/lib/dataforseo";
 
@@ -179,12 +179,19 @@ export default function RelatedKeywords() {
         </CardContent>
       </Card>
 
-      <DataTable 
+      <KeywordPlannerDataTable
         data={results}
         title="Related Keywords"
         description="Keywords related to your target term"
         loading={loading}
         metricMode="keyword-research"
+        source="related-keywords"
+        sourceContext={{
+          seed_keyword: keyword.trim(),
+          location_code: parseInt(location),
+          language_code: language,
+          limit: parseInt(limit),
+        }}
       />
 
     </div>

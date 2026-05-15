@@ -173,7 +173,7 @@ async function syncProperties(env: Env, userId: string, accessToken: string): Pr
 // GET /gsc/properties - List user's connected GSC properties
 export async function handleGSCProperties(env: Env, userId: string): Promise<Response> {
   const properties = await env.DB.prepare(
-    'SELECT id, site_url, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
+    'SELECT id, site_url, kind, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
   ).bind(userId).all();
 
   const connection = await env.DB.prepare(
