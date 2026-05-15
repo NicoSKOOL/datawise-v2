@@ -123,7 +123,16 @@ export async function handleListAllFeedback(request: Request, env: Env, user: Au
   if (conditions.length > 0) {
     query += ' WHERE ' + conditions.join(' AND ');
   }
-  query += ' ORDER BY f.created_at DESC';
+  query += `
+    ORDER BY
+      CASE
+        WHEN f.type = 'bug' AND f.status IN ('new', 'in_progress') THEN 0
+        WHEN f.status IN ('new', 'in_progress') THEN 1
+        WHEN f.type = 'bug' AND f.status IN ('resolved', 'closed') THEN 2
+        ELSE 3
+      END,
+      f.created_at DESC
+  `;
 
   const stmt = env.DB.prepare(query);
   const bound = bindings.length > 0 ? stmt.bind(...bindings) : stmt;
