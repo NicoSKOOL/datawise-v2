@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Eye } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { DataTable } from "@/components/DataTable";
+import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
 import { formatKeywordMetricValue } from "@/lib/keyword-metrics";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
@@ -209,12 +209,18 @@ export default function KeywordOverview() {
         </Card>
       </div>
 
-      <DataTable 
+      <KeywordPlannerDataTable
         data={results}
         title="Detailed Keyword Analysis"
         description="Complete keyword metrics, trends, and SERP analysis"
         loading={loading}
         metricMode="keyword-research"
+        source="keyword-overview"
+        sourceContext={{
+          seed_keyword: keyword.trim(),
+          location_code: parseInt(location),
+          language_code: language,
+        }}
       />
 
     </div>

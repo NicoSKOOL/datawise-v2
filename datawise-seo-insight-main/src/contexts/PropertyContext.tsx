@@ -12,6 +12,8 @@ interface PropertyContextType {
   properties: GSCProperty[];
   selectedPropertyId: string;
   setSelectedPropertyId: (id: string) => void;
+  addProperty: (property: GSCProperty) => void;
+  removeProperty: (id: string) => void;
   selectedProperty: GSCProperty | null;
   primaryDomain: string;
   connected: boolean;
@@ -32,9 +34,37 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(STORAGE_KEY, id);
   }, []);
 
+  const addProperty = useCallback((property: GSCProperty) => {
+    setProperties((current) => [
+      property,
+      ...current.filter((existing) => existing.id !== property.id),
+    ]);
+    setSelectedPropertyIdState(property.id);
+    localStorage.setItem(STORAGE_KEY, property.id);
+  }, []);
+
+  const removeProperty = useCallback((id: string) => {
+    setProperties((current) => {
+      const next = current.filter((property) => property.id !== id);
+      setSelectedPropertyIdState((selected) => {
+        if (selected !== id) return selected;
+
+        const replacement = next.find((property) => property.is_enabled !== 0)?.id || '';
+        if (replacement) {
+          localStorage.setItem(STORAGE_KEY, replacement);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+        return replacement;
+      });
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (!user) {
       setProperties([]);
+      setSelectedPropertyIdState('');
       setConnected(false);
       setLoading(false);
       return;
@@ -47,35 +77,34 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
         const result = await getGSCProperties();
         if (cancelled) return;
 
-        if (result?.connected) {
-          setConnected(true);
-          const props = result.properties || [];
-          setProperties(props);
+        const props = result?.properties || [];
+        setConnected(Boolean(result?.connected));
+        setProperties(props);
 
-          if (props.length > 0) {
-            const enabled = props.filter((p) => p.is_enabled !== 0);
-            const savedId = localStorage.getItem(STORAGE_KEY);
-            // Only use saved selection if it's an enabled property
-            const savedValid = savedId && enabled.some((p) => p.id === savedId);
-            if (savedValid) {
-              setSelectedPropertyIdState(savedId);
-            } else if (enabled.length > 0) {
-              setSelectedPropertyIdState(enabled[0].id);
-              localStorage.setItem(STORAGE_KEY, enabled[0].id);
-            } else {
-              // No enabled properties, pick first available
-              setSelectedPropertyIdState(props[0].id);
-              localStorage.setItem(STORAGE_KEY, props[0].id);
-            }
+        if (props.length > 0) {
+          const enabled = props.filter((p) => p.is_enabled !== 0);
+          const savedId = localStorage.getItem(STORAGE_KEY);
+          // Only use saved selection if it's an enabled property
+          const savedValid = savedId && enabled.some((p) => p.id === savedId);
+          if (savedValid) {
+            setSelectedPropertyIdState(savedId);
+          } else if (enabled.length > 0) {
+            setSelectedPropertyIdState(enabled[0].id);
+            localStorage.setItem(STORAGE_KEY, enabled[0].id);
+          } else {
+            // No enabled properties, pick first available
+            setSelectedPropertyIdState(props[0].id);
+            localStorage.setItem(STORAGE_KEY, props[0].id);
           }
         } else {
-          setConnected(false);
-          setProperties([]);
+          setSelectedPropertyIdState('');
+          localStorage.removeItem(STORAGE_KEY);
         }
       } catch {
         if (!cancelled) {
           setConnected(false);
           setProperties([]);
+          setSelectedPropertyIdState('');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -95,6 +124,8 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
         properties,
         selectedPropertyId,
         setSelectedPropertyId,
+        addProperty,
+        removeProperty,
         selectedProperty,
         primaryDomain,
         connected,

@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Target } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { DataTable } from "@/components/DataTable";
+import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordIdeas } from "@/lib/dataforseo";
 
@@ -166,12 +166,19 @@ export default function KeywordIdeas() {
         </CardContent>
       </Card>
 
-      <DataTable 
+      <KeywordPlannerDataTable
         data={results}
         title="Keyword Ideas"
         description="Fresh keyword ideas and opportunities for your content"
         loading={loading}
         metricMode="keyword-research"
+        source="keyword-ideas"
+        sourceContext={{
+          seed_keyword: keyword.trim(),
+          location_code: parseInt(location),
+          language_code: language,
+          limit,
+        }}
       />
 
     </div>

@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { BarChart3 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { DataTable } from "@/components/DataTable";
+import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { fetchKeywordDifficulty } from "@/lib/dataforseo";
 
 export default function KeywordDifficulty() {
@@ -109,12 +109,21 @@ export default function KeywordDifficulty() {
         </CardContent>
       </Card>
 
-      <DataTable 
+      <KeywordPlannerDataTable
         data={results}
         title="Keyword Difficulty Analysis"
         description="Competition scores and difficulty metrics for your keywords"
         loading={loading}
         metricMode="keyword-research"
+        source="keyword-difficulty"
+        sourceContext={{
+          input_keywords: keywords
+            .split('\n')
+            .map((kw) => kw.trim())
+            .filter(Boolean),
+          location_code: 2840,
+          language_code: 'en',
+        }}
       />
     </div>
   );
