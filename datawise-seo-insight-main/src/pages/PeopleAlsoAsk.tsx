@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,10 +6,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "@/hooks/use-toast";
 import { Loader2, Search, HelpCircle, ExternalLink, Download, GitBranch, LayoutGrid, ChevronRight, ChevronDown, Target, Lightbulb } from "lucide-react";
 import { fetchPeopleAlsoAsk } from "@/lib/dataforseo";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
+import { AddToPlannerButton } from "@/components/planner/AddToPlannerButton";
+import { BulkSaveToPlannerButton } from "@/components/planner/BulkSaveToPlannerButton";
+import { normalizePlannerKeyword } from "@/lib/planner-keyword-selection";
+import type { PlannerItemInput } from "@/lib/planner";
 
 interface PAAItem {
   position: number;
@@ -51,6 +56,18 @@ interface ContentMap {
   total_questions: number;
   total_related: number;
   depth_reached: number;
+}
+
+interface PeopleAlsoAskResponse {
+  data?: PAAItem[];
+  source_stats?: Record<string, number>;
+  extraction_method?: string;
+  clicks_simulated?: number;
+  estimated_cost?: number;
+  api_calls_made?: number;
+  keywords_searched?: string[];
+  iteration_stats?: Record<string, number>;
+  content_map?: ContentMap | null;
 }
 
 function TreeBranch({ node, depth = 0 }: { node: TreeNode; depth?: number }) {
@@ -120,6 +137,7 @@ const PeopleAlsoAsk = () => {
   const [keywordsSearched, setKeywordsSearched] = useState<string[]>([]);
   const [iterationStats, setIterationStats] = useState<Record<string, number>>({});
   const [contentMap, setContentMap] = useState<ContentMap | null>(null);
+  const [selectedQuestionKeys, setSelectedQuestionKeys] = useState<Set<string>>(new Set());
 
   const handleDownloadCSV = () => {
     if (data.length === 0) {
@@ -144,7 +162,7 @@ const PeopleAlsoAsk = () => {
       headers.join(','),
       ...csvData.map(row =>
         headers.map(header => {
-          const value = (row as any)[header] || '';
+          const value = (row as Record<string, string | number | undefined>)[header] || '';
           if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
             return `"${value.replace(/"/g, '""')}"`;
           }
@@ -174,12 +192,12 @@ const PeopleAlsoAsk = () => {
 
     setLoading(true);
     try {
-      const result: any = await fetchPeopleAlsoAsk({
+      const result = await fetchPeopleAlsoAsk({
         keyword: keyword.trim(),
         location,
         language,
         depth: parseInt(depth),
-      });
+      }) as PeopleAlsoAskResponse;
 
       setData(result?.data || []);
       setSourceStats(result?.source_stats || {});
@@ -195,9 +213,10 @@ const PeopleAlsoAsk = () => {
         title: "Success",
         description: `Found ${result?.data?.length || 0} items across ${result?.api_calls_made || 1} searches at ${result?.clicks_simulated || 1} depth levels`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to fetch People Also Ask data";
       console.error('Error fetching People Also Ask data:', error);
-      toast({ title: "Error", description: error.message || "Failed to fetch People Also Ask data", variant: "destructive" });
+      toast({ title: "Error", description: message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -206,6 +225,52 @@ const PeopleAlsoAsk = () => {
   const filteredData = selectedSource === 'all'
     ? data
     : data.filter(item => item.source_type === selectedSource);
+
+  useEffect(() => {
+    setSelectedQuestionKeys(new Set());
+  }, [data]);
+
+  const visibleQuestionKeys = useMemo(
+    () => filteredData.map((item) => normalizePlannerKeyword(item.question)).filter(Boolean),
+    [filteredData],
+  );
+  const allVisibleSelected = visibleQuestionKeys.length > 0
+    && visibleQuestionKeys.every((key) => selectedQuestionKeys.has(key));
+  const someVisibleSelected = !allVisibleSelected
+    && visibleQuestionKeys.some((key) => selectedQuestionKeys.has(key));
+
+  const selectedQuestionItems = useMemo<PlannerItemInput[]>(() => {
+    const seen = new Set<string>();
+    return filteredData.flatMap((item) => {
+      const keywordKey = normalizePlannerKeyword(item.question);
+      if (!keywordKey || !selectedQuestionKeys.has(keywordKey) || seen.has(keywordKey)) return [];
+      seen.add(keywordKey);
+
+      return [{
+        keyword: keywordKey,
+        intent: 'informational',
+        source: 'people-also-ask',
+        source_context: {
+          seed_keyword: keyword,
+          location,
+          language,
+          depth: parseInt(depth),
+          extraction_method: extractionMethod,
+          result: item,
+        },
+      }];
+    });
+  }, [depth, extractionMethod, filteredData, keyword, language, location, selectedQuestionKeys]);
+
+  const toggleQuestionSelection = (keywordKey: string, checked: boolean) => {
+    setSelectedQuestionKeys((current) => {
+      const next = new Set(current);
+      if (!keywordKey) return next;
+      if (checked) next.add(keywordKey);
+      else next.delete(keywordKey);
+      return next;
+    });
+  };
 
   const getSourceTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
@@ -526,7 +591,26 @@ const PeopleAlsoAsk = () => {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="flex items-center gap-4 mb-6">
+                    <div className="flex flex-wrap items-center gap-4 mb-6">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          aria-label="Select all visible questions"
+                          checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                          disabled={visibleQuestionKeys.length === 0}
+                          onCheckedChange={(checked) => {
+                            setSelectedQuestionKeys((current) => {
+                              const next = new Set(current);
+                              if (checked === true) {
+                                visibleQuestionKeys.forEach((key) => next.add(key));
+                              } else {
+                                visibleQuestionKeys.forEach((key) => next.delete(key));
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="text-sm font-medium">Select visible</span>
+                      </div>
                       <label className="text-sm font-medium">Filter by source:</label>
                       <Select value={selectedSource} onValueChange={setSelectedSource}>
                         <SelectTrigger className="w-[200px]">
@@ -541,11 +625,24 @@ const PeopleAlsoAsk = () => {
                           ))}
                         </SelectContent>
                       </Select>
+                      <BulkSaveToPlannerButton
+                        items={selectedQuestionItems}
+                        onSaved={() => setSelectedQuestionKeys(new Set())}
+                        className="ml-auto"
+                      />
                     </div>
 
                     <div className="space-y-2">
                       {filteredData.map((item, index) => (
                         <div key={index} className="flex items-start gap-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                          <Checkbox
+                            aria-label={`Select ${item.question}`}
+                            checked={selectedQuestionKeys.has(normalizePlannerKeyword(item.question))}
+                            disabled={!normalizePlannerKeyword(item.question)}
+                            onCheckedChange={(checked) => {
+                              toggleQuestionSelection(normalizePlannerKeyword(item.question), checked === true);
+                            }}
+                          />
                           <div className="flex flex-col gap-1 flex-shrink-0">
                             <Badge variant={getSourceTypeBadgeVariant(item.source_type)} className="text-xs">
                               {getSourceTypeLabel(item.source_type)}
@@ -573,6 +670,19 @@ const PeopleAlsoAsk = () => {
                               </a>
                             )}
                           </div>
+                          <AddToPlannerButton
+                            keyword={item.question}
+                            source="people-also-ask"
+                            sourceContext={{
+                              seed_keyword: keyword,
+                              location,
+                              language,
+                              depth: parseInt(depth),
+                              extraction_method: extractionMethod,
+                              result: item,
+                            }}
+                            defaultIntent="informational"
+                          />
                         </div>
                       ))}
                     </div>

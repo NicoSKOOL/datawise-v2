@@ -1,10 +1,11 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Table,
@@ -27,6 +28,9 @@ import { downloadCSV } from '@/lib/csvUtils';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { useDefaults } from '@/hooks/use-defaults';
 import { AddToPlannerButton } from '@/components/planner/AddToPlannerButton';
+import { BulkSaveToPlannerButton } from '@/components/planner/BulkSaveToPlannerButton';
+import { normalizePlannerKeyword } from '@/lib/planner-keyword-selection';
+import type { PlannerItemInput } from '@/lib/planner';
 
 type Platform = 'google' | 'chat_gpt';
 type SortKey = 'volume-desc' | 'volume-asc' | 'sources-desc' | 'alpha';
@@ -125,6 +129,7 @@ export default function FanOutQueries() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>('volume-desc');
+  const [selectedQueryKeys, setSelectedQueryKeys] = useState<Set<string>>(new Set());
 
   // DFS LLM Mentions: ChatGPT data is indexed US + English only. Any other
   // location/language combo returns zero rows. Force US/EN when platform is
@@ -316,6 +321,57 @@ export default function FanOutQueries() {
 
     return result;
   }, [rows, search, typeFilter, sortKey]);
+
+  const rowSignature = useMemo(
+    () => rows.map((row) => normalizePlannerKeyword(row.query)).join('\u001f'),
+    [rows],
+  );
+
+  useEffect(() => {
+    setSelectedQueryKeys(new Set());
+  }, [rowSignature]);
+
+  const visibleQueryKeys = useMemo(
+    () => displayRows.map((row) => normalizePlannerKeyword(row.query)).filter(Boolean),
+    [displayRows],
+  );
+  const allVisibleSelected = visibleQueryKeys.length > 0
+    && visibleQueryKeys.every((key) => selectedQueryKeys.has(key));
+  const someVisibleSelected = !allVisibleSelected
+    && visibleQueryKeys.some((key) => selectedQueryKeys.has(key));
+
+  const selectedPlannerItems = useMemo<PlannerItemInput[]>(() => {
+    const seen = new Set<string>();
+    return displayRows.flatMap((row) => {
+      const keywordKey = normalizePlannerKeyword(row.query);
+      if (!keywordKey || !selectedQueryKeys.has(keywordKey) || seen.has(keywordKey)) return [];
+      seen.add(keywordKey);
+
+      return [{
+        keyword: keywordKey,
+        intent: row.type === 'Fan-out' ? 'fan_out' : 'informational',
+        source: 'fan-out-queries',
+        search_volume: row.ai_search_volume || null,
+        source_context: {
+          seed_keyword: seed,
+          platform: row.platform,
+          type: row.type,
+          source_count: row.source_count,
+          result: row,
+        },
+      }];
+    });
+  }, [displayRows, seed, selectedQueryKeys]);
+
+  const toggleQuerySelection = (keywordKey: string, checked: boolean) => {
+    setSelectedQueryKeys((current) => {
+      const next = new Set(current);
+      if (!keywordKey) return next;
+      if (checked) next.add(keywordKey);
+      else next.delete(keywordKey);
+      return next;
+    });
+  };
 
   const hasResults = rows.length > 0;
 
@@ -556,11 +612,16 @@ export default function FanOutQueries() {
                     <SelectItem value="alpha">Query A-Z</SelectItem>
                   </SelectContent>
                 </Select>
+                <BulkSaveToPlannerButton
+                  items={selectedPlannerItems}
+                  onSaved={() => setSelectedQueryKeys(new Set())}
+                  className="ml-auto h-8"
+                />
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleExport}
-                  className="gap-2 ml-auto h-8"
+                  className="gap-2 h-8"
                 >
                   <Download className="h-3.5 w-3.5" />
                   Export CSV
@@ -583,6 +644,24 @@ export default function FanOutQueries() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          aria-label="Select all visible queries"
+                          checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                          disabled={visibleQueryKeys.length === 0}
+                          onCheckedChange={(checked) => {
+                            setSelectedQueryKeys((current) => {
+                              const next = new Set(current);
+                              if (checked === true) {
+                                visibleQueryKeys.forEach((key) => next.add(key));
+                              } else {
+                                visibleQueryKeys.forEach((key) => next.delete(key));
+                              }
+                              return next;
+                            });
+                          }}
+                        />
+                      </TableHead>
                       <TableHead className="w-10 text-right pr-2">#</TableHead>
                       <TableHead>Query</TableHead>
                       <TableHead className="w-[110px]">
@@ -609,10 +688,20 @@ export default function FanOutQueries() {
                   <TableBody>
                     {displayRows.map((row, i) => (
                       <TableRow
-                        key={i}
+                        key={`${normalizePlannerKeyword(row.query)}-${i}`}
                         onClick={() => handleRowClick(row)}
                         className="cursor-pointer hover:bg-muted/50"
                       >
+                        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            aria-label={`Select ${row.query}`}
+                            checked={selectedQueryKeys.has(normalizePlannerKeyword(row.query))}
+                            disabled={!normalizePlannerKeyword(row.query)}
+                            onCheckedChange={(checked) => {
+                              toggleQuerySelection(normalizePlannerKeyword(row.query), checked === true);
+                            }}
+                          />
+                        </TableCell>
                         <TableCell className="w-10 text-right text-xs text-muted-foreground pr-2">
                           {i + 1}
                         </TableCell>
