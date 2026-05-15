@@ -197,7 +197,7 @@ export async function handleGSCPropertiesRefresh(env: Env, userId: string): Prom
   }
   const count = await syncProperties(env, userId, accessToken);
   const properties = await env.DB.prepare(
-    'SELECT id, site_url, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
+    'SELECT id, site_url, kind, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
   ).bind(userId).all();
   return new Response(JSON.stringify({ success: true, count, properties: properties.results || [] }), {
     headers: { 'Content-Type': 'application/json' },
@@ -243,9 +243,14 @@ export async function handleGSCPropertyUpdate(request: Request, env: Env, userId
 
 // GET /gsc/disconnect - Remove GSC connection
 export async function handleGSCDisconnect(env: Env, userId: string): Promise<Response> {
+  await env.DB.prepare(
+    `DELETE FROM gsc_search_data
+     WHERE property_id IN (
+       SELECT id FROM gsc_properties WHERE user_id = ? AND kind != 'manual'
+     )`
+  ).bind(userId).run();
   await env.DB.prepare('DELETE FROM gsc_connections WHERE user_id = ?').bind(userId).run();
-  await env.DB.prepare('DELETE FROM gsc_properties WHERE user_id = ?').bind(userId).run();
-  await env.DB.prepare('DELETE FROM gsc_search_data WHERE property_id IN (SELECT id FROM gsc_properties WHERE user_id = ?)').bind(userId).run();
+  await env.DB.prepare("DELETE FROM gsc_properties WHERE user_id = ? AND kind != 'manual'").bind(userId).run();
 
   return new Response(JSON.stringify({ success: true }), {
     headers: { 'Content-Type': 'application/json' },

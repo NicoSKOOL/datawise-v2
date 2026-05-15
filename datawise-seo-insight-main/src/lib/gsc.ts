@@ -12,6 +12,7 @@ export interface GSCProperty {
   last_synced_at: string | null;
   color: string | null;
   is_enabled: number | null;
+  site_group_id?: string | null;
 }
 
 export interface GSCOverviewData {
@@ -88,12 +89,17 @@ export async function updateGSCProperty(propertyId: string, data: { color?: stri
   });
 }
 
+export interface CreateManualPropertyResult {
+  property: GSCProperty;
+  duplicate?: boolean;
+  connectedViaGsc?: boolean;
+}
+
 export async function createManualProperty(siteUrl: string, color?: string) {
-  const result = await api<{ property: GSCProperty }>('/api/properties/manual', {
+  return api<CreateManualPropertyResult>('/api/properties/manual', {
     method: 'POST',
     body: { site_url: siteUrl, color },
   });
-  return result.property;
 }
 
 export async function deleteManualProperty(propertyId: string) {

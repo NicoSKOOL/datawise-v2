@@ -5,6 +5,16 @@ const json = (data: unknown, status = 200) =>
 
 const PALETTE = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16'];
 
+interface PropertyRow {
+  id: string;
+  site_url: string;
+  permission_level: string | null;
+  last_synced_at: string | null;
+  color: string | null;
+  is_enabled: number | null;
+  kind: string;
+}
+
 function pickColor(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
@@ -21,6 +31,22 @@ function normalizeDomain(raw: string): string | null {
     if (!u.hostname || !/[a-z0-9]/i.test(u.hostname)) return null;
     // Store as origin (https://example.com), no path/query/fragment.
     return `${u.protocol}//${u.hostname.toLowerCase()}`;
+  } catch {
+    return null;
+  }
+}
+
+function domainKey(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('sc-domain:')) {
+    return trimmed.replace(/^sc-domain:/, '').replace(/^www\./, '').toLowerCase();
+  }
+
+  const normalized = normalizeDomain(trimmed);
+  if (!normalized) return null;
+  try {
+    return new URL(normalized).hostname.replace(/^www\./, '').toLowerCase();
   } catch {
     return null;
   }
@@ -46,17 +72,32 @@ export async function handleCreateManualProperty(
     return json({ error: 'Invalid domain' }, 400);
   }
 
-  // Reject if a property with this URL already exists for this user (could be GSC or manual).
-  const existing = await env.DB.prepare(
-    'SELECT id, kind FROM gsc_properties WHERE user_id = ? AND site_url = ?'
-  ).bind(userId, normalized).first<{ id: string; kind: string }>();
+  const requestedKey = domainKey(normalized);
+  const existingRows = await env.DB.prepare(
+    `SELECT id, site_url, permission_level, last_synced_at, color, is_enabled, kind
+     FROM gsc_properties
+     WHERE user_id = ?`
+  ).bind(userId).all<PropertyRow>();
+  const existing = (existingRows.results || []).find((property) => {
+    if (property.site_url === normalized) return true;
+    if (!requestedKey) return false;
+    return domainKey(property.site_url) === requestedKey;
+  });
+
   if (existing) {
+    if (existing.is_enabled === 0) {
+      await env.DB.prepare(
+        'UPDATE gsc_properties SET is_enabled = 1 WHERE id = ? AND user_id = ?'
+      ).bind(existing.id, userId).run();
+      existing.is_enabled = 1;
+    }
+
     return json(
       {
-        error: existing.kind === 'gsc' ? 'already_connected_via_gsc' : 'already_added',
-        property_id: existing.id,
+        property: existing,
+        duplicate: true,
+        connectedViaGsc: existing.kind === 'gsc',
       },
-      409,
     );
   }
 
@@ -74,7 +115,7 @@ export async function handleCreateManualProperty(
     return json({ error: 'Failed to create property' }, 500);
   }
 
-  return json({ property: result });
+  return json({ property: result, duplicate: false, connectedViaGsc: false });
 }
 
 // DELETE /api/properties/manual/:id

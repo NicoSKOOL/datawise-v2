@@ -5,17 +5,19 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Link2, Loader2, RefreshCw, Trash2, CheckCircle, Key, Eye, EyeOff, Check, Globe, Ticket } from 'lucide-react';
+import { Link2, Loader2, RefreshCw, Trash2, CheckCircle, Key, Eye, EyeOff, Check, Globe, Ticket, Plus } from 'lucide-react';
 import { redeemPromoCode } from '@/lib/promo';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, refreshGSCProperties, type GSCProperty } from '@/lib/gsc';
+import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, refreshGSCProperties, deleteManualProperty, type GSCProperty } from '@/lib/gsc';
 import { connectBWT, getBWTProperties, disconnectBWT } from '@/lib/bwt';
 import { getStoredLLMConfig, saveLLMConfig, clearLLMConfig, type LLMConfig } from '@/lib/chat';
 import { DEFAULT_OPENROUTER_MODEL, OPENROUTER_MODELS, OPENROUTER_PROVIDER_GROUPS, isApprovedOpenRouterModel } from '@/lib/ai-models';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { api } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
+import { useProperty } from '@/contexts/PropertyContext';
+import { AddWebsiteDialog } from '@/components/AddWebsiteDialog';
 import claudeLogo from '@lobehub/icons-static-svg/icons/claude-color.svg?url';
 import openaiLogo from '@lobehub/icons-static-svg/icons/openai.svg?url';
 import deepseekLogo from '@lobehub/icons-static-svg/icons/deepseek-color.svg?url';
@@ -29,9 +31,14 @@ function providerLogo(provider: string): string {
   return openaiLogo;
 }
 
+function cleanSiteUrl(siteUrl: string): string {
+  return siteUrl.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/\/+$/, '');
+}
+
 export default function SettingsPage() {
   const { user, isPro, isCommunityMember, promoActive, promoExpiresAt, promoLabel, refreshUser, refreshPromoStatus } = useAuth();
   const { toast } = useToast();
+  const { removeProperty } = useProperty();
   const [connected, setConnected] = useState(false);
   const [properties, setProperties] = useState<GSCProperty[]>([]);
   const [bwtConnected, setBwtConnected] = useState(false);
@@ -39,6 +46,8 @@ export default function SettingsPage() {
   const [bwtLoading, setBwtLoading] = useState(true);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [addWebsiteOpen, setAddWebsiteOpen] = useState(false);
+  const [removingManualId, setRemovingManualId] = useState<string | null>(null);
 
   const PROPERTY_COLORS = [
     { value: '#6366f1', label: 'Indigo' },
@@ -178,7 +187,7 @@ export default function SettingsPage() {
       toast({ variant: 'destructive', title: 'Bing Connection Failed', description: `Error: ${params.get('bwt_error')}` });
       window.history.replaceState({}, '', '/settings');
     }
-  }, []);
+  }, [toast]);
 
   const loadBWTStatus = async () => {
     try {
@@ -260,7 +269,7 @@ export default function SettingsPage() {
   const handleRefreshList = async () => {
     setRefreshingList(true);
     try {
-      const before = properties.length;
+      const before = properties.filter((prop) => prop.kind !== 'manual').length;
       const result = await refreshGSCProperties();
       const after = result.count;
       const diff = after - before;
@@ -282,7 +291,7 @@ export default function SettingsPage() {
     try {
       await disconnectGSC();
       setConnected(false);
-      setProperties([]);
+      setProperties((prev) => prev.filter((p) => p.kind === 'manual'));
       toast({ title: 'Disconnected', description: 'Google Search Console disconnected.' });
     } catch {
       toast({ variant: 'destructive', title: 'Error', description: 'Failed to disconnect' });
@@ -306,6 +315,34 @@ export default function SettingsPage() {
       toast({ variant: 'destructive', title: 'Error', description: 'Failed to update property' });
     }
   };
+
+  const handleWebsiteAdded = (property: GSCProperty) => {
+    setProperties((prev) => [
+      property,
+      ...prev.filter((existing) => existing.id !== property.id),
+    ]);
+  };
+
+  const handleRemoveManualWebsite = async (property: GSCProperty) => {
+    setRemovingManualId(property.id);
+    try {
+      await deleteManualProperty(property.id);
+      setProperties((prev) => prev.filter((p) => p.id !== property.id));
+      removeProperty(property.id);
+      toast({ title: 'Website removed', description: cleanSiteUrl(property.site_url) });
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not remove website',
+        description: err instanceof Error ? err.message : 'Try again in a moment.',
+      });
+    } finally {
+      setRemovingManualId(null);
+    }
+  };
+
+  const manualProperties = properties.filter((prop) => prop.kind === 'manual');
+  const gscProperties = properties.filter((prop) => prop.kind !== 'manual');
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -402,6 +439,72 @@ export default function SettingsPage() {
         )}
       </div>
 
+      {/* Websites */}
+      <div className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold">Websites</h2>
+            <p className="text-sm text-muted-foreground">
+              Add a site from Google Search Console, or add one without GSC for research and planning.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => setAddWebsiteOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Add website
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleConnect} className="gap-2">
+              <Link2 className="h-4 w-4" />
+              Connect GSC
+            </Button>
+          </div>
+        </div>
+
+        {manualProperties.length > 0 ? (
+          <div className="space-y-2">
+            {manualProperties.map((prop) => (
+              <div key={prop.id} className="flex items-center gap-3 rounded-lg border p-3">
+                <span
+                  className="h-3 w-3 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: prop.color || '#6366f1' }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium">{cleanSiteUrl(prop.site_url)}</p>
+                    <Badge variant="secondary">Manual</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    No GSC metrics. Works for keyword research, content planner, audits, and rank tracking setup.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive"
+                  onClick={() => handleRemoveManualWebsite(prop)}
+                  disabled={removingManualId === prop.id}
+                >
+                  {removingManualId === prop.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            No manual websites yet. Add one for a client, competitor, staging site, or new domain that is not in your GSC account.
+          </div>
+        )}
+      </div>
+      <AddWebsiteDialog
+        open={addWebsiteOpen}
+        onOpenChange={setAddWebsiteOpen}
+        onAdded={handleWebsiteAdded}
+      />
+
       {/* Google Search Console */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h2 className="text-lg font-semibold">Google Search Console</h2>
@@ -418,10 +521,10 @@ export default function SettingsPage() {
               <span className="text-sm font-medium">Connected</span>
             </div>
 
-            {properties.length > 0 && (
+            {gscProperties.length > 0 ? (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-muted-foreground">Your Properties</h3>
+                  <h3 className="text-sm font-medium text-muted-foreground">Search Console Properties</h3>
                   <Button
                     variant="outline"
                     size="sm"
@@ -436,7 +539,7 @@ export default function SettingsPage() {
                   Toggle properties on/off for the SEO Assistant dropdown. Assign colors to identify conversations.
                   Click <span className="font-medium">Refresh from Google</span> after adding or verifying a new property variant in Search Console.
                 </p>
-                {properties.map((prop) => {
+                {gscProperties.map((prop) => {
                   const propColor = prop.color || '#6366f1';
                   const isEnabled = prop.is_enabled !== 0;
                   return (
@@ -469,7 +572,7 @@ export default function SettingsPage() {
 
                       {/* Property info */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{prop.site_url.replace(/^(sc-domain:|https?:\/\/)/, '')}</p>
+                        <p className="text-sm font-medium truncate">{cleanSiteUrl(prop.site_url)}</p>
                         <p className="text-xs text-muted-foreground">
                           {prop.last_synced_at ? `Last synced: ${new Date(prop.last_synced_at).toLocaleDateString()}` : 'Not synced yet'}
                         </p>
@@ -499,6 +602,21 @@ export default function SettingsPage() {
                     </div>
                   );
                 })}
+              </div>
+            ) : (
+              <div className="space-y-3 rounded-lg border border-dashed p-4">
+                <p className="text-sm text-muted-foreground">
+                  No Search Console properties are synced yet. Refresh after verifying a property in Google, or add a manual website above if this site is not in your GSC account.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRefreshList}
+                  disabled={refreshingList}
+                >
+                  {refreshingList ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  <span className="ml-1.5">{refreshingList ? 'Refreshing...' : 'Refresh from Google'}</span>
+                </Button>
               </div>
             )}
 
