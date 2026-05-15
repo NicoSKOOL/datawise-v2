@@ -58,6 +58,9 @@ class FakeStatement {
     if (this.sql.includes('FROM users WHERE id = ?')) {
       return this.db.users.get(this.params[0]) || null;
     }
+    if (this.sql.includes('FROM promo_redemptions')) {
+      return this.db.activePromoUserIds.has(this.params[0]) ? { active: 1 } : null;
+    }
     return null;
   }
 
@@ -78,8 +81,9 @@ class FakeStatement {
 }
 
 class FakeD1 {
-  constructor(users) {
+  constructor(users, activePromoUserIds = []) {
     this.users = new Map(users.map((user) => [user.id, { ...user }]));
+    this.activePromoUserIds = new Set(activePromoUserIds);
     this.creditUpdates = 0;
   }
 
@@ -88,8 +92,8 @@ class FakeD1 {
   }
 }
 
-function makeEnv(users) {
-  return { DB: new FakeD1(users) };
+function makeEnv(users, activePromoUserIds = []) {
+  return { DB: new FakeD1(users, activePromoUserIds) };
 }
 
 const { checkAndDeductCredit } = loadTs('src/middleware/credits.ts', {
@@ -150,5 +154,23 @@ assert.equal(communityResult.allowed, true);
 assert.equal(communityResult.unlimited, true);
 assert.equal(communityEnv.DB.users.get('community').credits_used, 99);
 assert.equal(communityEnv.DB.creditUpdates, 0);
+
+const promoEnv = makeEnv([
+  {
+    id: 'promo',
+    email: 'promo@example.com',
+    name: 'Promo',
+    subscription_tier: 'free',
+    is_community_member: 0,
+    is_admin: 0,
+    credits_used: 5,
+    credits_exhausted_email_sent: 1,
+  },
+], ['promo']);
+const promoResult = await checkAndDeductCredit(promoEnv, 'promo', 1);
+assert.equal(promoResult.allowed, true);
+assert.equal(promoResult.unlimited, true);
+assert.equal(promoEnv.DB.users.get('promo').credits_used, 5);
+assert.equal(promoEnv.DB.creditUpdates, 0);
 
 console.log('credits middleware tests passed');

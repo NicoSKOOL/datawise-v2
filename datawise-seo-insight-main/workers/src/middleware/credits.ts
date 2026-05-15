@@ -40,6 +40,17 @@ export async function checkAndDeductCredit(env: Env, userId: string, cost = 1): 
     return { allowed: true, credits_used: user.credits_used as number, credits_limit: FREE_CREDITS_LIMIT, unlimited: true };
   }
 
+  const activePromo = await env.DB.prepare(
+    `SELECT 1
+     FROM promo_redemptions
+     WHERE user_id = ? AND expires_at > datetime('now')
+     LIMIT 1`
+  ).bind(userId).first();
+
+  if (activePromo) {
+    return { allowed: true, credits_used: user.credits_used as number, credits_limit: FREE_CREDITS_LIMIT, unlimited: true };
+  }
+
   const creditsUsed = (user.credits_used as number) || 0;
 
   if (creditsUsed + cost > FREE_CREDITS_LIMIT) {
