@@ -80,6 +80,30 @@ export default function IndexationChart({ data, onSync, syncing = false }: Index
   }
 
   const searchVisiblePages = data.search_visible_pages ?? data.indexed;
+
+  if (data.status === 'search_analytics_only') {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex h-[260px] flex-col justify-center gap-4 px-2">
+            <div className="text-center">
+              <p className="text-5xl font-bold tabular-nums">{searchVisiblePages.toLocaleString()}</p>
+              <p className="mt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                pages with Search Analytics data
+              </p>
+            </div>
+            <div className="mx-auto max-w-sm rounded-lg border bg-muted/30 p-3 text-center text-xs text-muted-foreground">
+              {data.message || 'This count comes from synced Search Analytics rows. It is not full GSC Page Indexing coverage.'}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const chartData = [
     { name: 'Search-visible', value: searchVisiblePages },
     { name: 'Sitemap-only', value: data.not_indexed },

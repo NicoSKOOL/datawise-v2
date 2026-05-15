@@ -429,10 +429,9 @@ export async function syncProperty(env: Env, userId: string, propertyId: string)
 }
 
 // GET /gsc/sitemaps?property_id=xxx
-// Returns a compact indexation summary for the dashboard. GSC's public API does
-// not expose per-page indexing state here, so search-visible pages are counted
-// from synced Search Analytics rows and non-indexed is left at zero unless no
-// page data exists.
+// Returns a compact page visibility summary for the dashboard. This endpoint
+// currently uses Search Analytics rows, not GSC Page Indexing / URL Inspection
+// coverage, so it must not present the result as full indexation coverage.
 export async function handleGSCSitemaps(request: Request, env: Env, userId: string): Promise<Response> {
   const url = new URL(request.url);
   const propertyId = url.searchParams.get('property_id');
@@ -450,6 +449,17 @@ export async function handleGSCSitemaps(request: Request, env: Env, userId: stri
     return new Response(JSON.stringify({
       status: 'manual_property',
       message: 'Manual properties do not have Google Search Console indexation data.',
+      total: 0,
+      indexed: 0,
+      search_visible_pages: 0,
+      not_indexed: 0,
+      indexed_pct: 0,
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }
+  if (property.kind !== 'gsc') {
+    return new Response(JSON.stringify({
+      status: 'sitemap_unavailable',
+      message: 'Search Console page visibility is only available for Google Search Console properties.',
       total: 0,
       indexed: 0,
       search_visible_pages: 0,
@@ -483,7 +493,8 @@ export async function handleGSCSitemaps(request: Request, env: Env, userId: stri
   }
 
   return new Response(JSON.stringify({
-    status: 'ok',
+    status: 'search_analytics_only',
+    message: 'Pages that have appeared in Google Search Analytics after sync. This is not the same as GSC Page Indexing coverage.',
     total: indexed,
     indexed,
     search_visible_pages: indexed,

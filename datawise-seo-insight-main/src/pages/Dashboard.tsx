@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type Ref } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ArrowRight, RefreshCw } from 'lucide-react';
@@ -66,7 +66,7 @@ const quickActions = [
   },
 ];
 
-function AnimatedIcon({ iconKey, iconRef }: { iconKey: string; iconRef: React.Ref<AnimatedIconHandle> }) {
+function AnimatedIcon({ iconKey, iconRef }: { iconKey: string; iconRef?: Ref<AnimatedIconHandle> }) {
   const props = { ref: iconRef, size: 20, color: 'currentColor', strokeWidth: 2 };
   switch (iconKey) {
     case 'message': return <MessageCircleIcon {...props} />;
@@ -111,55 +111,68 @@ function ActionCard({ action }: { action: typeof quickActions[number] }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { selectedProperty, connected: gscConnected } = useProperty();
+  const {
+    selectedProperty,
+    primaryDomain,
+    connected: gscConnected,
+    loading: propertyLoading,
+  } = useProperty();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [gscOverview, setGscOverview] = useState<GSCOverviewData | null>(null);
   const [indexation, setIndexation] = useState<IndexationData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const loadRequestRef = useRef(0);
+  const selectedGscPropertyId = selectedProperty && selectedProperty.kind !== 'manual'
+    ? selectedProperty.id
+    : undefined;
 
   const loadDashboardData = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     try {
-      const summaryData = await fetchDashboardSummary().catch(() => null);
-      if (summaryData) setSummary(summaryData as DashboardSummary);
+      const [summaryData, gscData] = await Promise.all([
+        fetchDashboardSummary(primaryDomain || undefined).catch(() => null),
+        selectedGscPropertyId
+          ? Promise.all([
+              getGSCData(selectedGscPropertyId).catch(() => null),
+              getGSCSitemaps(selectedGscPropertyId).catch(() => null),
+            ])
+          : Promise.resolve([null, null] as const),
+      ]);
 
-      if (selectedProperty) {
-        try {
-          const [overview, indexationData] = await Promise.all([
-            getGSCData(selectedProperty.id).catch(() => null),
-            getGSCSitemaps(selectedProperty.id).catch(() => null),
-          ]);
-          if (overview?.query_summary) setGscOverview(overview);
-          else setGscOverview(null);
-          setIndexation(indexationData);
-        } catch {
-          setGscOverview(null);
-          setIndexation(null);
-        }
-      } else {
-        setGscOverview(null);
-        setIndexation(null);
-      }
+      if (requestId !== loadRequestRef.current) return;
+
+      const [overview, indexationData] = gscData;
+      setSummary(summaryData as DashboardSummary | null);
+      setGscOverview(overview?.query_summary ? overview : null);
+      setIndexation(indexationData);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+      }
     }
-  }, [selectedProperty?.id]);
+  }, [primaryDomain, selectedGscPropertyId]);
 
   useEffect(() => {
+    if (propertyLoading) {
+      setLoading(true);
+      return;
+    }
     loadDashboardData();
-  }, [loadDashboardData]);
+  }, [propertyLoading, loadDashboardData]);
 
-  const hasData = summary?.has_projects || gscConnected;
+  const hasSelectedGscData = Boolean(gscConnected && selectedGscPropertyId);
+  const hasData = summary?.has_projects || hasSelectedGscData;
 
   const gscTrendData = gscOverview?.daily_trend || [];
 
   const handleSyncGSC = async () => {
-    if (!selectedProperty || syncing) return;
+    if (!selectedGscPropertyId || syncing) return;
 
     setSyncing(true);
     try {
-      await syncGSCProperty(selectedProperty.id);
+      await syncGSCProperty(selectedGscPropertyId);
       await loadDashboardData();
     } finally {
       setSyncing(false);
@@ -191,10 +204,10 @@ export default function Dashboard() {
 
           {/* Charts Row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {gscConnected && (
+            {hasSelectedGscData && (
               <IndexationChart
                 data={indexation}
-                onSync={selectedProperty ? handleSyncGSC : undefined}
+                onSync={selectedGscPropertyId ? handleSyncGSC : undefined}
                 syncing={syncing}
               />
             )}
@@ -220,7 +233,7 @@ export default function Dashboard() {
                   className="flex items-center gap-2.5 p-3 rounded-lg bg-white shadow-[0_1px_4px_rgba(24,28,32,0.06)] hover:shadow-md transition-all text-sm font-medium"
                 >
                   <div className={`p-1.5 rounded-md ${action.color}`}>
-                    <AnimatedIcon iconKey={action.iconKey} iconRef={null as any} />
+                    <AnimatedIcon iconKey={action.iconKey} />
                   </div>
                   <span className="truncate">{action.title}</span>
                 </Link>

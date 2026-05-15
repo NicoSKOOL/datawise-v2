@@ -71,6 +71,7 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
     }
 
     let cancelled = false;
+    setLoading(true);
 
     async function load() {
       try {

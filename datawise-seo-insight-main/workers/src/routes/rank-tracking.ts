@@ -407,12 +407,21 @@ export async function handleProjectReport(request: Request, env: Env, userId: st
 
 // GET /api/rank-tracking/dashboard-summary
 export async function handleDashboardSummary(env: Env, userId: string, domain?: string): Promise<Response> {
-  // Check if user has any projects
+  // Check if user has any projects. When a selected website is supplied by
+  // the dashboard, scope ranking KPIs to matching project domains instead of
+  // mixing every project in the account.
   const { results: projects } = await env.DB.prepare(
-    'SELECT id, name FROM seo_projects WHERE user_id = ? ORDER BY created_at DESC'
+    'SELECT id, name, domain FROM seo_projects WHERE user_id = ? ORDER BY created_at DESC'
   ).bind(userId).all();
 
-  if (!projects || projects.length === 0) {
+  const targetDomain = domain ? cleanDomain(domain) : '';
+  const scopedProjects = targetDomain
+    ? (projects as any[] || []).filter((project) => (
+      project.domain && domainsMatch(cleanDomain(project.domain), targetDomain)
+    ))
+    : (projects as any[] || []);
+
+  if (!scopedProjects || scopedProjects.length === 0) {
     return json({
       has_projects: false,
       total_keywords: 0,
@@ -423,8 +432,8 @@ export async function handleDashboardSummary(env: Env, userId: string, domain?: 
     });
   }
 
-  const projectIds = (projects as any[]).map(p => p.id);
-  const projectNameMap = new Map((projects as any[]).map(p => [p.id, p.name]));
+  const projectIds = scopedProjects.map(p => p.id);
+  const projectNameMap = new Map(scopedProjects.map(p => [p.id, p.name]));
 
   // Get latest position per keyword across all projects
   const placeholders = projectIds.map(() => '?').join(',');

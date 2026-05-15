@@ -174,6 +174,7 @@ export async function fetchProjectReport(projectId: string, period = 30) {
   return api(`/api/rank-tracking/projects/${projectId}/report?period=${period}`);
 }
 
-export async function fetchDashboardSummary() {
-  return api('/api/rank-tracking/dashboard-summary');
+export async function fetchDashboardSummary(domain?: string) {
+  const params = domain ? `?domain=${encodeURIComponent(domain)}` : '';
+  return api(`/api/rank-tracking/dashboard-summary${params}`);
 }

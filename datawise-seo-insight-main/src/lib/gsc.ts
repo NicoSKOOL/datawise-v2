@@ -63,7 +63,7 @@ export interface GSCOverviewData {
 }
 
 export interface IndexationData {
-  status?: 'ok' | 'needs_sync' | 'manual_property' | 'no_page_data' | 'sitemap_unavailable';
+  status?: 'ok' | 'search_analytics_only' | 'needs_sync' | 'manual_property' | 'no_page_data' | 'sitemap_unavailable';
   message?: string;
   total: number;
   indexed: number;
