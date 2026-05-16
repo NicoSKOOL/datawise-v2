@@ -3,11 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Download } from "lucide-react";
 import { downloadCSV } from "@/lib/csvUtils";
 import { cn, isNumericColumn, getComparisonColor, calculateColumnStats } from "@/lib/utils";
 import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
 import { getKeywordMetricStats, isKeywordMetricKey } from "@/lib/keyword-metrics";
+import { sortTableRows, type TableSortState } from "@/lib/table-sort";
 
 export interface DataTableProps {
   data: object[];
@@ -23,6 +24,7 @@ export interface DataTableProps {
   isRowSelectable?: (row: Record<string, unknown>, index: number) => boolean;
   renderRowActions?: (row: Record<string, unknown>, index: number) => React.ReactNode;
   rowActionsHeader?: string;
+  enableSorting?: boolean;
 }
 
 export function DataTable({
@@ -39,9 +41,19 @@ export function DataTable({
   isRowSelectable,
   renderRowActions,
   rowActionsHeader = 'Actions',
+  enableSorting = true,
 }: DataTableProps) {
   const hasSelection = Boolean(getRowId && selectedRowIds && onSelectedRowIdsChange);
   const hasRowActions = Boolean(renderRowActions);
+  const [sortState, setSortState] = React.useState<TableSortState | null>(null);
+  const safeData = React.useMemo(() => (Array.isArray(data) ? data : []), [data]);
+  const tableRows = React.useMemo(
+    () =>
+      enableSorting
+        ? sortTableRows(safeData as Record<string, unknown>[], sortState)
+        : (safeData as Record<string, unknown>[]),
+    [enableSorting, safeData, sortState],
+  );
 
   if (loading) {
     return (
@@ -60,7 +72,7 @@ export function DataTable({
     );
   }
 
-  if (!data || data.length === 0) {
+  if (!safeData || safeData.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -78,7 +90,7 @@ export function DataTable({
 
   const handleDownloadCSV = () => {
     // Filter out React elements from data for CSV export
-    const csvData = data.map(row => {
+    const csvData = tableRows.map(row => {
       const rowRecord = row as Record<string, unknown>;
       const cleanRow: Record<string, unknown> = {};
       Object.keys(rowRecord).forEach(key => {
@@ -95,10 +107,10 @@ export function DataTable({
   };
 
   // Get columns from the first data item
-  const columns = Object.keys(data[0] as Record<string, unknown>);
-  const keywordMetricStats = metricMode === 'keyword-research' ? getKeywordMetricStats(data) : {};
+  const columns = Object.keys(safeData[0] as Record<string, unknown>);
+  const keywordMetricStats = metricMode === 'keyword-research' ? getKeywordMetricStats(safeData) : {};
   const selectableRowIds = hasSelection
-    ? data
+    ? tableRows
         .map((row, index) => {
           const rowRecord = row as Record<string, unknown>;
           const selectable = isRowSelectable ? isRowSelectable(rowRecord, index) : true;
@@ -110,11 +122,27 @@ export function DataTable({
   const someSelected = !allSelected && selectableRowIds.some((id) => selectedRowIds!.has(id));
   
   // Calculate column statistics for comparison mode
-  const columnStats = enableComparison && data.length > 1 ? 
+  const columnStats = enableComparison && safeData.length > 1 ?
     columns.reduce((stats, column) => {
-      stats[column] = calculateColumnStats(data, column);
+      stats[column] = calculateColumnStats(safeData, column);
       return stats;
     }, {} as Record<string, ReturnType<typeof calculateColumnStats>>) : {};
+
+  const handleSortColumn = (column: string) => {
+    if (!enableSorting) return;
+
+    setSortState((current) => {
+      if (!current || current.column !== column) {
+        return { column, direction: 'asc' };
+      }
+
+      if (current.direction === 'asc') {
+        return { column, direction: 'desc' };
+      }
+
+      return null;
+    });
+  };
 
   return (
     <Card>
@@ -154,22 +182,65 @@ export function DataTable({
                     />
                   </TableHead>
                 )}
-                {columns.map((column) => (
-                  <TableHead key={column} className="whitespace-nowrap">
-                    {metricMode === 'keyword-research' && isKeywordMetricKey(column) ? (
+                {columns.map((column) => {
+                  const activeSort = sortState?.column === column ? sortState.direction : null;
+                  const SortIcon = activeSort === 'asc' ? ArrowUp : activeSort === 'desc' ? ArrowDown : ArrowUpDown;
+                  const label =
+                    metricMode === 'keyword-research' && isKeywordMetricKey(column) ? (
                       <KeywordMetricLabel metric={column} labelVariant="short" />
                     ) : (
                       column.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                    )}
-                  </TableHead>
-                ))}
+                    );
+
+                  return (
+                    <TableHead
+                      key={column}
+                      className={cn('whitespace-nowrap', enableSorting && 'cursor-pointer select-none')}
+                      aria-sort={activeSort === 'asc' ? 'ascending' : activeSort === 'desc' ? 'descending' : 'none'}
+                      tabIndex={enableSorting ? 0 : undefined}
+                      onClick={(event) => {
+                        if (!enableSorting) return;
+                        const target = event.target as HTMLElement;
+                        if (target.closest('button, a')) return;
+                        handleSortColumn(column);
+                      }}
+                      onKeyDown={(event) => {
+                        if (!enableSorting || (event.key !== 'Enter' && event.key !== ' ')) return;
+                        const target = event.target as HTMLElement;
+                        if (target.closest('button, a')) return;
+                        event.preventDefault();
+                        handleSortColumn(column);
+                      }}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        {label}
+                        {enableSorting && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              'h-6 w-6 text-muted-foreground hover:text-foreground',
+                              activeSort && 'text-foreground',
+                            )}
+                            aria-label={`Sort by ${column.replace(/_/g, ' ')}`}
+                            aria-pressed={Boolean(activeSort)}
+                            onClick={() => handleSortColumn(column)}
+                          >
+                            <SortIcon className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </span>
+                    </TableHead>
+                  );
+                })}
                 {hasRowActions && (
                   <TableHead className="w-16 text-right">{rowActionsHeader}</TableHead>
                 )}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.map((row, index) => {
+              {tableRows.map((row, index) => {
                 const rowRecord = row as Record<string, unknown>;
                 const rowId = getRowId?.(rowRecord, index) || String(index);
                 const selectable = hasSelection
@@ -202,7 +273,7 @@ export function DataTable({
                     // Apply color coding for comparison mode
                     let cellClassName = "whitespace-nowrap";
                     
-                    if (enableComparison && data.length > 1 && columnStats[column]?.hasNumericData && isNumericColumn(value)) {
+                    if (enableComparison && safeData.length > 1 && columnStats[column]?.hasNumericData && isNumericColumn(value)) {
                       const { min, max } = columnStats[column];
                       const colorClass = getComparisonColor(Number(value), min, max);
                       cellClassName = cn(cellClassName, colorClass);
@@ -230,7 +301,7 @@ export function DataTable({
           </Table>
         </div>
         <div className="mt-4 text-sm text-muted-foreground">
-          Showing {data.length} results
+          Showing {safeData.length} results
         </div>
       </CardContent>
     </Card>
