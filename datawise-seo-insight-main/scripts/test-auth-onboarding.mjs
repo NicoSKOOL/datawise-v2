@@ -6,6 +6,8 @@ import path from 'node:path';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
 const authPage = readFileSync(path.join(appRoot, 'src/pages/Auth.tsx'), 'utf8');
+const loginChoiceIndex = authPage.indexOf('For returning members with an existing account.');
+const signupChoiceIndex = authPage.indexOf('New to DataWise or joining from AI Ranking Skool.');
 
 const checks = [
   [
@@ -18,7 +20,15 @@ const checks = [
   ],
   [
     'Choice screen has the two high-level paths',
-    /Create an account/.test(authPage) && /For new visitors, trial users, and premium community members/.test(authPage) && /For returning users who already created their DataWise account/.test(authPage),
+    /Create an account/.test(authPage) && loginChoiceIndex > -1 && signupChoiceIndex > -1,
+  ],
+  [
+    'Choice screen puts login above create account',
+    loginChoiceIndex > -1 && signupChoiceIndex > -1 && loginChoiceIndex < signupChoiceIndex,
+  ],
+  [
+    'Choice rows have wrapping-safe content containers',
+    /min-w-0 flex-1/.test(authPage) && /leading-5/.test(authPage),
   ],
   [
     'Google create-account button is explicit',

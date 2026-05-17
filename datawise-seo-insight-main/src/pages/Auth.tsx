@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { ArrowRight, LogIn, UserPlus } from 'lucide-react';
 
 type AuthMode = 'login' | 'signup' | null;
 
@@ -30,6 +31,7 @@ export default function Auth() {
       }
       return next;
     }, { replace: true });
+    window.scrollTo({ top: 0, behavior: 'auto' });
   };
 
   const isSignup = mode === 'signup';
@@ -68,57 +70,69 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-secondary/20 px-4">
-      <div className="w-full max-w-sm space-y-8">
+    <div className="min-h-screen bg-[#f6f7f9] px-4 py-8 text-foreground sm:py-12">
+      <div className="mx-auto flex w-full max-w-[430px] flex-col items-center gap-7">
         {/* Logo / Branding */}
-        <div className="text-center space-y-3">
-          <div className="mx-auto w-16 h-16 bg-primary rounded-2xl flex items-center justify-center shadow-lg">
-            <span className="text-primary-foreground font-bold text-2xl">DW</span>
+        <div className="space-y-3 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary shadow-lg shadow-primary/20">
+            <span className="text-2xl font-bold text-primary-foreground">DW</span>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">DataWise</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-3xl font-bold tracking-tight">DataWise</h1>
+          <p className="mx-auto max-w-xs text-sm leading-6 text-muted-foreground">
             AI-powered SEO intelligence for the{' '}
             <span className="font-semibold text-foreground">AI Ranking</span> community
           </p>
         </div>
 
-        <div className="rounded-xl border-2 bg-card p-6 shadow-xl space-y-5">
+        <div className="w-full space-y-5 rounded-2xl border border-border/70 bg-card p-5 shadow-[0_18px_60px_rgba(15,23,42,0.10)] sm:p-6">
           {isChoosing ? (
             <>
-              <div className="space-y-2 text-center">
-                <h2 className="text-xl font-semibold">Welcome to DataWise</h2>
-                <p className="text-sm text-muted-foreground">
-                  Choose the path that fits where you are today.
+              <div className="space-y-2">
+                <h2 className="text-xl font-semibold">Continue to DataWise</h2>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Pick the option that matches your account status.
                 </p>
               </div>
 
               <div className="space-y-3">
-                <Button
-                  type="button"
-                  onClick={() => setAuthMode('signup')}
-                  className="h-auto w-full items-start justify-start p-4 text-left"
-                >
-                  <span className="space-y-1">
-                    <span className="block text-sm font-semibold">Create an account</span>
-                    <span className="block text-xs font-normal opacity-85">
-                      For new visitors, trial users, and premium community members.
-                    </span>
-                  </span>
-                </Button>
-                <Button
+                <button
                   type="button"
                   onClick={() => setAuthMode('login')}
-                  variant="outline"
-                  className="h-auto w-full items-start justify-start p-4 text-left"
+                  className="group flex w-full items-center gap-3 rounded-xl bg-primary p-4 text-left text-primary-foreground shadow-sm shadow-primary/20 transition hover:bg-primary/95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
-                  <span className="space-y-1">
-                    <span className="block text-sm font-semibold">Log in</span>
-                    <span className="block text-xs font-normal text-muted-foreground">
-                      For returning users who already created their DataWise account.
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-foreground/15">
+                    <LogIn className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1 space-y-1">
+                    <span className="block text-base font-semibold">Log in</span>
+                    <span className="block text-sm font-normal leading-5 text-primary-foreground/85">
+                      For returning members with an existing account.
                     </span>
                   </span>
-                </Button>
+                  <ArrowRight className="h-4 w-4 shrink-0 transition group-hover:translate-x-0.5" aria-hidden="true" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAuthMode('signup')}
+                  className="group flex w-full items-center gap-3 rounded-xl border border-border bg-background p-4 text-left transition hover:border-primary/40 hover:bg-secondary/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-primary">
+                    <UserPlus className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1 space-y-1">
+                    <span className="block text-base font-semibold">Create an account</span>
+                    <span className="block text-sm font-normal leading-5 text-muted-foreground">
+                      New to DataWise or joining from AI Ranking Skool.
+                    </span>
+                  </span>
+                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-primary" aria-hidden="true" />
+                </button>
               </div>
+
+              <p className="rounded-lg bg-secondary/45 px-3 py-2 text-center text-xs leading-5 text-muted-foreground">
+                Premium community members should use the same email they used to join.
+              </p>
             </>
           ) : (
             <>
