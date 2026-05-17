@@ -13,6 +13,7 @@ import {
   analyzeOnPage,
   buildStructuredSEO,
   pickHomepage,
+  summarizeCrawledPages,
 } from '../site-audit/on-page-analyzer';
 import type { AnalyzeResult } from '../site-audit/analyzer';
 import {
@@ -465,7 +466,10 @@ async function processAuditRow(env: Env, audit: any): Promise<any> {
       audit.start_url,
       performanceSummary
     );
-    seoAnalysis = buildStructuredSEO(summary, homepage, resources, microdata, performanceSummary);
+    seoAnalysis = {
+      ...buildStructuredSEO(summary, homepage, resources, microdata, performanceSummary),
+      crawled_pages: summarizeCrawledPages(pages, audit.start_url),
+    };
   } catch (err: any) {
     console.error(`[site-audit] analyzer crashed for ${audit.id}:`, err);
     const diagnostics: CrawlDiagnostics = {

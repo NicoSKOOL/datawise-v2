@@ -3,10 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const require = createRequire(import.meta.url);
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function loadTs(file, mocks, cache = new Map()) {
   const abs = path.resolve(root, file);
@@ -261,6 +262,31 @@ function makeHarness(overrides = {}) {
       }),
       buildStructuredSEO: () => ({ data_sources: { lighthouse_ok: false, bot_protection_detected: false } }),
       pickHomepage: (pages) => pages[0] || null,
+      summarizeCrawledPages: (pages, startUrl) =>
+        pages.map((page) => ({
+          url: page.url,
+          status_code: page.status_code ?? null,
+          title: page.meta?.title || null,
+          title_length: page.meta?.title_length ?? page.meta?.title?.length ?? 0,
+          title_status: page.meta?.title ? 'ok' : 'missing',
+          description: page.meta?.description || null,
+          description_length:
+            page.meta?.description_length ?? page.meta?.description?.length ?? 0,
+          description_status: page.meta?.description ? 'ok' : 'missing',
+          h1_count: page.meta?.htags?.h1?.length ?? 0,
+          h1_status:
+            (page.meta?.htags?.h1?.length ?? 0) === 0
+              ? 'missing'
+              : (page.meta?.htags?.h1?.length ?? 0) > 1
+                ? 'multiple'
+                : 'ok',
+          load_ms: page.page_timing?.duration_time ?? null,
+          internal_links_count: page.meta?.internal_links_count ?? null,
+          external_links_count: page.meta?.external_links_count ?? null,
+          images_count: page.meta?.images_count ?? null,
+          is_homepage: page.url === startUrl,
+          issue_count: 0,
+        })),
     },
     '../site-audit/performance-stability': {
       collectPerformanceProbeSamples: async (count, runProbe) => {
@@ -285,6 +311,38 @@ async function runQueue(module, audit) {
 }
 
 {
+  const analyzer = loadTs('src/site-audit/on-page-analyzer.ts', {});
+  const pages = analyzer.summarizeCrawledPages(
+    [
+      {
+        url: 'https://example.com/services',
+        status_code: 200,
+        meta: { title: '', description: '', htags: { h1: [] } },
+        page_timing: { duration_time: 4200 },
+      },
+      {
+        url: 'https://example.com/',
+        status_code: 200,
+        meta: {
+          title: 'A Complete Example Homepage Title',
+          description: 'A useful page description that is long enough to pass the site audit summary check.',
+          htags: { h1: ['Example'] },
+        },
+        page_timing: { duration_time: 900 },
+      },
+    ],
+    'https://example.com/'
+  );
+  assert.equal(pages.length, 2);
+  assert.equal(pages[0].url, 'https://example.com/');
+  assert.equal(pages[0].is_homepage, true);
+  assert.equal(pages[1].title_status, 'missing');
+  assert.equal(pages[1].description_status, 'missing');
+  assert.equal(pages[1].h1_status, 'missing');
+  assert.equal(pages[1].issue_count, 4);
+}
+
+{
   const module = makeHarness();
   const { audit, result } = await runQueue(module, makeAudit({ created_at: minutesAgo(9) }));
   assert.equal(result.timed_out, 0);
@@ -296,13 +354,43 @@ async function runQueue(module, audit) {
   const module = makeHarness({
     summary: {
       crawl_progress: 'finished',
-      crawl_status: { max_crawl_pages: 10, pages_in_queue: 0, pages_crawled: 1 },
+      crawl_status: { max_crawl_pages: 10, pages_in_queue: 0, pages_crawled: 2 },
       domain_info: { checks: {}, extended_crawl_status: 'completed' },
     },
+    pages: [
+      {
+        url: 'https://example.com/',
+        status_code: 200,
+        meta: {
+          title: 'Example Home',
+          description: 'Homepage description',
+          htags: { h1: ['Example Home'] },
+        },
+        page_timing: { duration_time: 1400 },
+        checks: {},
+      },
+      {
+        url: 'https://example.com/services',
+        status_code: 200,
+        meta: {
+          title: '',
+          description: '',
+          htags: { h1: [] },
+        },
+        page_timing: { duration_time: 2300 },
+        checks: { duplicate_title: true },
+      },
+    ],
   });
   const { audit } = await runQueue(module, makeAudit({ created_at: minutesAgo(2) }));
   assert.equal(audit.status, 'completed');
   assert.equal(audit.score, 91);
+  const seo = JSON.parse(audit.seo_analysis);
+  assert.equal(seo.crawled_pages.length, 2);
+  assert.equal(seo.crawled_pages[0].url, 'https://example.com/');
+  assert.equal(seo.crawled_pages[0].is_homepage, true);
+  assert.equal(seo.crawled_pages[1].title_status, 'missing');
+  assert.equal(seo.crawled_pages[1].h1_status, 'missing');
 }
 
 {
