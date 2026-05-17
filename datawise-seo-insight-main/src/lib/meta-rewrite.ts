@@ -38,10 +38,9 @@ export interface MetaRewriteResponse {
 }
 
 export async function rewriteMeta(req: MetaRewriteRequest): Promise<MetaRewriteResponse> {
-  const llm_config = getLLMConfig();
-  if (!llm_config) throw new Error('NO_LLM_KEY');
+  const llm_config = getLLMConfig() || undefined;
   return api<MetaRewriteResponse>('/api/site-audit/meta-rewrite', {
     method: 'POST',
-    body: { ...req, llm_config },
+    body: llm_config ? { ...req, llm_config } : req,
   });
 }
