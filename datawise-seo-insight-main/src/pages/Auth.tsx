@@ -6,14 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 
-type AuthMode = 'login' | 'signup';
+type AuthMode = 'login' | 'signup' | null;
 
 export default function Auth() {
   const { user, loading, signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth();
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const modeParam = searchParams.get('mode');
-  const [mode, setMode] = useState<AuthMode>(modeParam === 'signup' ? 'signup' : 'login');
+  const [mode, setMode] = useState<AuthMode>(modeParam === 'signup' ? 'signup' : modeParam === 'login' ? 'login' : null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -23,12 +23,17 @@ export default function Auth() {
     setMode(nextMode);
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
-      next.set('mode', nextMode);
+      if (nextMode) {
+        next.set('mode', nextMode);
+      } else {
+        next.delete('mode');
+      }
       return next;
     }, { replace: true });
   };
 
   const isSignup = mode === 'signup';
+  const isChoosing = mode === null;
 
   if (loading) {
     return (
@@ -77,132 +82,174 @@ export default function Auth() {
           </p>
         </div>
 
-        {/* Sign In Card */}
         <div className="rounded-xl border-2 bg-card p-6 shadow-xl space-y-5">
-          <div className="space-y-2 text-center">
-            <h2 className="text-xl font-semibold">
-              {isSignup ? 'Create your DataWise account' : 'Log in to DataWise'}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {isSignup
-                ? 'New here or joining from the premium community? Start with the same email you used to join.'
-                : 'Already created your account? Use the same Google or email login you used before.'}
-            </p>
-          </div>
-
-          {/* Google OAuth */}
-          <div className="space-y-3">
-            <Button
-              onClick={signInWithGoogle}
-              className="w-full h-11 text-sm font-semibold gap-3"
-            >
-              <GoogleIcon />
-              Create account with Google
-            </Button>
-            <Button
-              onClick={signInWithGoogle}
-              variant="outline"
-              className="w-full h-11 text-sm font-medium gap-3"
-            >
-              <GoogleIcon />
-              Log in with Google
-            </Button>
-            <p className="text-xs leading-5 text-muted-foreground">
-              Premium community members: use the same email you used to join. If your
-              DataWise account already exists, Google will log you in.
-            </p>
-          </div>
-
-          {/* Divider */}
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">
-                or {isSignup ? 'create with email' : 'log in with email'}
-              </span>
-            </div>
-          </div>
-
-          {/* Email / Password Form */}
-          <form onSubmit={handleEmailSubmit} className="space-y-4">
-            {isSignup && (
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="Your name"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                />
+          {isChoosing ? (
+            <>
+              <div className="space-y-2 text-center">
+                <h2 className="text-xl font-semibold">Welcome to DataWise</h2>
+                <p className="text-sm text-muted-foreground">
+                  Choose the path that fits where you are today.
+                </p>
               </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="At least 6 characters"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-                minLength={6}
-              />
-            </div>
-            <Button type="submit" className="w-full h-11" disabled={submitting}>
-              {submitting
-                ? 'Please wait...'
-                : isSignup
-                  ? 'Create account with email'
-                  : 'Log in with email'}
-            </Button>
-            {!isSignup && (
-              <div className="text-right">
-                <Link to="/forgot-password" className="text-xs text-muted-foreground hover:text-primary hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
-            )}
-          </form>
 
-          <div className="text-center text-sm">
-            {!isSignup ? (
-              <p className="text-muted-foreground">
-                No account?{' '}
-                <button
+              <div className="space-y-3">
+                <Button
                   type="button"
                   onClick={() => setAuthMode('signup')}
-                  className="text-primary font-medium hover:underline"
+                  className="h-auto w-full items-start justify-start p-4 text-left"
                 >
-                  Create one
-                </button>
-              </p>
-            ) : (
-              <p className="text-muted-foreground">
-                Already have an account?{' '}
-                <button
+                  <span className="space-y-1">
+                    <span className="block text-sm font-semibold">Create an account</span>
+                    <span className="block text-xs font-normal opacity-85">
+                      For new visitors, trial users, and premium community members.
+                    </span>
+                  </span>
+                </Button>
+                <Button
                   type="button"
                   onClick={() => setAuthMode('login')}
-                  className="text-primary font-medium hover:underline"
+                  variant="outline"
+                  className="h-auto w-full items-start justify-start p-4 text-left"
                 >
-                  Log in
-                </button>
-              </p>
-            )}
-          </div>
+                  <span className="space-y-1">
+                    <span className="block text-sm font-semibold">Log in</span>
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      For returning users who already created their DataWise account.
+                    </span>
+                  </span>
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setAuthMode(null)}
+                className="text-xs font-medium text-muted-foreground hover:text-primary hover:underline"
+              >
+                Back to choices
+              </button>
+
+              <div className="space-y-2 text-center">
+                <h2 className="text-xl font-semibold">
+                  {isSignup ? 'Create your DataWise account' : 'Log in to DataWise'}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  {isSignup
+                    ? 'New here or joining from the premium community? Start with the same email you used to join.'
+                    : 'Already created your account? Use the same Google or email login you used before.'}
+                </p>
+              </div>
+
+              {/* Google OAuth */}
+              <div className="space-y-3">
+                <Button
+                  onClick={signInWithGoogle}
+                  className="w-full h-11 text-sm font-semibold gap-3"
+                >
+                  <GoogleIcon />
+                  {isSignup ? 'Create account with Google' : 'Log in with Google'}
+                </Button>
+                {isSignup && (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Premium community members: use the same email you used to join. If your
+                    DataWise account already exists, Google will log you in.
+                  </p>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">
+                    or {isSignup ? 'create with email' : 'log in with email'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Email / Password Form */}
+              <form onSubmit={handleEmailSubmit} className="space-y-4">
+                {isSignup && (
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Name</Label>
+                    <Input
+                      id="name"
+                      type="text"
+                      placeholder="Your name"
+                      value={name}
+                      onChange={e => setName(e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="At least 6 characters"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    minLength={6}
+                  />
+                </div>
+                <Button type="submit" className="w-full h-11" disabled={submitting}>
+                  {submitting
+                    ? 'Please wait...'
+                    : isSignup
+                      ? 'Create account with email'
+                      : 'Log in with email'}
+                </Button>
+                {!isSignup && (
+                  <div className="text-right">
+                    <Link to="/forgot-password" className="text-xs text-muted-foreground hover:text-primary hover:underline">
+                      Forgot password?
+                    </Link>
+                  </div>
+                )}
+              </form>
+
+              <div className="text-center text-sm">
+                {!isSignup ? (
+                  <p className="text-muted-foreground">
+                    No account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('signup')}
+                      className="text-primary font-medium hover:underline"
+                    >
+                      Create one
+                    </button>
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground">
+                    Already have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('login')}
+                      className="text-primary font-medium hover:underline"
+                    >
+                      Log in
+                    </button>
+                  </p>
+                )}
+              </div>
+            </>
+          )}
 
           <div className="flex items-center justify-center gap-2">
             <a

@@ -13,8 +13,12 @@ const checks = [
     /useSearchParams/.test(authPage) && /modeParam/.test(authPage),
   ],
   [
-    'Signup query mode initializes create-account state',
-    /modeParam\s*===\s*['"]signup['"]\s*\?\s*['"]signup['"]\s*:\s*['"]login['"]/.test(authPage),
+    'No mode query starts on the choice screen',
+    /modeParam\s*===\s*['"]signup['"]\s*\?\s*['"]signup['"]\s*:\s*modeParam\s*===\s*['"]login['"]\s*\?\s*['"]login['"]\s*:\s*null/.test(authPage),
+  ],
+  [
+    'Choice screen has the two high-level paths',
+    /Create an account/.test(authPage) && /For new visitors, trial users, and premium community members/.test(authPage) && /For returning users who already created their DataWise account/.test(authPage),
   ],
   [
     'Google create-account button is explicit',
@@ -25,8 +29,12 @@ const checks = [
     /Log in with Google/.test(authPage),
   ],
   [
-    'Both Google buttons use the same forgiving OAuth handler',
-    (authPage.match(/signInWithGoogle/g) || []).length >= 3,
+    'Selected flows can return to the choice screen',
+    /Back to choices/.test(authPage) && /next\.delete\(['"]mode['"]\)/.test(authPage),
+  ],
+  [
+    'Google buttons use the same forgiving OAuth handler',
+    /onClick=\{signInWithGoogle\}/.test(authPage),
   ],
   [
     'Premium community path is explained in plain language',
