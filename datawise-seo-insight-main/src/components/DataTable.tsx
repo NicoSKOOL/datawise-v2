@@ -8,6 +8,8 @@ import { downloadCSV } from "@/lib/csvUtils";
 import { cn, isNumericColumn, getComparisonColor, calculateColumnStats } from "@/lib/utils";
 import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
 import { getKeywordMetricStats, isKeywordMetricKey } from "@/lib/keyword-metrics";
+import { TrafficMetricLabel } from "@/components/TrafficMetricLabel";
+import { isTrafficMetricKey } from "@/lib/traffic-metrics";
 import { sortTableRows, type TableSortState } from "@/lib/table-sort";
 
 export interface DataTableProps {
@@ -16,7 +18,7 @@ export interface DataTableProps {
   description?: string;
   loading?: boolean;
   enableComparison?: boolean;
-  metricMode?: 'none' | 'keyword-research';
+  metricMode?: 'none' | 'keyword-research' | 'traffic-estimation';
   toolbarActions?: React.ReactNode;
   getRowId?: (row: Record<string, unknown>, index: number) => string;
   selectedRowIds?: Set<string>;
@@ -188,6 +190,8 @@ export function DataTable({
                   const label =
                     metricMode === 'keyword-research' && isKeywordMetricKey(column) ? (
                       <KeywordMetricLabel metric={column} labelVariant="short" />
+                    ) : metricMode === 'traffic-estimation' && isTrafficMetricKey(column) ? (
+                      <TrafficMetricLabel metric={column} labelVariant="short" />
                     ) : (
                       column.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
                     );

@@ -1,6 +1,10 @@
 import type { Env } from '../index';
 import { dataforseoRequest } from '../dataforseo/client';
 
+function normalizeGapKeyword(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 // POST /api/competitors/ranked-keywords
 export async function handleRankedKeywords(request: Request, env: Env): Promise<Response> {
   const { target, location_code = 2840, language_code = 'en', limit = 100 } = await request.json() as any;
@@ -69,8 +73,10 @@ export async function handleKeywordGapAnalysis(request: Request, env: Env): Prom
     for (const item of items || []) {
       const kw = item.keyword_data?.keyword;
       if (kw) {
-        map.set(kw, {
-          keyword: kw,
+        const normalized = normalizeGapKeyword(kw);
+        if (!normalized) continue;
+        map.set(normalized, {
+          keyword: kw.trim(),
           search_volume: item.keyword_data?.keyword_info?.search_volume || 0,
           cpc: item.keyword_data?.keyword_info?.cpc || 0,
           competition: item.keyword_data?.keyword_info?.competition || 0,

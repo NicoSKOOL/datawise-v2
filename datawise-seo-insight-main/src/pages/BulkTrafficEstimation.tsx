@@ -215,6 +215,7 @@ export default function BulkTrafficEstimation() {
         title="Traffic Estimation Results"
         description="Traffic estimates for all analyzed domains"
         loading={loading}
+        metricMode="traffic-estimation"
       />
     </div>
   );

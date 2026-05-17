@@ -14,8 +14,19 @@ import {
   ResponsiveContainer, Cell,
 } from "recharts";
 
-// Softer, brand-aligned palette: forest teal, warm terracotta, slate blue, muted gold, sage
-const DOMAIN_COLORS = ["#0d7357", "#c06a45", "#5b7fa6", "#b89a3d", "#7a8f7e"];
+const WRITER_PROMPT_SECONDARY_COLORS = [
+  "#38bdf8",
+  "#22d3ee",
+  "#2dd4bf",
+  "#818cf8",
+  "#34d399",
+  "#a3e635",
+  "#a78bfa",
+  "#fbbf24",
+  "#fb7185",
+  "#94a3b8",
+];
+const DOMAIN_COLORS = WRITER_PROMPT_SECONDARY_COLORS;
 
 interface DomainResult {
   domain: string;
@@ -342,7 +353,7 @@ function SingleDomainSummary({ result }: { result: DomainResult }) {
               <Tooltip formatter={(value: number) => [formatNumber(value), "Keywords"]} />
               <Bar dataKey="keywords" radius={[4, 4, 0, 0]}>
                 {posChartData.map((_, i) => (
-                  <Cell key={i} fill={i < 3 ? "#0d7357" : "#94a3b8"} />
+                  <Cell key={i} fill={DOMAIN_COLORS[i % DOMAIN_COLORS.length]} />
                 ))}
               </Bar>
             </BarChart>
