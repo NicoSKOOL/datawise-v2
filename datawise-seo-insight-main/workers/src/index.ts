@@ -31,6 +31,7 @@ export interface Env {
 import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe, handleUpdateDefaults } from './auth/google';
 import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetPassword } from './auth/email';
 import { handleDevLogin } from './auth/dev';
+import { isAllowedFrontendOrigin } from './auth/origins';
 import { authMiddleware } from './middleware/auth';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
@@ -167,16 +168,9 @@ export default {
     const method = request.method;
 
     // CORS + security headers.
-    // Reflect the request Origin when it matches an allowlist: env.FRONTEND_URL
-    // plus any localhost/127.0.0.1 origin on any port (dev workflows against
-    // either a local or prod worker). Localhost is safe to reflect in prod:
-    // a page at evil.com cannot cause a browser to send Origin: localhost:*.
+    // Reflect the request Origin when it matches the shared frontend allowlist.
     const requestOrigin = request.headers.get('Origin') || '';
-    const isLocalhostOrigin = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(requestOrigin);
-    const isAllowedOrigin =
-      requestOrigin === env.FRONTEND_URL ||
-      requestOrigin === env.MARKETING_URL ||
-      isLocalhostOrigin;
+    const isAllowedOrigin = isAllowedFrontendOrigin(requestOrigin, env);
 
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Credentials': 'true',

@@ -50,3 +50,15 @@ const competitorsRoute = await source('workers/src/routes/competitors.ts');
 includes(competitorsRoute, 'function normalizeGapKeyword', 'Keyword gap normalized matching');
 includes(competitorsRoute, 'const normalized = normalizeGapKeyword(kw);', 'Keyword gap normalized keyword key');
 includes(competitorsRoute, 'map.set(normalized,', 'Keyword gap uses normalized map key');
+
+const workerIndex = await source('workers/src/index.ts');
+includes(workerIndex, 'isAllowedFrontendOrigin(requestOrigin, env)', 'Worker shared frontend-origin CORS allowlist');
+
+const googleAuth = await source('workers/src/auth/google.ts');
+includes(googleAuth, 'oauth_frontend_origin:', 'Google OAuth preview origin state');
+includes(googleAuth, 'getAllowedFrontendOrigin', 'Google OAuth allowed callback destination');
+
+const authOrigins = await source('workers/src/auth/origins.ts');
+includes(authOrigins, 'datawise-118\\.pages\\.dev', 'DataWise Cloudflare Pages preview origin allowlist');
+
+console.log('Competitor analysis UI regression checks passed.');

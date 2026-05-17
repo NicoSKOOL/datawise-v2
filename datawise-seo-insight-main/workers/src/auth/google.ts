@@ -1,4 +1,5 @@
 import type { Env } from '../index';
+import { getAllowedFrontendOrigin } from './origins';
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -48,6 +49,10 @@ async function hashToken(token: string): Promise<string> {
 // POST /auth/google - Returns the Google OAuth URL for the frontend to redirect to
 export async function handleGoogleAuth(request: Request, env: Env): Promise<Response> {
   const redirectUri = `${new URL(request.url).origin}/auth/google/callback`;
+  const frontendOrigin = getAllowedFrontendOrigin(request.headers.get('Origin'), env) || env.FRONTEND_URL;
+  const state = generateToken();
+
+  await env.KV.put(`oauth_frontend_origin:${state}`, frontendOrigin, { expirationTtl: 10 * 60 });
 
   const params = new URLSearchParams({
     client_id: env.GOOGLE_CLIENT_ID,
@@ -56,6 +61,7 @@ export async function handleGoogleAuth(request: Request, env: Env): Promise<Resp
     scope: 'openid email profile',
     access_type: 'offline',
     prompt: 'consent',
+    state,
   });
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -70,9 +76,16 @@ export async function handleGoogleCallback(request: Request, env: Env): Promise<
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
   const error = url.searchParams.get('error');
+  const state = url.searchParams.get('state');
+  const stateKey = state ? `oauth_frontend_origin:${state}` : '';
+  const storedFrontendOrigin = stateKey ? await env.KV.get(stateKey) : null;
+  if (stateKey) {
+    await env.KV.delete(stateKey);
+  }
+  const frontendOrigin = getAllowedFrontendOrigin(storedFrontendOrigin, env) || env.FRONTEND_URL;
 
   if (error || !code) {
-    return Response.redirect(`${env.FRONTEND_URL}/auth?error=${error || 'no_code'}`, 302);
+    return Response.redirect(`${frontendOrigin}/auth?error=${error || 'no_code'}`, 302);
   }
 
   const redirectUri = `${url.origin}/auth/google/callback`;
@@ -95,7 +108,7 @@ export async function handleGoogleCallback(request: Request, env: Env): Promise<
     console.error('Token exchange failed:', errorBody);
     console.error('redirect_uri used:', redirectUri);
     console.error('client_id used:', env.GOOGLE_CLIENT_ID?.substring(0, 20) + '...');
-    return Response.redirect(`${env.FRONTEND_URL}/auth?error=token_exchange_failed&detail=${encodeURIComponent(errorBody)}`, 302);
+    return Response.redirect(`${frontendOrigin}/auth?error=token_exchange_failed&detail=${encodeURIComponent(errorBody)}`, 302);
   }
 
   const tokens: GoogleTokenResponse = await tokenResponse.json();
@@ -106,7 +119,7 @@ export async function handleGoogleCallback(request: Request, env: Env): Promise<
   });
 
   if (!userInfoResponse.ok) {
-    return Response.redirect(`${env.FRONTEND_URL}/auth?error=userinfo_failed`, 302);
+    return Response.redirect(`${frontendOrigin}/auth?error=userinfo_failed`, 302);
   }
 
   const googleUser: GoogleUserInfo = await userInfoResponse.json();
@@ -162,7 +175,7 @@ export async function handleGoogleCallback(request: Request, env: Env): Promise<
   await env.KV.put(`session:${tokenHash}`, userId, { expirationTtl: 30 * 24 * 60 * 60 });
 
   // Redirect to frontend with session token
-  return Response.redirect(`${env.FRONTEND_URL}/auth/callback?token=${sessionToken}`, 302);
+  return Response.redirect(`${frontendOrigin}/auth/callback?token=${sessionToken}`, 302);
 }
 
 // POST /auth/logout - Clear session
