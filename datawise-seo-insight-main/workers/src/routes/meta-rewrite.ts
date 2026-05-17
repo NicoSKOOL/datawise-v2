@@ -24,15 +24,30 @@ interface RewriteRequestBody {
 
 interface LLMResponseShape {
   title?: unknown;
+  meta_title?: unknown;
+  title_tag?: unknown;
+  page_title?: unknown;
   description?: unknown;
+  meta_description?: unknown;
+  meta_desc?: unknown;
+  description_tag?: unknown;
   target_keyword?: unknown;
+  primary_keyword?: unknown;
+  keyword?: unknown;
   reasoning?: unknown;
+  rationale?: unknown;
+  explanation?: unknown;
+  rewrite?: unknown;
+  result?: unknown;
+  metadata?: unknown;
 }
 
 const VALID_ISSUES: IssueType[] = [
   'missing_title', 'long_title', 'short_title', 'duplicate_title',
   'missing_desc', 'long_desc', 'short_desc',
 ];
+
+const DEFAULT_META_REWRITE_MODEL = 'deepseek/deepseek-v4-pro';
 
 const STOPWORDS = new Set([
   'the','a','an','and','or','but','of','to','for','on','in','at','by','with',
@@ -85,6 +100,65 @@ function tryExtractJson(raw: string): LLMResponseShape | null {
   }
 }
 
+function pickString(source: LLMResponseShape, keys: (keyof LLMResponseShape)[]): string | null {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function objectValue(value: unknown): LLMResponseShape | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as LLMResponseShape;
+  }
+  return null;
+}
+
+function normalizeLLMResponse(parsed: LLMResponseShape | null): LLMResponseShape | null {
+  if (!parsed) return null;
+  const candidates = [
+    parsed,
+    objectValue(parsed.rewrite),
+    objectValue(parsed.result),
+    objectValue(parsed.metadata),
+  ].filter((candidate): candidate is LLMResponseShape => !!candidate);
+
+  for (const candidate of candidates) {
+    const title = pickString(candidate, ['title', 'meta_title', 'title_tag', 'page_title']);
+    const description = pickString(candidate, ['description', 'meta_description', 'meta_desc', 'description_tag']);
+    if (!title || !description) continue;
+    return {
+      title,
+      description,
+      target_keyword:
+        pickString(candidate, ['target_keyword', 'primary_keyword', 'keyword']) ??
+        pickString(parsed, ['target_keyword', 'primary_keyword', 'keyword']) ??
+        undefined,
+      reasoning:
+        pickString(candidate, ['reasoning', 'rationale', 'explanation']) ??
+        pickString(parsed, ['reasoning', 'rationale', 'explanation']) ??
+        undefined,
+    };
+  }
+
+  return null;
+}
+
+function resolveMetaRewriteLLMConfig(env: Env, userConfig?: UserLLMConfig): UserLLMConfig | undefined {
+  if (userConfig?.api_key) return userConfig;
+
+  if (env.OPENROUTER_API_KEY) {
+    return {
+      provider: 'openrouter',
+      model: userConfig?.model || env.LLM_MODEL || DEFAULT_META_REWRITE_MODEL,
+      api_key: userConfig?.api_key,
+    };
+  }
+
+  return userConfig;
+}
+
 interface LengthCheck { ok: boolean; problems: string[] }
 
 function checkLengths(title: string, description: string): LengthCheck {
@@ -107,8 +181,9 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
   if (!body.issue_type || !VALID_ISSUES.includes(body.issue_type)) {
     return json({ error: 'issue_type is invalid' }, 400);
   }
-  if (!body.llm_config?.api_key) {
-    return json({ error: 'llm_config.api_key is required' }, 400);
+  const llmConfig = resolveMetaRewriteLLMConfig(env, body.llm_config);
+  if (!llmConfig?.api_key && !env.OPENROUTER_API_KEY && !env.OPENAI_API_KEY && !env.ANTHROPIC_API_KEY) {
+    return json({ error: 'NO_LLM_KEY' }, 400);
   }
 
   // 1. Resolve page context: prefer pre-supplied (Site Audit), fetch otherwise.
@@ -162,7 +237,7 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     { role: 'user', content: userPrompt },
   ];
 
-  const provider = getLLMProvider(env, body.llm_config);
+  const provider = getLLMProvider(env, llmConfig);
 
   // 4. Call LLM with up to 2 length-retry rounds (3 attempts total).
   let attempt = 0;
@@ -179,14 +254,14 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     attempt++;
     let result;
     try {
-      result = await provider.chatComplete(messages, env, body.llm_config, 600);
+      result = await provider.chatComplete(messages, env, llmConfig, 600);
     } catch (err) {
       return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 502);
     }
     totalInput += result.usage.input_tokens;
     totalOutput += result.usage.output_tokens;
 
-    parsed = tryExtractJson(result.text);
+    parsed = normalizeLLMResponse(tryExtractJson(result.text));
     if (!parsed || typeof parsed.title !== 'string' || typeof parsed.description !== 'string') {
       // Single re-ask with stricter wording, then bail.
       if (attempt >= 2) {
