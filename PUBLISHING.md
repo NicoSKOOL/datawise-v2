@@ -43,7 +43,7 @@ mirror of it. Nothing is live unless it went through `production`.
    `scripts/start-change.sh fix/short-name`. This alone removes the
    "lost features" problem.
 2. **Staging — try before you replace.** A permanent test site at
-   **https://staging.datawise.pages.dev** runs the proposed change for real
+   **https://staging.datawise-118.pages.dev** runs the proposed change for real
    (against the live API and data) so it can be clicked through and approved
    before the live site is touched. If it's wrong, the live site never saw it.
 3. **The automatic guard.** Right before anything is published, an automatic
@@ -67,7 +67,7 @@ outage.
 1. `scripts/start-change.sh feat/short-name`
 2. Build the feature, commit, push, open a Pull Request into `production`.
 3. Push the branch to `staging` (or run the "Deploy DataWise Pages Staging"
-   workflow on your branch). Open https://staging.datawise.pages.dev and
+   workflow on your branch). Open https://staging.datawise-118.pages.dev and
    try it.
 4. When it's right: merge the PR into `production`.
 5. Production publishes from `production` (see "Publishing", below).
@@ -80,7 +80,7 @@ the *current* live copy is what carries every existing feature forward.
 1. `scripts/start-change.sh fix/short-name`
 2. Make the small fix, commit, push, open a PR into `production`.
 3. (Recommended even for one-liners) push to `staging` and eyeball it at
-   https://staging.datawise.pages.dev — at minimum the guard runs.
+   https://staging.datawise-118.pages.dev — at minimum the guard runs.
 4. Merge the PR into `production`. **`production` now contains the fix, so it
    is the new source of truth. The next change starts from here.**
 
@@ -100,7 +100,7 @@ from ever reaching the live site.
   publishes. Trigger it after a PR is merged into `production`.
 - **Staging:** push to the `staging` branch, or run the "Deploy DataWise
   Pages Staging" workflow. Result appears at
-  https://staging.datawise.pages.dev.
+  https://staging.datawise-118.pages.dev.
 - **API (the Worker):** separate and independent. Deployed from
   `datawise-seo-insight-main/workers/` with `npm run deploy`. Most app fixes
   are frontend-only and do not need an API deploy.

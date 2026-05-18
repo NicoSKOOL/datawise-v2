@@ -11,7 +11,7 @@
 // The validated build is then published to the Cloudflare Pages "staging"
 // branch alias, which gives a single, permanent URL:
 //
-//     https://staging.datawise.pages.dev
+//     https://staging.datawise-118.pages.dev
 //
 // That URL always points at the most recent staging deploy. It talks to the
 // live Worker API (the same VITE_API_URL as production), so it is safe for
@@ -59,7 +59,7 @@ async function main() {
 
   console.log('');
   console.log('Staging deploy complete.');
-  console.log('Open: https://staging.datawise.pages.dev');
+  console.log('Open: https://staging.datawise-118.pages.dev');
   console.log('(Same live API + data as production. Test, then promote via a PR into `production`.)');
 }
 
