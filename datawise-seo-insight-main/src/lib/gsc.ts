@@ -82,6 +82,7 @@ export interface GSCRangeData {
     impressions: number;
     avg_position: number;
     avg_ctr: number;
+    page?: string | null;
   }>;
 }
 

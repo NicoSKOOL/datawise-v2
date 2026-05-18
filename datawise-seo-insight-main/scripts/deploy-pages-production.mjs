@@ -60,6 +60,8 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Dashboard KPI cards are the GSC command center', 'src/components/dashboard/DashboardKPICards.tsx', 'GSC-only command center: every card is real Search Console data'],
   ['Dashboard shows quick-wins opportunities', 'src/pages/Dashboard.tsx', 'OpportunitiesPanel'],
   ['Dashboard has add-website tier', 'src/pages/Dashboard.tsx', 'AddWebsiteCard'],
+  ['Quick wins links to a fix plan', 'src/components/dashboard/OpportunitiesPanel.tsx', '/seo-assistant?q='],
+  ['SEO Assistant accepts prefill deep link', 'src/pages/SEOAssistant.tsx', "searchParams.get('q')"],
   ['App checks for newer deployed bundle', 'src/App.tsx', 'DeployRefreshGuard'],
   ['App refreshes stale SPA bundle', 'src/App.tsx', 'window.location.reload()'],
   ['AuthContext treats admins as unlimited', 'src/contexts/AuthContext.tsx', 'const unlimited = isCommunityMember || isPro || isAdmin || promoActive;'],

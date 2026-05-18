@@ -321,13 +321,18 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     `).bind(propertyId).first();
 
     const rangeOpps = await env.DB.prepare(`
-      SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-             ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
-      FROM gsc_search_data
-      WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
-        AND date >= date('now', '-${n} days')
-      GROUP BY query
-      HAVING AVG(position) BETWEEN 5 AND 20 AND SUM(impressions) > 10
+      SELECT g.query as query, SUM(g.clicks) as clicks, SUM(g.impressions) as impressions,
+             ROUND(AVG(g.position), 1) as avg_position, ROUND(AVG(g.ctr), 4) as avg_ctr,
+             (SELECT p.page FROM gsc_search_data p
+                WHERE p.property_id = g.property_id AND p.query = g.query
+                  AND p.page != '__7d_query__' AND p.page IS NOT NULL
+                  AND p.date >= date('now', '-${n} days')
+                GROUP BY p.page ORDER BY SUM(p.impressions) DESC LIMIT 1) as page
+      FROM gsc_search_data g
+      WHERE g.property_id = ? AND g.query != '__daily_total__' AND g.page != '__7d_query__'
+        AND g.date >= date('now', '-${n} days')
+      GROUP BY g.query
+      HAVING AVG(g.position) BETWEEN 5 AND 20 AND SUM(g.impressions) > 10
       ORDER BY impressions DESC LIMIT 30
     `).bind(propertyId).all();
 
