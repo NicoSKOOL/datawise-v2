@@ -2,6 +2,23 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+## Publishing rule — read before any deploy
+
+`production` is the single source of truth and is exactly what is live at
+`datawiseseo.com`. **Read `PUBLISHING.md` (repo root) before any change that
+could ship.** Short version:
+
+1. Start every change from live: `scripts/start-change.sh fix/<name>` (or `feat/`, `chore/`). Never edit a stale copy.
+2. Open a PR into `production`. Push to the `staging` branch (or run the "Deploy DataWise Pages Staging" workflow) to test at `https://staging.datawise-118.pages.dev` — same guard as production.
+3. Merge into `production` → it auto-deploys live via GitHub Actions (build + guard run on GitHub from `production`, never from a laptop).
+
+**Never:**
+- Run raw `wrangler pages deploy` for the frontend. It bypasses the feature guard and caused the May 2026 outage.
+- Deploy the frontend from a laptop, or from any branch other than `production`.
+- Use `npm run deploy:staging` / `npm run deploy:production` inside `workers/`. Those create orphan workers. The worker deploy is just `npm run deploy`.
+
+The frontend guard (`datawise-seo-insight-main/scripts/deploy-pages-production.mjs`) refuses any build missing Content Writer, AI Visibility, Brand Tracker, Content Planner, etc. Do not weaken or bypass it.
+
 ## Project Overview
 
 DataWise V2 is an SEO analytics platform. The codebase lives in `datawise-seo-insight-main/` and consists of two independent apps: a React frontend and a Cloudflare Workers API backend.
