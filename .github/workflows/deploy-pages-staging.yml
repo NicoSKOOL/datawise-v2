@@ -49,7 +49,10 @@ jobs:
 
       - name: Install dependencies
         working-directory: datawise-seo-insight-main
-        run: npm ci
+        # --legacy-peer-deps: the lockfile was generated this way; an
+        # unresolved peer (@lobehub/icons -> @lobehub/ui) otherwise breaks
+        # `npm ci` on a clean runner. Does not change runtime code.
+        run: npm ci --legacy-peer-deps
 
       - name: Build, guard, and deploy to staging
         working-directory: datawise-seo-insight-main
