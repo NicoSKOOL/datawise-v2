@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef, type Ref } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ArrowRight, RefreshCw } from 'lucide-react';
+import { ArrowRight, RefreshCw, Check } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProperty } from '@/contexts/PropertyContext';
 import { fetchDashboardSummary } from '@/lib/dataforseo';
-import { getGSCData, getGSCSitemaps, syncGSCProperty, type GSCOverviewData, type IndexationData } from '@/lib/gsc';
+import { getGSCData, type GSCOverviewData, type GSCRangeDays } from '@/lib/gsc';
 import type { DashboardSummary } from '@/types/rank-tracking';
 import type { AnimatedIconHandle } from '@/components/icons/types';
 import MessageCircleIcon from '@/components/icons/message-circle-icon';
@@ -18,7 +18,9 @@ import CheckedIcon from '@/components/icons/checked-icon';
 import DashboardKPICards from '@/components/dashboard/DashboardKPICards';
 import TopMoversTable from '@/components/dashboard/TopMoversTable';
 import GSCTrendChart from '@/components/dashboard/GSCTrendChart';
-import IndexationChart from '@/components/dashboard/IndexationChart';
+import TopPagesPanel from '@/components/dashboard/TopPagesPanel';
+import OpportunitiesPanel from '@/components/dashboard/OpportunitiesPanel';
+import AddWebsiteCard from '@/components/dashboard/AddWebsiteCard';
 
 const quickActions = [
   {
@@ -109,9 +111,107 @@ function ActionCard({ action }: { action: typeof quickActions[number] }) {
   );
 }
 
+function QuickActionsStrip() {
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Quick Actions</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {quickActions.map((action) => (
+          <Link
+            key={action.url}
+            to={action.url}
+            className="flex items-center gap-2.5 p-3 rounded-lg bg-white shadow-[0_1px_4px_rgba(24,28,32,0.06)] hover:shadow-md transition-all text-sm font-medium"
+          >
+            <div className={`p-1.5 rounded-md ${action.color}`}>
+              <AnimatedIcon iconKey={action.iconKey} />
+            </div>
+            <span className="truncate">{action.title}</span>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConnectGSCPanel({ domain }: { domain: string }) {
+  const bullets = [
+    'Your real clicks and impressions, trended week over week',
+    'Striking-distance keywords ready for a quick push',
+    'Search-visible page coverage for the site',
+  ];
+  return (
+    <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-transparent">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg">Connect Google Search Console</CardTitle>
+        <CardDescription>
+          {domain
+            ? `Link ${domain} to Search Console to unlock your command center.`
+            : 'Unlock your command center with your own Search Console data.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <ul className="space-y-1.5">
+          {bullets.map((b) => (
+            <li key={b} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <span>{b}</span>
+            </li>
+          ))}
+        </ul>
+        <Button asChild>
+          <Link to="/settings">
+            Connect GSC
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+const RANGE_OPTIONS: { value: GSCRangeDays; label: string }[] = [
+  { value: 7, label: '7 days' },
+  { value: 14, label: '14 days' },
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+];
+
+function RangeSelector({
+  value,
+  onChange,
+  refreshing,
+}: {
+  value: GSCRangeDays;
+  onChange: (v: GSCRangeDays) => void;
+  refreshing: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      {refreshing && <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      <div className="inline-flex rounded-lg border border-border bg-white p-0.5">
+        {RANGE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              value === opt.value
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const {
+    properties,
     selectedProperty,
     primaryDomain,
     connected: gscConnected,
@@ -119,9 +219,8 @@ export default function Dashboard() {
   } = useProperty();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [gscOverview, setGscOverview] = useState<GSCOverviewData | null>(null);
-  const [indexation, setIndexation] = useState<IndexationData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [range, setRange] = useState<GSCRangeDays>(30);
   const loadRequestRef = useRef(0);
   const selectedGscPropertyId = selectedProperty && selectedProperty.kind !== 'manual'
     ? selectedProperty.id
@@ -131,28 +230,23 @@ export default function Dashboard() {
     const requestId = ++loadRequestRef.current;
     setLoading(true);
     try {
-      const [summaryData, gscData] = await Promise.all([
+      const [summaryData, overview] = await Promise.all([
         fetchDashboardSummary(primaryDomain || undefined).catch(() => null),
         selectedGscPropertyId
-          ? Promise.all([
-              getGSCData(selectedGscPropertyId).catch(() => null),
-              getGSCSitemaps(selectedGscPropertyId).catch(() => null),
-            ])
-          : Promise.resolve([null, null] as const),
+          ? getGSCData(selectedGscPropertyId, range).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       if (requestId !== loadRequestRef.current) return;
 
-      const [overview, indexationData] = gscData;
       setSummary(summaryData as DashboardSummary | null);
       setGscOverview(overview?.query_summary ? overview : null);
-      setIndexation(indexationData);
     } finally {
       if (requestId === loadRequestRef.current) {
         setLoading(false);
       }
     }
-  }, [primaryDomain, selectedGscPropertyId]);
+  }, [primaryDomain, selectedGscPropertyId, range]);
 
   useEffect(() => {
     if (propertyLoading) {
@@ -162,115 +256,90 @@ export default function Dashboard() {
     loadDashboardData();
   }, [propertyLoading, loadDashboardData]);
 
-  const hasSelectedGscData = Boolean(gscConnected && selectedGscPropertyId);
-  const hasData = summary?.has_projects || hasSelectedGscData;
-
   const gscTrendData = gscOverview?.daily_trend || [];
 
-  const handleSyncGSC = async () => {
-    if (!selectedGscPropertyId || syncing) return;
+  // Tiered command center:
+  //  - no website on the account  -> add-website field (Tier 0)
+  //  - website but no GSC data    -> connect-GSC activation (Tier 1)
+  //  - GSC data present           -> the command center (Tier 2)
+  const hasAnyProperty = properties.length > 0;
+  const hasGscData = Boolean(gscOverview);
 
-    setSyncing(true);
-    try {
-      await syncGSCProperty(selectedGscPropertyId);
-      await loadDashboardData();
-    } finally {
-      setSyncing(false);
-    }
-  };
+  const Welcome = (
+    <div>
+      <h1 className="text-2xl font-bold tracking-tight">
+        Welcome back{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
+      </h1>
+      <p className="text-muted-foreground mt-1">Your AI-powered SEO command center</p>
+    </div>
+  );
+
+  let body: React.ReactNode;
+
+  if ((loading || propertyLoading) && !gscOverview) {
+    body = (
+      <div className="flex justify-center py-12">
+        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  } else if (!hasAnyProperty) {
+    body = (
+      <>
+        <AddWebsiteCard />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {quickActions.map((action) => (
+            <ActionCard key={action.url} action={action} />
+          ))}
+        </div>
+      </>
+    );
+  } else if (!hasGscData) {
+    body = (
+      <>
+        <ConnectGSCPanel domain={primaryDomain} />
+        <QuickActionsStrip />
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Performance</h2>
+          <RangeSelector value={range} onChange={setRange} refreshing={loading} />
+        </div>
+
+        {summary && (
+          <DashboardKPICards
+            summary={summary}
+            gscOverview={gscOverview}
+            range={gscOverview?.range ?? null}
+          />
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <TopPagesPanel pages={gscOverview?.range?.top_pages ?? gscOverview?.top_pages ?? []} />
+          <GSCTrendChart data={gscOverview?.range?.daily ?? gscTrendData} />
+        </div>
+
+        {gscOverview && (
+          <OpportunitiesPanel
+            opportunities={gscOverview.range?.opportunities ?? gscOverview.opportunities}
+          />
+        )}
+
+        {summary && summary.has_projects && (
+          <TopMoversTable movers={summary.top_movers} decliners={summary.top_decliners} />
+        )}
+
+        <QuickActionsStrip />
+      </>
+    );
+  }
 
   return (
     <div className="space-y-8">
-      {/* Welcome */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          Welcome back{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          Your AI-powered SEO command center
-        </p>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : hasData ? (
-        <>
-          {/* KPI Row */}
-          {summary && (
-            <DashboardKPICards summary={summary} gscOverview={gscOverview} />
-          )}
-
-          {/* Charts Row */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {hasSelectedGscData && (
-              <IndexationChart
-                data={indexation}
-                onSync={selectedGscPropertyId ? handleSyncGSC : undefined}
-                syncing={syncing}
-              />
-            )}
-            <GSCTrendChart data={gscTrendData} />
-          </div>
-
-          {/* Top Movers */}
-          {summary && (
-            <TopMoversTable
-              movers={summary.top_movers}
-              decliners={summary.top_decliners}
-            />
-          )}
-
-          {/* Compact Quick Actions */}
-          <div>
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Quick Actions</h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              {quickActions.map((action) => (
-                <Link
-                  key={action.url}
-                  to={action.url}
-                  className="flex items-center gap-2.5 p-3 rounded-lg bg-white shadow-[0_1px_4px_rgba(24,28,32,0.06)] hover:shadow-md transition-all text-sm font-medium"
-                >
-                  <div className={`p-1.5 rounded-md ${action.color}`}>
-                    <AnimatedIcon iconKey={action.iconKey} />
-                  </div>
-                  <span className="truncate">{action.title}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
-        </>
-      ) : (
-        <>
-          {/* GSC Connection Prompt */}
-          {!gscConnected && (
-            <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-transparent">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Connect Google Search Console</CardTitle>
-                <CardDescription>
-                  Unlock the SEO Assistant, dashboard metrics, and personalized recommendations by connecting your GSC account.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button asChild>
-                  <Link to="/settings">
-                    Connect GSC
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Quick Actions Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {quickActions.map((action) => (
-              <ActionCard key={action.url} action={action} />
-            ))}
-          </div>
-        </>
-      )}
+      {Welcome}
+      {body}
     </div>
   );
 }

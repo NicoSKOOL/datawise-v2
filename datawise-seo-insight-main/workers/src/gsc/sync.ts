@@ -276,10 +276,99 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     ORDER BY date ASC
   `).bind(propertyId).all();
 
+  // Optional, ADDITIVE range block for the dashboard time selector.
+  // When ?range= is absent or invalid the response is unchanged (other
+  // callers, including the SEO Assistant LLM context, are unaffected).
+  const ALLOWED_RANGES = [7, 14, 30, 90];
+  const requestedRange = Number(url.searchParams.get('range'));
+  let rangeBlock: Record<string, unknown> | null = null;
+  if (ALLOWED_RANGES.includes(requestedRange)) {
+    const n = requestedRange;
+    const cur = await env.DB.prepare(`
+      SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
+             ROUND(AVG(position), 1) as avg_position
+      FROM gsc_search_data
+      WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-${n} days')
+    `).bind(propertyId).first();
+
+    const prev = await env.DB.prepare(`
+      SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
+             ROUND(AVG(position), 1) as avg_position
+      FROM gsc_search_data
+      WHERE property_id = ? AND query = '__daily_total__'
+        AND date >= date('now', '-${n * 2} days') AND date < date('now', '-${n} days')
+    `).bind(propertyId).first();
+
+    const rangeDaily = await env.DB.prepare(`
+      SELECT date, clicks, impressions
+      FROM gsc_search_data
+      WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-${n} days')
+      ORDER BY date ASC
+    `).bind(propertyId).all();
+
+    const rangeQuery = await env.DB.prepare(`
+      WITH rollup AS (
+        SELECT query, ROUND(AVG(position), 1) as avg_position, SUM(impressions) as impressions
+        FROM gsc_search_data
+        WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+          AND date >= date('now', '-${n} days')
+        GROUP BY query
+      )
+      SELECT
+        SUM(CASE WHEN avg_position BETWEEN 11 AND 20 THEN 1 ELSE 0 END) as striking_distance,
+        SUM(CASE WHEN avg_position <= 10 THEN 1 ELSE 0 END) as top_10
+      FROM rollup
+    `).bind(propertyId).first();
+
+    const rangeOpps = await env.DB.prepare(`
+      SELECT g.query as query, SUM(g.clicks) as clicks, SUM(g.impressions) as impressions,
+             ROUND(AVG(g.position), 1) as avg_position, ROUND(AVG(g.ctr), 4) as avg_ctr,
+             (SELECT p.page FROM gsc_search_data p
+                WHERE p.property_id = g.property_id AND p.query = g.query
+                  AND p.page != '__7d_query__' AND p.page IS NOT NULL
+                  AND p.date >= date('now', '-${n} days')
+                GROUP BY p.page ORDER BY SUM(p.impressions) DESC LIMIT 1) as page
+      FROM gsc_search_data g
+      WHERE g.property_id = ? AND g.query != '__daily_total__' AND g.page != '__7d_query__'
+        AND g.date >= date('now', '-${n} days')
+      GROUP BY g.query
+      HAVING AVG(g.position) BETWEEN 5 AND 20 AND SUM(g.impressions) > 10
+      ORDER BY impressions DESC LIMIT 30
+    `).bind(propertyId).all();
+
+    const rangeTopPages = await env.DB.prepare(`
+      SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
+             ROUND(AVG(position), 1) as avg_position
+      FROM gsc_search_data
+      WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+        AND page IS NOT NULL AND date >= date('now', '-${n} days')
+      GROUP BY page
+      ORDER BY clicks DESC LIMIT 12
+    `).bind(propertyId).all();
+
+    const prevClicks = prev?.clicks != null ? Number(prev.clicks) : null;
+    const prevImpr = prev?.impressions != null ? Number(prev.impressions) : null;
+    rangeBlock = {
+      days: n,
+      clicks: Number(cur?.clicks || 0),
+      impressions: Number(cur?.impressions || 0),
+      avg_position: cur?.avg_position != null ? Number(cur.avg_position) : null,
+      prev_clicks: prevClicks,
+      prev_impressions: prevImpr,
+      prev_avg_position: prev?.avg_position != null ? Number(prev.avg_position) : null,
+      striking_distance: Number(rangeQuery?.striking_distance || 0),
+      top_10: Number(rangeQuery?.top_10 || 0),
+      daily: rangeDaily.results || [],
+      opportunities: rangeOpps.results || [],
+      top_pages: rangeTopPages.results || [],
+    };
+  }
+
   return new Response(JSON.stringify({
     property: property.site_url,
     last_synced: property.last_synced_at,
     daily_trend: dailyTrend.results || [],
+    ...(rangeBlock ? { range: rangeBlock } : {}),
     summary: { last_7_days: summary7d, last_30_days: summary30d, last_90_days: summary90d },
     query_summary: {
       total_queries: Number(querySummary?.total_queries || 0),

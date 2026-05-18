@@ -8,6 +8,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import SparklesIcon from '@/components/icons/sparkles-icon';
 import type { AnimatedIconHandle } from '@/components/icons/types';
+import { useSearchParams } from 'react-router-dom';
 import { sendMessage, getConversations, getConversation, deleteConversation, renameConversation, type Conversation, type ChatMessageData } from '@/lib/chat';
 import { getGSCProperties, type GSCProperty } from '@/lib/gsc';
 import { useToast } from '@/hooks/use-toast';
@@ -36,6 +37,21 @@ export default function SEOAssistant() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sparklesRef = useRef<AnimatedIconHandle>(null);
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const prefillRef = useRef(false);
+
+  // Deep-link prefill: the dashboard "Get a fix plan" sends ?q=<prompt>.
+  // Load it into the composer once, clear the param, focus. No auto-send.
+  useEffect(() => {
+    if (prefillRef.current) return;
+    const q = searchParams.get('q');
+    if (q) {
+      prefillRef.current = true;
+      setInput(q);
+      setSearchParams({}, { replace: true });
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [searchParams, setSearchParams]);
 
   // Resizable sidebar
   const [sidebarWidth, setSidebarWidth] = useState(() => {
