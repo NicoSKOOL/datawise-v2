@@ -159,18 +159,34 @@ export default function SettingsPage() {
     toast({ title: 'Saved', description: 'OpenRouter configuration saved locally. Verifying key...' });
 
     // Verify the key directly against OpenRouter from the browser (never sent to our servers).
-    // A working inference key returns 200; a Provisioning/Management key or an invalid key 401s.
+    // A management/provisioning key still returns 200 here, so status alone is not enough:
+    // the response data carries is_provisioning_key / is_management_key flags. Those keys
+    // cannot run models, so treat them as invalid for our purposes.
     setKeyCheck({ status: 'checking', message: 'Verifying key with OpenRouter...' });
     try {
       const res = await fetch('https://openrouter.ai/api/v1/key', {
         headers: { Authorization: `Bearer ${key}` },
       });
       if (res.ok) {
-        setKeyCheck({ status: 'ok', message: 'Key verified. Your OpenRouter inference key is working.' });
+        const body = await res.json().catch(() => null);
+        const data = body?.data;
+        if (!data) {
+          setKeyCheck({
+            status: 'unknown',
+            message: 'Saved, but OpenRouter returned an unexpected response when verifying. If AI features fail, re-check the key.',
+          });
+        } else if (data.is_provisioning_key || data.is_management_key) {
+          setKeyCheck({
+            status: 'bad',
+            message: 'This is a Provisioning or Management key, not an Inference key. It cannot run models, so AI features will fail. Paste an Inference API key instead:',
+          });
+        } else {
+          setKeyCheck({ status: 'ok', message: 'Key verified. Your OpenRouter inference key is working.' });
+        }
       } else if (res.status === 401) {
         setKeyCheck({
           status: 'bad',
-          message: 'OpenRouter rejected this key (401). It looks like a Provisioning or Management key, or an invalid key, so AI features will fail. Paste an Inference API key instead:',
+          message: 'OpenRouter rejected this key (401). It is invalid, revoked, or mistyped. Paste a valid Inference API key:',
         });
       } else {
         setKeyCheck({
