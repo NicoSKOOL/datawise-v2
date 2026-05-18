@@ -1,6 +1,13 @@
 name: Deploy DataWise Pages Production
 
+# Production publishes automatically when something is merged into the
+# `production` branch (the single source of truth), and can also be run
+# manually as a fallback. Builds happen here on GitHub from `production`
+# itself, so a stale local copy can never reach the live site.
 on:
+  push:
+    branches:
+      - production
   workflow_dispatch:
 
 concurrency:

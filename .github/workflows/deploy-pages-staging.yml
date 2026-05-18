@@ -1,0 +1,58 @@
+name: Deploy DataWise Pages Staging
+
+# Staging deploy. Runs the SAME guard as production (in check mode) and then
+# publishes to the permanent staging URL: https://staging.datawise.pages.dev
+#
+# Triggers:
+#   - push to the `staging` branch (normal path: push your change, see it on staging)
+#   - manual run choosing any branch (workflow_dispatch)
+#
+# Builds happen on GitHub from the chosen branch HEAD, never from a laptop,
+# so a stale local copy can never be what gets tested.
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to deploy to staging
+        required: true
+        default: staging
+
+concurrency:
+  group: datawise-pages-staging
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build, guard, and deploy to staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 510d0ac03a3a8f5ebeac39be4926ed77
+      VITE_API_URL: https://datawise-api.nico-510.workers.dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: datawise-seo-insight-main/package-lock.json
+
+      - name: Install dependencies
+        working-directory: datawise-seo-insight-main
+        run: npm ci
+
+      - name: Build, guard, and deploy to staging
+        working-directory: datawise-seo-insight-main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy:pages:staging

@@ -9,6 +9,7 @@
     "build:dev": "vite build --mode development",
     "deploy:pages:check": "VITE_API_URL=https://datawise-api.nico-510.workers.dev node scripts/deploy-pages-production.mjs",
     "deploy:pages:production": "VITE_API_URL=https://datawise-api.nico-510.workers.dev node scripts/deploy-pages-production.mjs --deploy --confirm-production",
+    "deploy:pages:staging": "VITE_API_URL=https://datawise-api.nico-510.workers.dev node scripts/deploy-pages-staging.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
