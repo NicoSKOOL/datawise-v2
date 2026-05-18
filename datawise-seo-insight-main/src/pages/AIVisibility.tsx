@@ -1,4 +1,5 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SiteAuditErrorBoundary } from '@/components/site-audit/ErrorBoundary';
 import { useTabParam } from '@/hooks/use-tab-param';
 import AIOverview from './AIOverview';
 import BrandTracker from './BrandTracker';
@@ -15,6 +16,7 @@ export default function AIVisibility() {
         <p className="text-muted-foreground">Monitor your presence in AI search results and audit your pages</p>
       </div>
 
+      <SiteAuditErrorBoundary>
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList>
           <TabsTrigger value="ai-overview">AI Search Tracker</TabsTrigger>
@@ -36,6 +38,7 @@ export default function AIVisibility() {
           <OnPageSEO />
         </TabsContent>
       </Tabs>
+      </SiteAuditErrorBoundary>
     </div>
   );
 }
