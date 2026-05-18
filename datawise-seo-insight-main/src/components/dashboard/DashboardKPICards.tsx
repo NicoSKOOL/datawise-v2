@@ -35,18 +35,31 @@ function DeltaBadge({ current, previous, invert = false }: { current: number | n
 }
 
 export default function DashboardKPICards({ summary, gscOverview }: DashboardKPICardsProps) {
-  const top10Count = summary.distribution.top3 + summary.distribution.top10;
   const gscClicks = gscOverview?.summary.last_30_days.total_clicks || 0;
+
+  // Rank-tracking projects are the primary source. When the user has no
+  // rank-tracking project (the common case for GSC-only accounts), fall back to
+  // the GSC query summary that is already fetched for this dashboard, so these
+  // cards reflect real Search Console data instead of zeros. Precedent: the
+  // Rank Tracking page already maps query_summary.total_queries to "Total Keywords".
+  const gscQuery = gscOverview?.query_summary ?? null;
+  const useGsc = !summary.has_projects && gscQuery != null;
+
+  const totalKeywords = useGsc ? gscQuery!.total_queries : summary.total_keywords;
+  const avgPosition = useGsc ? gscQuery!.avg_position : summary.avg_position;
+  const top10Count = useGsc
+    ? gscQuery!.top_3 + gscQuery!.top_10
+    : summary.distribution.top3 + summary.distribution.top10;
 
   const cards = [
     {
       label: 'Total Keywords',
-      value: summary.total_keywords.toLocaleString(),
+      value: totalKeywords.toLocaleString(),
       delta: null as React.ReactNode,
     },
     {
       label: 'Avg Position',
-      value: summary.avg_position != null ? String(summary.avg_position) : '--',
+      value: avgPosition != null ? String(avgPosition) : '--',
       delta: null as React.ReactNode,
     },
     {

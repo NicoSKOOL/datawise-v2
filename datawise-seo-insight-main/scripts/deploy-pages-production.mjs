@@ -57,6 +57,7 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Dashboard fetches sitemap indexation data', 'src/pages/Dashboard.tsx', 'getGSCSitemaps'],
   ['Dashboard renders indexation chart', 'src/pages/Dashboard.tsx', '<IndexationChart'],
   ['GSC lib exposes sitemap indexation API', 'src/lib/gsc.ts', 'getGSCSitemaps'],
+  ['KPI cards fall back to GSC query summary', 'src/components/dashboard/DashboardKPICards.tsx', 'const useGsc = !summary.has_projects && gscQuery != null;'],
   ['App checks for newer deployed bundle', 'src/App.tsx', 'DeployRefreshGuard'],
   ['App refreshes stale SPA bundle', 'src/App.tsx', 'window.location.reload()'],
   ['AuthContext treats admins as unlimited', 'src/contexts/AuthContext.tsx', 'const unlimited = isCommunityMember || isPro || isAdmin || promoActive;'],
