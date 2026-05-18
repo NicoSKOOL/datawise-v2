@@ -2,14 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Publishing rule — read before any deploy
+## Publishing rule: read before any deploy
 
 `production` is the single source of truth and is exactly what is live at
 `datawiseseo.com`. **Read `PUBLISHING.md` (repo root) before any change that
 could ship.** Short version:
 
 1. Start every change from live: `scripts/start-change.sh fix/<name>` (or `feat/`, `chore/`). Never edit a stale copy.
-2. Open a PR into `production`. Push to the `staging` branch (or run the "Deploy DataWise Pages Staging" workflow) to test at `https://staging.datawise-118.pages.dev` — same guard as production.
+2. Open a PR into `production`. Push to the `staging` branch (or run the "Deploy DataWise Pages Staging" workflow) to test at `https://staging.datawise-118.pages.dev` (same guard as production).
 3. Merge into `production` → it auto-deploys live via GitHub Actions (build + guard run on GitHub from `production`, never from a laptop).
 
 **Never:**

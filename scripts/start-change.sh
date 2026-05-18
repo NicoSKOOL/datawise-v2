@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# start-change.sh — begin any change from EXACTLY what is live.
+# start-change.sh: begin any change from EXACTLY what is live.
 #
 # The single rule that prevents "the app reverted and lost features":
 # never start editing from an old copy. This script refreshes `production`

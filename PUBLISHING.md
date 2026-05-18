@@ -42,7 +42,7 @@ mirror of it. Nothing is live unless it went through `production`.
    the official copy and branch off it. One command does this:
    `scripts/start-change.sh fix/short-name`. This alone removes the
    "lost features" problem.
-2. **Staging — try before you replace.** A permanent test site at
+2. **Staging, try before you replace.** A permanent test site at
    **https://staging.datawise-118.pages.dev** runs the proposed change for real
    (against the live API and data) so it can be clicked through and approved
    before the live site is touched. If it's wrong, the live site never saw it.
@@ -74,13 +74,13 @@ outage.
 
 ### B) Quick bug fix on the live app
 
-Same backbone, just faster. The important part is step 1 — starting from
+Same backbone, just faster. The important part is step 1: starting from
 the *current* live copy is what carries every existing feature forward.
 
 1. `scripts/start-change.sh fix/short-name`
 2. Make the small fix, commit, push, open a PR into `production`.
 3. (Recommended even for one-liners) push to `staging` and eyeball it at
-   https://staging.datawise-118.pages.dev — at minimum the guard runs.
+   https://staging.datawise-118.pages.dev (at minimum, the guard runs).
 4. Merge the PR into `production`. **`production` now contains the fix, so it
    is the new source of truth. The next change starts from here.**
 
@@ -127,5 +127,5 @@ the safest recovery is usually: fix forward on a fresh branch off
 - Never publish from an old or behind copy. Always `scripts/start-change.sh`.
 - Never use raw `wrangler pages deploy`. It skips every safety check.
 - Never publish straight to the live site without seeing it on staging.
-- Never fix a bug and forget to merge it into `production` — that's how a
+- Never fix a bug and forget to merge it into `production`. That's how a
   fixed bug comes back later.
