@@ -70,6 +70,10 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Site Audit imports Lottie loader', 'src/pages/SiteAudit.tsx', "import DotLottieLoader from '@/components/DotLottieLoader';"],
   ['Site Audit running state renders Lottie loader', 'src/pages/SiteAudit.tsx', '<DotLottieLoader size={112}'],
   ['DotLottie loader uses bundled asset', 'src/components/DotLottieLoader.tsx', "dotlottieElement.setAttribute('src', '/loading.lottie');"],
+  ['Auth chooser pre-step present', 'src/pages/Auth.tsx', 'For returning members with an existing account.'],
+  ['Auth chooser create-account path present', 'src/pages/Auth.tsx', 'Create an account'],
+  ['Auth chooser syncs mode query param', 'src/pages/Auth.tsx', 'useSearchParams'],
+  ['Auth duplicate-email nudge present', 'src/pages/Auth.tsx', 'This email already has an account.'],
 ];
 const FORBIDDEN_SOURCE_MARKERS = [
   ['Dashboard must not render rank position distribution', 'src/pages/Dashboard.tsx', '<RankDistributionChart'],
