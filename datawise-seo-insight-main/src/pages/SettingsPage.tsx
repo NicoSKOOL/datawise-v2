@@ -731,6 +731,20 @@ export default function SettingsPage() {
                 {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              Use an{' '}
+              <a
+                href="https://openrouter.ai/keys"
+                target="_blank"
+                rel="noreferrer"
+                className="underline font-medium"
+              >
+                Inference API key
+              </a>{' '}
+              (it starts with <code className="text-[11px]">sk-or-</code>). Do not paste a
+              Provisioning or Management key from openrouter.ai/settings/management-keys: those
+              cannot run models and OpenRouter rejects them with a 401.
+            </p>
           </div>
 
           <div className="space-y-2">

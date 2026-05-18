@@ -354,7 +354,7 @@ class OpenRouterProvider implements LLMProvider {
       if (!response.ok) {
         const error = await response.text();
         console.error('OpenRouter API error:', error);
-        if (response.status === 401) throw new Error('Invalid OpenRouter API key. Check your key in Settings.');
+        if (response.status === 401) throw new Error('OpenRouter rejected your API key (401). Make sure you pasted an Inference API key from openrouter.ai/keys, not a Provisioning or Management key from openrouter.ai/settings/management-keys. Management keys cannot run models. Update it in Settings.');
         if (response.status === 402 || /insufficient.*credit|credit.*low/i.test(error)) {
           throw new Error('Your OpenRouter account is out of credits. Top up at openrouter.ai/credits and try again.');
         }
@@ -405,7 +405,7 @@ class OpenRouterProvider implements LLMProvider {
       if (!response.ok) {
         const error = await response.text();
         console.error('OpenRouter API error:', error);
-        if (response.status === 401) throw new Error('Invalid OpenRouter API key. Check your key in Settings.');
+        if (response.status === 401) throw new Error('OpenRouter rejected your API key (401). Make sure you pasted an Inference API key from openrouter.ai/keys, not a Provisioning or Management key from openrouter.ai/settings/management-keys. Management keys cannot run models. Update it in Settings.');
         if (response.status === 402 || /insufficient.*credit|credit.*low/i.test(error)) {
           throw new Error('Your OpenRouter account is out of credits. Top up at openrouter.ai/credits and try again.');
         }
