@@ -1,22 +1,33 @@
-name: Deploy DataWise Pages Production
+name: Deploy DataWise Pages Staging
 
-# Production publishes automatically when something is merged into the
-# `production` branch (the single source of truth), and can also be run
-# manually as a fallback. Builds happen here on GitHub from `production`
-# itself, so a stale local copy can never reach the live site.
+# Staging deploy. Runs the SAME guard as production (in check mode) and then
+# publishes to the permanent staging URL: https://staging.datawise.pages.dev
+#
+# Triggers:
+#   - push to the `staging` branch (normal path: push your change, see it on staging)
+#   - manual run choosing any branch (workflow_dispatch)
+#
+# Builds happen on GitHub from the chosen branch HEAD, never from a laptop,
+# so a stale local copy can never be what gets tested.
+
 on:
   push:
     branches:
-      - production
+      - staging
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to deploy to staging
+        required: true
+        default: staging
 
 concurrency:
-  group: datawise-pages-production
-  cancel-in-progress: false
+  group: datawise-pages-staging
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    name: Build, guard, and deploy
+    name: Build, guard, and deploy to staging
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,10 +35,10 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: 510d0ac03a3a8f5ebeac39be4926ed77
       VITE_API_URL: https://datawise-api.nico-510.workers.dev
     steps:
-      - name: Checkout production
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: production
+          ref: ${{ github.event.inputs.ref || github.ref_name }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -43,8 +54,8 @@ jobs:
         # `npm ci` on a clean runner. Does not change runtime code.
         run: npm ci --legacy-peer-deps
 
-      - name: Build, guard, and deploy
+      - name: Build, guard, and deploy to staging
         working-directory: datawise-seo-insight-main
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm run deploy:pages:production
+        run: npm run deploy:pages:staging
