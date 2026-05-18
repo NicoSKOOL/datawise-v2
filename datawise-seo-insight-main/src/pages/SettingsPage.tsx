@@ -90,6 +90,7 @@ export default function SettingsPage() {
   const [legacyProvider, setLegacyProvider] = useState<string | null>(null);
   const [showKey, setShowKey] = useState(false);
   const [llmSaved, setLlmSaved] = useState(false);
+  const [keyCheck, setKeyCheck] = useState<{ status: 'idle' | 'checking' | 'ok' | 'bad' | 'unknown'; message: string }>({ status: 'idle', message: '' });
 
   // User defaults (location/language)
   const [defaultLocation, setDefaultLocation] = useState(String(user?.default_location_code ?? 2840));
@@ -141,20 +142,48 @@ export default function SettingsPage() {
     }
   }, []);
 
-  const handleSaveLLM = () => {
+  const handleSaveLLM = async () => {
     if (!llmApiKey.trim()) {
       toast({ variant: 'destructive', title: 'Error', description: 'Please enter an API key' });
       return;
     }
+    const key = llmApiKey.trim();
     const config: LLMConfig = {
       provider: 'openrouter',
-      api_key: llmApiKey.trim(),
+      api_key: key,
       model: isApprovedOpenRouterModel(llmModel) ? llmModel : DEFAULT_OPENROUTER_MODEL,
     };
     saveLLMConfig(config);
     setLegacyProvider(null);
     setLlmSaved(true);
-    toast({ title: 'Saved', description: 'OpenRouter configuration saved locally.' });
+    toast({ title: 'Saved', description: 'OpenRouter configuration saved locally. Verifying key...' });
+
+    // Verify the key directly against OpenRouter from the browser (never sent to our servers).
+    // A working inference key returns 200; a Provisioning/Management key or an invalid key 401s.
+    setKeyCheck({ status: 'checking', message: 'Verifying key with OpenRouter...' });
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/key', {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      if (res.ok) {
+        setKeyCheck({ status: 'ok', message: 'Key verified. Your OpenRouter inference key is working.' });
+      } else if (res.status === 401) {
+        setKeyCheck({
+          status: 'bad',
+          message: 'OpenRouter rejected this key (401). It looks like a Provisioning or Management key, or an invalid key, so AI features will fail. Paste an Inference API key instead:',
+        });
+      } else {
+        setKeyCheck({
+          status: 'unknown',
+          message: `Saved, but OpenRouter returned ${res.status} when verifying. If AI features fail, re-check the key.`,
+        });
+      }
+    } catch {
+      setKeyCheck({
+        status: 'unknown',
+        message: 'Saved, but the key could not be verified right now (network or OpenRouter issue). If AI features fail, re-check the key.',
+      });
+    }
   };
 
   const handleClearLLM = () => {
@@ -720,7 +749,7 @@ export default function SettingsPage() {
               <Input
                 type={showKey ? 'text' : 'password'}
                 value={llmApiKey}
-                onChange={(e) => { setLlmApiKey(e.target.value); setLlmSaved(false); }}
+                onChange={(e) => { setLlmApiKey(e.target.value); setLlmSaved(false); setKeyCheck({ status: 'idle', message: '' }); }}
                 placeholder="sk-or-..."
               />
               <button
@@ -809,6 +838,36 @@ export default function SettingsPage() {
               </Button>
             )}
           </div>
+
+          {keyCheck.status !== 'idle' && (
+            <div
+              className={
+                keyCheck.status === 'ok'
+                  ? 'rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800'
+                  : keyCheck.status === 'bad'
+                  ? 'rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900'
+                  : 'rounded-md border border-muted bg-muted/40 px-3 py-2 text-sm text-muted-foreground'
+              }
+            >
+              {keyCheck.status === 'checking' && (
+                <Loader2 className="inline h-3.5 w-3.5 mr-1.5 animate-spin align-[-2px]" />
+              )}
+              {keyCheck.message}
+              {keyCheck.status === 'bad' && (
+                <>
+                  {' '}
+                  <a
+                    href="https://openrouter.ai/keys"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline font-medium"
+                  >
+                    openrouter.ai/keys
+                  </a>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
