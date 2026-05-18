@@ -3,40 +3,20 @@ import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { Link } from 'react-router-dom';
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import type { DashboardSummary } from '@/types/rank-tracking';
-import type { GSCOverviewData } from '@/lib/gsc';
+import type { GSCOverviewData, GSCRangeData } from '@/lib/gsc';
 
 interface DashboardKPICardsProps {
   summary: DashboardSummary;
   gscOverview: GSCOverviewData | null;
+  range: GSCRangeData | null;
 }
 
-type Trend = Array<{ date: string; clicks: number; impressions: number }>;
+type Daily = Array<{ date: string; clicks: number; impressions: number }>;
 
-// Week-over-week from the daily trend the dashboard already fetches (30 daily
-// points): last 7 days vs the 7 days before. Client-side keeps this frontend-only.
-function sumWindow(trend: Trend, key: 'clicks' | 'impressions', from: number, to?: number) {
-  const sorted = [...trend].sort((a, b) => a.date.localeCompare(b.date));
-  return sorted.slice(from, to).reduce((s, d) => s + (d[key] || 0), 0);
-}
-
-function pctChange(last: number, prior: number): number | null {
-  if (prior === 0) return last > 0 ? 100 : null;
-  return Math.round(((last - prior) / prior) * 100);
-}
-
-function clicksImprWoW(trend: Trend, key: 'clicks' | 'impressions'): number | null {
-  if (!trend || trend.length < 14) return null;
-  return pctChange(sumWindow(trend, key, -7), sumWindow(trend, key, -14, -7));
-}
-
-function ctrWoW(trend: Trend): number | null {
-  if (!trend || trend.length < 14) return null;
-  const lc = sumWindow(trend, 'clicks', -7);
-  const li = sumWindow(trend, 'impressions', -7);
-  const pc = sumWindow(trend, 'clicks', -14, -7);
-  const pi = sumWindow(trend, 'impressions', -14, -7);
-  if (li === 0 || pi === 0) return null;
-  return pctChange(lc / li, pc / pi);
+function pctChange(cur: number, prev: number | null): number | null {
+  if (prev == null) return null;
+  if (prev === 0) return cur > 0 ? 100 : null;
+  return Math.round(((cur - prev) / prev) * 100);
 }
 
 function PctBadge({ pct }: { pct: number | null }) {
@@ -61,9 +41,9 @@ function PctBadge({ pct }: { pct: number | null }) {
   );
 }
 
-function Sparkline({ trend, dataKey, color }: { trend: Trend; dataKey: 'clicks' | 'impressions'; color: string }) {
-  if (!trend || trend.length < 2) return <div className="h-9" />;
-  const data = [...trend].sort((a, b) => a.date.localeCompare(b.date));
+function Sparkline({ daily, dataKey, color }: { daily: Daily; dataKey: 'clicks' | 'impressions'; color: string }) {
+  if (!daily || daily.length < 2) return <div className="h-9" />;
+  const data = [...daily].sort((a, b) => a.date.localeCompare(b.date));
   return (
     <div className="h-9">
       <ResponsiveContainer width="100%" height="100%">
@@ -80,62 +60,72 @@ function fmt(n: number): string {
   return String(n);
 }
 
-export default function DashboardKPICards({ gscOverview }: DashboardKPICardsProps) {
+export default function DashboardKPICards({ gscOverview, range }: DashboardKPICardsProps) {
   // GSC-only command center: every card is real Search Console data, trended.
-  const trend = gscOverview?.daily_trend || [];
-  const clicks30 = gscOverview?.summary.last_30_days.total_clicks || 0;
-  const impr30 = gscOverview?.summary.last_30_days.total_impressions || 0;
-  const strikingDistance = gscOverview?.query_summary.striking_distance ?? 0;
-  const ctr30 = impr30 > 0 ? (clicks30 / impr30) * 100 : 0;
+  // Numbers follow the dashboard time-range selector via the range block;
+  // fall back to the fixed 30-day summary if the range block is absent.
+  const days = range?.days ?? 30;
+  const daily: Daily = range?.daily ?? gscOverview?.daily_trend ?? [];
+  const clicks = range ? range.clicks : gscOverview?.summary.last_30_days.total_clicks || 0;
+  const impressions = range ? range.impressions : gscOverview?.summary.last_30_days.total_impressions || 0;
+  const strikingDistance = range ? range.striking_distance : gscOverview?.query_summary.striking_distance ?? 0;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const prevCtr =
+    range && range.prev_clicks != null && range.prev_impressions != null && range.prev_impressions > 0
+      ? (range.prev_clicks / range.prev_impressions) * 100
+      : null;
+
+  const periodLabel = `(${days}d)`;
+  const prevSub = `vs previous ${days} days`;
 
   const cards = [
     {
-      label: 'Clicks (30d)',
-      value: fmt(clicks30),
-      badge: <PctBadge pct={clicksImprWoW(trend, 'clicks')} />,
-      sub: 'last 7d vs prior 7d',
+      label: `Clicks ${periodLabel}`,
+      value: fmt(clicks),
+      badge: <PctBadge pct={range ? pctChange(clicks, range.prev_clicks) : null} />,
+      sub: prevSub,
       spark: 'clicks' as const,
       icon: MousePointerClick,
       tint: 'bg-indigo-50 text-indigo-600',
       stroke: '#4f46e5',
       to: '/rank-tracking',
-      help: 'Total clicks from Google Search over the last 30 days. The badge compares the most recent 7 days with the 7 days before.',
+      help: `Total clicks from Google Search over the last ${days} days. The badge compares this with the previous ${days} days.`,
     },
     {
-      label: 'Impressions (30d)',
-      value: fmt(impr30),
-      badge: <PctBadge pct={clicksImprWoW(trend, 'impressions')} />,
-      sub: 'last 7d vs prior 7d',
+      label: `Impressions ${periodLabel}`,
+      value: fmt(impressions),
+      badge: <PctBadge pct={range ? pctChange(impressions, range.prev_impressions) : null} />,
+      sub: prevSub,
       spark: 'impressions' as const,
       icon: Eye,
       tint: 'bg-sky-50 text-sky-600',
       stroke: '#0284c7',
       to: '/rank-tracking',
-      help: 'How many times your site appeared in Google Search results over the last 30 days. The badge compares the last 7 days with the prior 7.',
+      help: `How many times your site appeared in Google Search results over the last ${days} days, compared with the previous ${days} days.`,
     },
     {
-      label: 'CTR (30d)',
-      value: `${ctr30.toFixed(1)}%`,
-      badge: <PctBadge pct={ctrWoW(trend)} />,
+      label: `CTR ${periodLabel}`,
+      value: `${ctr.toFixed(1)}%`,
+      badge: <PctBadge pct={prevCtr != null ? pctChange(ctr, prevCtr) : null} />,
       sub: 'clicks ÷ impressions',
       spark: null,
       icon: Percent,
       tint: 'bg-emerald-50 text-emerald-600',
       stroke: '#059669',
       to: '/rank-tracking',
-      help: 'Click-through rate: clicks divided by impressions over 30 days. A low CTR at decent positions usually means the page title or description needs work.',
+      help: `Click-through rate: clicks divided by impressions over the last ${days} days. A low CTR at decent positions usually means the page title or description needs work.`,
     },
     {
       label: 'Striking distance',
       value: strikingDistance.toLocaleString(),
       badge: null as React.ReactNode,
-      sub: 'positions 4 to 15',
+      sub: 'positions 11 to 20',
       spark: null,
       icon: Target,
       tint: 'bg-orange-50 text-orange-600',
       stroke: '#ea580c',
       to: '/keyword-research',
-      help: 'Keywords ranking just off page one (about positions 4 to 15). They already earn impressions, so small on-page improvements can push them onto page one for fast traffic gains.',
+      help: 'Keywords ranking on page two (about positions 11 to 20). They already earn impressions, so they are the closest to breaking onto page one with focused on-page work.',
     },
   ];
 
@@ -174,7 +164,7 @@ export default function DashboardKPICards({ gscOverview }: DashboardKPICardsProp
               <span className="text-3xl font-bold tabular-nums">{card.value}</span>
               {card.badge}
             </div>
-            {card.spark && <Sparkline trend={trend} dataKey={card.spark} color={card.stroke} />}
+            {card.spark && <Sparkline daily={daily} dataKey={card.spark} color={card.stroke} />}
             <p className="text-[11px] text-muted-foreground">{card.sub}</p>
           </Link>
         );

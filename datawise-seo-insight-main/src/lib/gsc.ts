@@ -60,6 +60,29 @@ export interface GSCOverviewData {
     avg_position: number;
     avg_ctr: number;
   }>;
+  range?: GSCRangeData;
+}
+
+export type GSCRangeDays = 7 | 14 | 30 | 90;
+
+export interface GSCRangeData {
+  days: GSCRangeDays;
+  clicks: number;
+  impressions: number;
+  avg_position: number | null;
+  prev_clicks: number | null;
+  prev_impressions: number | null;
+  prev_avg_position: number | null;
+  striking_distance: number;
+  top_10: number;
+  daily: Array<{ date: string; clicks: number; impressions: number }>;
+  opportunities: Array<{
+    query: string;
+    clicks: number;
+    impressions: number;
+    avg_position: number;
+    avg_ctr: number;
+  }>;
 }
 
 export interface IndexationData {
@@ -124,8 +147,9 @@ export async function syncGSCProperty(propertyId: string) {
   });
 }
 
-export async function getGSCData(propertyId: string) {
-  return api<GSCOverviewData>(`/gsc/data?property_id=${propertyId}`);
+export async function getGSCData(propertyId: string, range?: GSCRangeDays) {
+  const rangeParam = range ? `&range=${range}` : '';
+  return api<GSCOverviewData>(`/gsc/data?property_id=${propertyId}${rangeParam}`);
 }
 
 export async function getGSCSitemaps(propertyId: string) {

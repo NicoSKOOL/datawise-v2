@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProperty } from '@/contexts/PropertyContext';
 import { fetchDashboardSummary } from '@/lib/dataforseo';
-import { getGSCData, getGSCSitemaps, syncGSCProperty, type GSCOverviewData, type IndexationData } from '@/lib/gsc';
+import { getGSCData, getGSCSitemaps, syncGSCProperty, type GSCOverviewData, type IndexationData, type GSCRangeDays } from '@/lib/gsc';
 import type { DashboardSummary } from '@/types/rank-tracking';
 import type { AnimatedIconHandle } from '@/components/icons/types';
 import MessageCircleIcon from '@/components/icons/message-circle-icon';
@@ -169,6 +169,45 @@ function ConnectGSCPanel({ domain }: { domain: string }) {
   );
 }
 
+const RANGE_OPTIONS: { value: GSCRangeDays; label: string }[] = [
+  { value: 7, label: '7 days' },
+  { value: 14, label: '14 days' },
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+];
+
+function RangeSelector({
+  value,
+  onChange,
+  refreshing,
+}: {
+  value: GSCRangeDays;
+  onChange: (v: GSCRangeDays) => void;
+  refreshing: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      {refreshing && <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      <div className="inline-flex rounded-lg border border-border bg-white p-0.5">
+        {RANGE_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              value === opt.value
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const {
@@ -183,6 +222,7 @@ export default function Dashboard() {
   const [indexation, setIndexation] = useState<IndexationData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [range, setRange] = useState<GSCRangeDays>(30);
   const loadRequestRef = useRef(0);
   const selectedGscPropertyId = selectedProperty && selectedProperty.kind !== 'manual'
     ? selectedProperty.id
@@ -196,7 +236,7 @@ export default function Dashboard() {
         fetchDashboardSummary(primaryDomain || undefined).catch(() => null),
         selectedGscPropertyId
           ? Promise.all([
-              getGSCData(selectedGscPropertyId).catch(() => null),
+              getGSCData(selectedGscPropertyId, range).catch(() => null),
               getGSCSitemaps(selectedGscPropertyId).catch(() => null),
             ])
           : Promise.resolve([null, null] as const),
@@ -213,7 +253,7 @@ export default function Dashboard() {
         setLoading(false);
       }
     }
-  }, [primaryDomain, selectedGscPropertyId]);
+  }, [primaryDomain, selectedGscPropertyId, range]);
 
   useEffect(() => {
     if (propertyLoading) {
@@ -255,7 +295,7 @@ export default function Dashboard() {
 
   let body: React.ReactNode;
 
-  if (loading || propertyLoading) {
+  if ((loading || propertyLoading) && !gscOverview) {
     body = (
       <div className="flex justify-center py-12">
         <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -282,8 +322,17 @@ export default function Dashboard() {
   } else {
     body = (
       <>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Performance</h2>
+          <RangeSelector value={range} onChange={setRange} refreshing={loading} />
+        </div>
+
         {summary && (
-          <DashboardKPICards summary={summary} gscOverview={gscOverview} />
+          <DashboardKPICards
+            summary={summary}
+            gscOverview={gscOverview}
+            range={gscOverview?.range ?? null}
+          />
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -292,10 +341,14 @@ export default function Dashboard() {
             onSync={selectedGscPropertyId ? handleSyncGSC : undefined}
             syncing={syncing}
           />
-          <GSCTrendChart data={gscTrendData} />
+          <GSCTrendChart data={gscOverview?.range?.daily ?? gscTrendData} />
         </div>
 
-        {gscOverview && <OpportunitiesPanel opportunities={gscOverview.opportunities} />}
+        {gscOverview && (
+          <OpportunitiesPanel
+            opportunities={gscOverview.range?.opportunities ?? gscOverview.opportunities}
+          />
+        )}
 
         {summary && summary.has_projects && (
           <TopMoversTable movers={summary.top_movers} decliners={summary.top_decliners} />
