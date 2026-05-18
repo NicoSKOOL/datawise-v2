@@ -34,8 +34,6 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric green state', 'bg-emerald-50'],
   ['Keyword metric amber state', 'bg-amber-50'],
   ['Keyword metric red state', 'bg-red-50'],
-  ['Dashboard indexation chart title', 'Search-visible pages'],
-  ['Dashboard sitemap-only legend', 'Sitemap-only'],
 ];
 const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
@@ -53,10 +51,8 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research keeps People Also Ask mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="people-also-ask" className="mt-6">'],
   ['Keyword Research keeps Fan-out mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="fan-out" className="mt-6">'],
   ['Keyword Research sidebar tab sync', 'src/pages/KeywordResearch.tsx', 'useSearchParams'],
-  ['Dashboard uses indexation chart', 'src/pages/Dashboard.tsx', "import IndexationChart from '@/components/dashboard/IndexationChart';"],
-  ['Dashboard fetches sitemap indexation data', 'src/pages/Dashboard.tsx', 'getGSCSitemaps'],
-  ['Dashboard renders indexation chart', 'src/pages/Dashboard.tsx', '<IndexationChart'],
-  ['GSC lib exposes sitemap indexation API', 'src/lib/gsc.ts', 'getGSCSitemaps'],
+  ['GSC lib retains sitemap indexation API for Phase 2', 'src/lib/gsc.ts', 'getGSCSitemaps'],
+  ['Dashboard shows top pages', 'src/pages/Dashboard.tsx', 'TopPagesPanel'],
   ['Dashboard KPI cards are the GSC command center', 'src/components/dashboard/DashboardKPICards.tsx', 'GSC-only command center: every card is real Search Console data'],
   ['Dashboard shows quick-wins opportunities', 'src/pages/Dashboard.tsx', 'OpportunitiesPanel'],
   ['Dashboard has add-website tier', 'src/pages/Dashboard.tsx', 'AddWebsiteCard'],

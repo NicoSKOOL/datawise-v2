@@ -336,6 +336,16 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       ORDER BY impressions DESC LIMIT 30
     `).bind(propertyId).all();
 
+    const rangeTopPages = await env.DB.prepare(`
+      SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
+             ROUND(AVG(position), 1) as avg_position
+      FROM gsc_search_data
+      WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+        AND page IS NOT NULL AND date >= date('now', '-${n} days')
+      GROUP BY page
+      ORDER BY clicks DESC LIMIT 12
+    `).bind(propertyId).all();
+
     const prevClicks = prev?.clicks != null ? Number(prev.clicks) : null;
     const prevImpr = prev?.impressions != null ? Number(prev.impressions) : null;
     rangeBlock = {
@@ -350,6 +360,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       top_10: Number(rangeQuery?.top_10 || 0),
       daily: rangeDaily.results || [],
       opportunities: rangeOpps.results || [],
+      top_pages: rangeTopPages.results || [],
     };
   }
 

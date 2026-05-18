@@ -84,6 +84,12 @@ export interface GSCRangeData {
     avg_ctr: number;
     page?: string | null;
   }>;
+  top_pages: Array<{
+    page: string;
+    clicks: number;
+    impressions: number;
+    avg_position: number;
+  }>;
 }
 
 export interface IndexationData {

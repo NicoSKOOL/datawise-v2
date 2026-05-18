@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProperty } from '@/contexts/PropertyContext';
 import { fetchDashboardSummary } from '@/lib/dataforseo';
-import { getGSCData, getGSCSitemaps, syncGSCProperty, type GSCOverviewData, type IndexationData, type GSCRangeDays } from '@/lib/gsc';
+import { getGSCData, type GSCOverviewData, type GSCRangeDays } from '@/lib/gsc';
 import type { DashboardSummary } from '@/types/rank-tracking';
 import type { AnimatedIconHandle } from '@/components/icons/types';
 import MessageCircleIcon from '@/components/icons/message-circle-icon';
@@ -18,7 +18,7 @@ import CheckedIcon from '@/components/icons/checked-icon';
 import DashboardKPICards from '@/components/dashboard/DashboardKPICards';
 import TopMoversTable from '@/components/dashboard/TopMoversTable';
 import GSCTrendChart from '@/components/dashboard/GSCTrendChart';
-import IndexationChart from '@/components/dashboard/IndexationChart';
+import TopPagesPanel from '@/components/dashboard/TopPagesPanel';
 import OpportunitiesPanel from '@/components/dashboard/OpportunitiesPanel';
 import AddWebsiteCard from '@/components/dashboard/AddWebsiteCard';
 
@@ -219,9 +219,7 @@ export default function Dashboard() {
   } = useProperty();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [gscOverview, setGscOverview] = useState<GSCOverviewData | null>(null);
-  const [indexation, setIndexation] = useState<IndexationData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [range, setRange] = useState<GSCRangeDays>(30);
   const loadRequestRef = useRef(0);
   const selectedGscPropertyId = selectedProperty && selectedProperty.kind !== 'manual'
@@ -232,22 +230,17 @@ export default function Dashboard() {
     const requestId = ++loadRequestRef.current;
     setLoading(true);
     try {
-      const [summaryData, gscData] = await Promise.all([
+      const [summaryData, overview] = await Promise.all([
         fetchDashboardSummary(primaryDomain || undefined).catch(() => null),
         selectedGscPropertyId
-          ? Promise.all([
-              getGSCData(selectedGscPropertyId, range).catch(() => null),
-              getGSCSitemaps(selectedGscPropertyId).catch(() => null),
-            ])
-          : Promise.resolve([null, null] as const),
+          ? getGSCData(selectedGscPropertyId, range).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       if (requestId !== loadRequestRef.current) return;
 
-      const [overview, indexationData] = gscData;
       setSummary(summaryData as DashboardSummary | null);
       setGscOverview(overview?.query_summary ? overview : null);
-      setIndexation(indexationData);
     } finally {
       if (requestId === loadRequestRef.current) {
         setLoading(false);
@@ -264,18 +257,6 @@ export default function Dashboard() {
   }, [propertyLoading, loadDashboardData]);
 
   const gscTrendData = gscOverview?.daily_trend || [];
-
-  const handleSyncGSC = async () => {
-    if (!selectedGscPropertyId || syncing) return;
-
-    setSyncing(true);
-    try {
-      await syncGSCProperty(selectedGscPropertyId);
-      await loadDashboardData();
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   // Tiered command center:
   //  - no website on the account  -> add-website field (Tier 0)
@@ -336,11 +317,7 @@ export default function Dashboard() {
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <IndexationChart
-            data={indexation}
-            onSync={selectedGscPropertyId ? handleSyncGSC : undefined}
-            syncing={syncing}
-          />
+          <TopPagesPanel pages={gscOverview?.range?.top_pages ?? gscOverview?.top_pages ?? []} />
           <GSCTrendChart data={gscOverview?.range?.daily ?? gscTrendData} />
         </div>
 
