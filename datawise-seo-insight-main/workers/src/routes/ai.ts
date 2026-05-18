@@ -580,8 +580,29 @@ export async function handleLighthouseSEO(request: Request, env: Env): Promise<R
   const data = lighthouseSettled.value;
   const lighthouseResult = data?.tasks?.[0]?.result?.[0];
 
+  // DataForSEO can resolve successfully but return an empty or invalid
+  // result (no categories). Never ship `lighthouse: {}` here: the frontend
+  // assumes categories/audits exist and an empty object white-screens the
+  // page. Degrade exactly like the timeout path instead.
+  if (!lighthouseResult || !lighthouseResult.categories) {
+    if (htmlData) {
+      return json({
+        lighthouse: buildLighthouseTimeoutFallback(),
+        htmlData,
+        url,
+        timestamp: new Date().toISOString(),
+        partial: true,
+        warning: 'Full Lighthouse data was unavailable, so this audit is based on page metadata only.',
+      });
+    }
+    return json(
+      { error: 'Website audit could not be completed. Please try again in a minute.' },
+      502
+    );
+  }
+
   return json({
-    lighthouse: lighthouseResult || {},
+    lighthouse: lighthouseResult,
     htmlData,
     url,
     timestamp: new Date().toISOString(),

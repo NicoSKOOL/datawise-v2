@@ -276,9 +276,11 @@ export default function OnPageSEO() {
     return slowResources;
   };
 
-  const failedAudits = results ? Object.entries(results.lighthouse.audits).filter(([_, audit]) => 
-    audit.score !== null && audit.score < 1
-  ) : [];
+  const failedAudits = results?.lighthouse?.audits
+    ? Object.entries(results.lighthouse.audits).filter(([_, audit]) =>
+        audit.score !== null && audit.score < 1
+      )
+    : [];
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -347,7 +349,19 @@ export default function OnPageSEO() {
             </div>
           )}
           
-          {results && !loading && (
+          {results && !loading && !results.lighthouse?.categories && (
+            <Card className="p-8">
+              <div className="flex flex-col items-center space-y-3 text-center">
+                <h3 className="text-lg font-semibold">Audit could not be completed</h3>
+                <p className="text-muted-foreground">
+                  The SEO audit did not return full results this time. Please try running the analysis again in a minute.
+                </p>
+                <Button onClick={runAnalysis}>Try again</Button>
+              </div>
+            </Card>
+          )}
+
+          {results && !loading && results.lighthouse?.categories && (
           <div className="space-y-6">
             <Tabs defaultValue="performance" className="w-full">
               <TabsList className="grid w-full grid-cols-4">
