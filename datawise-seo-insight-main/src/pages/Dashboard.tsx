@@ -283,7 +283,7 @@ export default function Dashboard() {
     body = (
       <>
         {summary && (
-          <DashboardKPICards summary={summary} gscOverview={gscOverview} indexation={indexation} />
+          <DashboardKPICards summary={summary} gscOverview={gscOverview} />
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
