@@ -271,7 +271,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
         ROUND(AVG(position), 1) as avg_position,
         SUM(impressions) as impressions
       FROM gsc_search_data
-      WHERE property_id = ? AND source = 'agg90'
+      WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
       GROUP BY query
     )
     SELECT
@@ -289,7 +289,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   const topQueries = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
            ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
-    FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'
+    FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query ORDER BY clicks DESC LIMIT 50
   `).bind(propertyId).all();
 
@@ -297,7 +297,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   const topPages = await env.DB.prepare(`
     SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
            ROUND(AVG(position), 1) as avg_position
-    FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'
+    FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY page ORDER BY clicks DESC LIMIT 30
   `).bind(propertyId).all();
 
@@ -305,7 +305,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   const opportunities = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
            ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
-    FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'
+    FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query
     HAVING AVG(position) BETWEEN 5 AND 20 AND SUM(impressions) > 100
     ORDER BY impressions DESC LIMIT 30
@@ -335,17 +335,22 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   let rangeBlock: Record<string, unknown> | null = null;
   if (ALLOWED_RANGES.includes(requestedRange)) {
     const n = requestedRange;
-    // Ranges up to 35 days read the date-accurate per-day set (source='pd');
-    // the 90-day range reads the full date-less aggregate (source='agg90').
+    // Backward compatible: a re-synced property has source='agg90'/'pd' rows
+    // (legacy source='gsc' query+page rows were DELETEd by the sync); a not-yet
+    // re-synced property still only has legacy source='gsc' query+page rows.
+    // The two never coexist for a property, so OR-ing them never double counts.
+    // Ranges up to 35 days use the date-accurate per-day set (falls back to the
+    // legacy mis-dated rows pre-resync = prior behavior); 90 uses the aggregate.
+    const legacyQP = `query != '__daily_total__' AND page != '__7d_query__'`;
     const qpScope = n <= 35
-      ? `source = 'pd' AND date >= date('now', '-${n} days')`
-      : `source = 'agg90'`;
+      ? `((source = 'pd') OR (source = 'gsc' AND ${legacyQP})) AND date >= date('now', '-${n} days')`
+      : `((source = 'agg90' OR source = 'gsc') AND ${legacyQP})`;
     const qpScopeG = n <= 35
-      ? `g.source = 'pd' AND g.date >= date('now', '-${n} days')`
-      : `g.source = 'agg90'`;
+      ? `((g.source = 'pd') OR (g.source = 'gsc' AND g.query != '__daily_total__' AND g.page != '__7d_query__')) AND g.date >= date('now', '-${n} days')`
+      : `((g.source = 'agg90' OR g.source = 'gsc') AND g.query != '__daily_total__' AND g.page != '__7d_query__')`;
     const qpScopeP = n <= 35
-      ? `p.source = 'pd' AND p.date >= date('now', '-${n} days')`
-      : `p.source = 'agg90'`;
+      ? `((p.source = 'pd') OR (p.source = 'gsc' AND p.query != '__daily_total__' AND p.page != '__7d_query__')) AND p.date >= date('now', '-${n} days')`
+      : `((p.source = 'agg90' OR p.source = 'gsc') AND p.query != '__daily_total__' AND p.page != '__7d_query__')`;
     const cur = await env.DB.prepare(`
       SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
              ROUND(AVG(position), 1) as avg_position
@@ -472,7 +477,7 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
   const sortCol = allowedSorts.includes(sort) ? sort : 'clicks';
   const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
 
-  const baseWhere = `property_id = ? AND source = 'agg90'`;
+  const baseWhere = `property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'`;
 
   // "page2" groups by page URL; everything else groups by query
   if (filter === 'page2') {
@@ -624,7 +629,8 @@ export async function handleGSCSitemaps(request: Request, env: Env, userId: stri
     FROM gsc_search_data
     WHERE property_id = ?
       AND page IS NOT NULL
-      AND source = 'agg90'
+      AND (source = 'agg90' OR source = 'gsc')
+      AND query != '__daily_total__' AND page != '__7d_query__'
   `).bind(propertyId).first();
 
   const indexed = Number(pageCount?.count || 0);
