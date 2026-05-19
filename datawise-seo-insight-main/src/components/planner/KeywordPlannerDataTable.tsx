@@ -111,6 +111,7 @@ export function KeywordPlannerDataTable({
       description={description}
       loading={loading}
       metricMode={metricMode}
+      stickyHeader
       toolbarActions={saveSelectedButton}
       getRowId={getKeywordRowKey}
       selectedRowIds={selectedKeywordKeys}
