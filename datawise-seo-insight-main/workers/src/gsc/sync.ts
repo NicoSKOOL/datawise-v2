@@ -9,6 +9,40 @@ interface SearchAnalyticsRow {
   position: number;
 }
 
+const GSC_ROW_LIMIT = 25000;
+// Safety ceiling so a pathologically large property cannot run the Worker
+// out of CPU/subrequests. 30 pages * 25k = 750k rows per pass.
+const GSC_MAX_PAGES = 30;
+
+// Fetch every row for a Search Analytics query by walking startRow until a
+// short page (or the safety ceiling) is hit. The GSC API caps a single
+// response at 25k rows; without this loop everything past row 25k is lost.
+async function fetchAllSearchAnalyticsRows(
+  apiUrl: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+): Promise<{ rows: SearchAnalyticsRow[]; truncated: boolean }> {
+  const all: SearchAnalyticsRow[] = [];
+  for (let page = 0; page < GSC_MAX_PAGES; page++) {
+    const resp = await fetch(apiUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...body, rowLimit: GSC_ROW_LIMIT, startRow: page * GSC_ROW_LIMIT }),
+    });
+    if (!resp.ok) {
+      const errorBody = await resp.text();
+      console.error('GSC searchAnalytics API error:', errorBody);
+      throw new Error('GSC_FETCH_FAILED');
+    }
+    const data = await resp.json() as { rows?: SearchAnalyticsRow[] };
+    const rows = data.rows || [];
+    all.push(...rows);
+    if (rows.length < GSC_ROW_LIMIT) return { rows: all, truncated: false };
+  }
+  console.warn(`GSC pagination hit ${GSC_MAX_PAGES}-page ceiling; data may be truncated`);
+  return { rows: all, truncated: true };
+}
+
 // POST /gsc/sync - Fetch Search Analytics data for a property
 export async function handleGSCSync(request: Request, env: Env, userId: string): Promise<Response> {
   const { property_id } = await request.json() as { property_id: string };
@@ -64,38 +98,38 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   const totalClicks = dailyRows.reduce((sum, row) => sum + Number(row.clicks || 0), 0);
   const totalImpressions = dailyRows.reduce((sum, row) => sum + Number(row.impressions || 0), 0);
 
-  // --- Pass 2: Query+page data per 30-day batch (dimensions: ['query', 'page']) ---
-  // Each batch gets its own 25K row budget for query-level detail
-  const queryRows: { date: string; row: SearchAnalyticsRow }[] = [];
-  for (let i = 0; i < 3; i++) {
-    const batchEnd = new Date(now);
-    batchEnd.setDate(batchEnd.getDate() - (i * 30));
-    const batchStart = new Date(batchEnd);
-    batchStart.setDate(batchStart.getDate() - 30);
+  // --- Pass 2a: Full 90-day query+page aggregate (no date dimension) ---
+  // Stored as source='agg90'. Powers the default dashboard, /gsc/queries,
+  // and the 90-day range. Paginated, so large sites are no longer capped
+  // at 25k rows (the old 3x25k batch scheme silently dropped the long tail).
+  let aggRows: SearchAnalyticsRow[];
+  try {
+    aggRows = (await fetchAllSearchAnalyticsRows(apiUrl, headers, {
+      startDate: formatDate(ninetyDaysAgo),
+      endDate: formatDate(now),
+      dimensions: ['query', 'page'],
+      dataState: 'final',
+    })).rows;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
+  }
 
-    const apiResponse = await fetch(apiUrl, {
-      method: 'POST', headers,
-      body: JSON.stringify({
-        startDate: formatDate(batchStart),
-        endDate: formatDate(batchEnd),
-        dimensions: ['query', 'page'],
-        rowLimit: 25000,
-        dataState: 'final',
-      }),
-    });
-
-    if (!apiResponse.ok) {
-      const errorBody = await apiResponse.text();
-      console.error('GSC query batch API error:', errorBody);
-      return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
-    }
-
-    const data = await apiResponse.json() as { rows?: SearchAnalyticsRow[] };
-    // Store batch end date so we can filter by time period later
-    const batchDate = formatDate(batchEnd);
-    for (const row of data.rows || []) {
-      queryRows.push({ date: batchDate, row });
-    }
+  // --- Pass 2b: Per-day query+page for the last 35 days ---
+  // Stored as source='pd' with the REAL per-day date (keys[0]). Powers the
+  // date-accurate 7/14/30-day range panels. The 35-day window bounds row
+  // volume; the 90-day view uses the aggregate above instead.
+  const thirtyFiveDaysAgo = new Date(now);
+  thirtyFiveDaysAgo.setDate(thirtyFiveDaysAgo.getDate() - 35);
+  let perDayRows: SearchAnalyticsRow[];
+  try {
+    perDayRows = (await fetchAllSearchAnalyticsRows(apiUrl, headers, {
+      startDate: formatDate(thirtyFiveDaysAgo),
+      endDate: formatDate(now),
+      dimensions: ['date', 'query', 'page'],
+      dataState: 'final',
+    })).rows;
+  } catch {
+    return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
   }
 
   // --- Pass 3: 7-day query breakdown (dimensions: ['query']) ---
@@ -124,7 +158,9 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   await env.DB.prepare('DELETE FROM gsc_search_data WHERE property_id = ?').bind(property_id).run();
 
   // Insert daily totals (query = '__daily_total__' to distinguish from query-level rows)
-  const insertBatchSize = 100;
+  // 500/batch (D1 allows up to 1000 statements) keeps round-trips low so large
+  // properties finish re-inserting well within the Worker time budget.
+  const insertBatchSize = 500;
   for (let i = 0; i < dailyRows.length; i += insertBatchSize) {
     const batch = dailyRows.slice(i, i + insertBatchSize);
     const stmts = batch.map(row =>
@@ -147,13 +183,27 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
     await env.DB.batch(stmts);
   }
 
-  // Insert query+page rows from 30-day batches
-  for (let i = 0; i < queryRows.length; i += insertBatchSize) {
-    const batch = queryRows.slice(i, i + insertBatchSize);
-    const stmts = batch.map(({ date, row }) =>
+  // Insert the 90-day query+page aggregate (source='agg90'). keys = [query, page].
+  // Date is irrelevant for this set (consumers ignore it / use the 90d range),
+  // so it is stamped 'today' purely to satisfy the NOT NULL date column.
+  for (let i = 0; i < aggRows.length; i += insertBatchSize) {
+    const batch = aggRows.slice(i, i + insertBatchSize);
+    const stmts = batch.map(row =>
       env.DB.prepare(
-        'INSERT INTO gsc_search_data (property_id, date, query, page, clicks, impressions, ctr, position, device, country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(property_id, date, row.keys[0], row.keys[1], row.clicks, row.impressions, row.ctr, row.position, null, null)
+        'INSERT INTO gsc_search_data (property_id, date, query, page, clicks, impressions, ctr, position, device, country, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(property_id, today, row.keys[0], row.keys[1], row.clicks, row.impressions, row.ctr, row.position, null, null, 'agg90')
+    );
+    await env.DB.batch(stmts);
+  }
+
+  // Insert per-day query+page rows (source='pd'). keys = [date, query, page].
+  // The real per-day date is stored so 7/14/30-day ranges filter accurately.
+  for (let i = 0; i < perDayRows.length; i += insertBatchSize) {
+    const batch = perDayRows.slice(i, i + insertBatchSize);
+    const stmts = batch.map(row =>
+      env.DB.prepare(
+        'INSERT INTO gsc_search_data (property_id, date, query, page, clicks, impressions, ctr, position, device, country, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(property_id, row.keys[0], row.keys[1], row.keys[2], row.clicks, row.impressions, row.ctr, row.position, null, null, 'pd')
     );
     await env.DB.batch(stmts);
   }
@@ -163,13 +213,14 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
     'UPDATE gsc_properties SET last_synced_at = datetime("now") WHERE id = ?'
   ).bind(property_id).run();
 
-  const totalRows = dailyRows.length + query7dRows.length + queryRows.length;
+  const totalRows = dailyRows.length + query7dRows.length + aggRows.length + perDayRows.length;
   return new Response(JSON.stringify({
     success: true,
     rows_synced: totalRows,
     daily_rows: dailyRows.length,
     query_7d_rows: query7dRows.length,
-    query_30d_rows: queryRows.length,
+    query_agg90_rows: aggRows.length,
+    query_perday_rows: perDayRows.length,
     total_clicks: totalClicks,
     total_impressions: totalImpressions,
     property: siteUrl,
@@ -220,7 +271,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
         ROUND(AVG(position), 1) as avg_position,
         SUM(impressions) as impressions
       FROM gsc_search_data
-      WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+      WHERE property_id = ? AND source = 'agg90'
       GROUP BY query
     )
     SELECT
@@ -238,7 +289,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   const topQueries = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
            ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
-    FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+    FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'
     GROUP BY query ORDER BY clicks DESC LIMIT 50
   `).bind(propertyId).all();
 
@@ -246,7 +297,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   const topPages = await env.DB.prepare(`
     SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
            ROUND(AVG(position), 1) as avg_position
-    FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+    FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'
     GROUP BY page ORDER BY clicks DESC LIMIT 30
   `).bind(propertyId).all();
 
@@ -254,7 +305,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   const opportunities = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
            ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
-    FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
+    FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'
     GROUP BY query
     HAVING AVG(position) BETWEEN 5 AND 20 AND SUM(impressions) > 100
     ORDER BY impressions DESC LIMIT 30
@@ -284,6 +335,17 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   let rangeBlock: Record<string, unknown> | null = null;
   if (ALLOWED_RANGES.includes(requestedRange)) {
     const n = requestedRange;
+    // Ranges up to 35 days read the date-accurate per-day set (source='pd');
+    // the 90-day range reads the full date-less aggregate (source='agg90').
+    const qpScope = n <= 35
+      ? `source = 'pd' AND date >= date('now', '-${n} days')`
+      : `source = 'agg90'`;
+    const qpScopeG = n <= 35
+      ? `g.source = 'pd' AND g.date >= date('now', '-${n} days')`
+      : `g.source = 'agg90'`;
+    const qpScopeP = n <= 35
+      ? `p.source = 'pd' AND p.date >= date('now', '-${n} days')`
+      : `p.source = 'agg90'`;
     const cur = await env.DB.prepare(`
       SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
              ROUND(AVG(position), 1) as avg_position
@@ -310,8 +372,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       WITH rollup AS (
         SELECT query, ROUND(AVG(position), 1) as avg_position, SUM(impressions) as impressions
         FROM gsc_search_data
-        WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
-          AND date >= date('now', '-${n} days')
+        WHERE property_id = ? AND ${qpScope}
         GROUP BY query
       )
       SELECT
@@ -325,12 +386,10 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
              ROUND(AVG(g.position), 1) as avg_position, ROUND(AVG(g.ctr), 4) as avg_ctr,
              (SELECT p.page FROM gsc_search_data p
                 WHERE p.property_id = g.property_id AND p.query = g.query
-                  AND p.page != '__7d_query__' AND p.page IS NOT NULL
-                  AND p.date >= date('now', '-${n} days')
+                  AND p.page IS NOT NULL AND ${qpScopeP}
                 GROUP BY p.page ORDER BY SUM(p.impressions) DESC LIMIT 1) as page
       FROM gsc_search_data g
-      WHERE g.property_id = ? AND g.query != '__daily_total__' AND g.page != '__7d_query__'
-        AND g.date >= date('now', '-${n} days')
+      WHERE g.property_id = ? AND ${qpScopeG}
       GROUP BY g.query
       HAVING AVG(g.position) BETWEEN 5 AND 20 AND SUM(g.impressions) > 10
       ORDER BY impressions DESC LIMIT 30
@@ -340,8 +399,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
              ROUND(AVG(position), 1) as avg_position
       FROM gsc_search_data
-      WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
-        AND page IS NOT NULL AND date >= date('now', '-${n} days')
+      WHERE property_id = ? AND page IS NOT NULL AND ${qpScope}
       GROUP BY page
       ORDER BY clicks DESC LIMIT 12
     `).bind(propertyId).all();
@@ -414,7 +472,7 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
   const sortCol = allowedSorts.includes(sort) ? sort : 'clicks';
   const sortOrder = order === 'asc' ? 'ASC' : 'DESC';
 
-  const baseWhere = `property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'`;
+  const baseWhere = `property_id = ? AND source = 'agg90'`;
 
   // "page2" groups by page URL; everything else groups by query
   if (filter === 'page2') {
@@ -566,8 +624,7 @@ export async function handleGSCSitemaps(request: Request, env: Env, userId: stri
     FROM gsc_search_data
     WHERE property_id = ?
       AND page IS NOT NULL
-      AND page != '__7d_query__'
-      AND query != '__daily_total__'
+      AND source = 'agg90'
   `).bind(propertyId).first();
 
   const indexed = Number(pageCount?.count || 0);
