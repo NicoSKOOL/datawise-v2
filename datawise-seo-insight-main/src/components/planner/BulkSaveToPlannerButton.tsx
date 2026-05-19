@@ -42,11 +42,18 @@ export function BulkSaveToPlannerButton({
     },
   });
 
+  const primed =
+    Boolean(selectedPropertyId) && items.length > 0 && !saveMutation.isPending;
+
   return (
     <Button
       variant="outline"
       size="sm"
-      className={`gap-2 ${className || ''}`}
+      className={`gap-2 ${className || ''} ${
+        primed
+          ? 'border-primary text-primary animate-save-glow motion-reduce:animate-none'
+          : ''
+      }`}
       disabled={!selectedPropertyId || items.length === 0 || saveMutation.isPending}
       title={!selectedPropertyId ? 'Select a site in the sidebar to save keywords' : undefined}
       onClick={() => saveMutation.mutate()}

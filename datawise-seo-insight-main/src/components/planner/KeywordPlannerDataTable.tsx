@@ -79,11 +79,18 @@ export function KeywordPlannerDataTable({
     },
   });
 
+  const saveSelectedPrimed =
+    Boolean(selectedPropertyId) && selectedItems.length > 0 && !saveMutation.isPending;
+
   const saveSelectedButton = (
     <Button
       variant="outline"
       size="sm"
-      className="gap-2"
+      className={`gap-2 ${
+        saveSelectedPrimed
+          ? 'border-primary text-primary animate-save-glow motion-reduce:animate-none'
+          : ''
+      }`}
       disabled={!selectedPropertyId || selectedItems.length === 0 || saveMutation.isPending}
       title={!selectedPropertyId ? 'Select a site in the sidebar to save keywords' : undefined}
       onClick={() => saveMutation.mutate()}
@@ -104,6 +111,7 @@ export function KeywordPlannerDataTable({
       description={description}
       loading={loading}
       metricMode={metricMode}
+      stickyHeader
       toolbarActions={saveSelectedButton}
       getRowId={getKeywordRowKey}
       selectedRowIds={selectedKeywordKeys}

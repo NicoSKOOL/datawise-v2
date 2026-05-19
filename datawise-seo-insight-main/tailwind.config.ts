@@ -96,10 +96,17 @@ export default {
             height: "0",
           },
         },
+        // Subtle brand-green glow that breathes in and out, used to draw
+        // attention to the "Save selected" button once keywords are picked.
+        "save-glow": {
+          "0%, 100%": { boxShadow: "0 0 0 0 rgba(0, 82, 50, 0)" },
+          "50%": { boxShadow: "0 0 12px 2px rgba(0, 82, 50, 0.45)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "save-glow": "save-glow 2s ease-in-out infinite",
       },
     },
   },

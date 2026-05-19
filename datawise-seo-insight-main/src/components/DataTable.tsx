@@ -27,6 +27,8 @@ export interface DataTableProps {
   renderRowActions?: (row: Record<string, unknown>, index: number) => React.ReactNode;
   rowActionsHeader?: string;
   enableSorting?: boolean;
+  /** Pin the card header (title + toolbar actions) to the top while scrolling the table. */
+  stickyHeader?: boolean;
 }
 
 export function DataTable({
@@ -44,6 +46,7 @@ export function DataTable({
   renderRowActions,
   rowActionsHeader = 'Actions',
   enableSorting = true,
+  stickyHeader = false,
 }: DataTableProps) {
   const hasSelection = Boolean(getRowId && selectedRowIds && onSelectedRowIdsChange);
   const hasRowActions = Boolean(renderRowActions);
@@ -148,7 +151,12 @@ export function DataTable({
 
   return (
     <Card>
-      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <CardHeader
+        className={cn(
+          'flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between',
+          stickyHeader && 'sticky top-0 z-20 rounded-t-lg border-b bg-card'
+        )}
+      >
         <div>
           <CardTitle>{title}</CardTitle>
           {description && <CardDescription>{description}</CardDescription>}
