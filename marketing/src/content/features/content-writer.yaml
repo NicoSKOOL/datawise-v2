@@ -1,0 +1,143 @@
+# SEO Keyword Research
+# Primary keyword: "ai seo content writer" (110/mo, $14.37 CPC, US Google)
+# Rationale: pure tool-intent SERP (Junia, Koala, Arvow, SEOWriting.ai, Frase),
+#   exact match to positioning. We deliberately avoid "seo content writer" (2400/mo)
+#   because that SERP is dominated by job-board / salary intent (Indeed, LinkedIn,
+#   Upwork) and would put us in the wrong result set.
+# Secondary / LSI keywords woven into copy:
+#   - ai content writer
+#   - ai blog writer
+#   - ai article writer
+#   - ai content writing tool
+#   - ai blog post generator
+#   - ai content generator
+#   - ai seo writer
+#   - ai writing assistant
+#   - ai writer for seo
+#   - seo writing tool
+#   - seo ai generator
+#   - ai seo blog writer
+# Fanout queries answered (related searches):
+#   - best ai seo content writer / best ai content writer
+#   - ai seo content writer free / software / online
+#   - ai blog writer with images
+#   - seo writing ai pricing / review
+#   - free ai tools for seo optimization
+#   - how to use ai for seo
+# PAA / informational angles addressed in FAQs:
+#   - What does an AI content writer do?
+#   - Will Google penalize AI content?
+#   - Can AI content rank on Google?
+#   - How do I make AI content sound human?
+#   - Do AI writers cite real sources?
+
+title: Content Writer
+description: An AI SEO content writer that researches with real citations, drafts in your brand voice, and turns Search Console keywords into publish-ready articles.
+metaDescription: "DataWise Content Writer: an AI SEO content writer with cited research (Perplexity Sonar Pro), outline-driven drafting (DeepSeek V4 Pro), and Search Console workspaces. Plan, write, publish."
+icon: "✍️"
+heroTagline: "Research first. Write second. Rank third."
+
+benefits:
+  - title: Grounded research, not hallucinations
+    description: Every article opens with real-time web research and citations from Perplexity Sonar Pro, so your AI content writer cites sources instead of inventing them.
+  - title: A pipeline you control
+    description: Research, outline, draft, and review run as four discrete steps you can rerun individually, not a black-box one-click button.
+  - title: Tied to your Search Console data
+    description: Each writer workspace is bound 1:1 to a Google Search Console property, so the keywords you research and plan flow straight into the AI SEO content writer.
+
+differentiator:
+  eyebrow: "Why this AI SEO content writer ranks"
+  title: "We force you to teach the writer who you are, before it writes a single word"
+  description: "Most AI content writers go straight from keyword to draft, which is exactly why their output reads generic and rarely ranks. DataWise blocks drafting until you fill a five-part Knowledge Base for the workspace, so every article inherits your real voice, real services, real brand rules, and real first-hand experience."
+  bullets:
+    - "Website Pages: a crawl of your site so internal links point to pages you actually have, not invented URLs"
+    - "Tone of Voice: the personality, sentence patterns, and rhythm the writer matches in every post"
+    - "Offer Details: the source of truth for services, pricing, scope, and edge cases, so the model stops inventing facts"
+    - "Brand Guidelines: hard rules, claims you can and cannot make, formatting, and competitor handling"
+    - "Experience Notes: your real stories, opinions, credentials, and case studies, the single biggest lift over generic AI content"
+  screenshot: "content-writer-knowledge-base"
+  imageAlt: "DataWise Content Writer Knowledge Base setup with Website Pages, Tone of Voice, Offer Details, Brand Guidelines, and Experience Notes all marked Ready"
+
+subTools:
+  - name: Research with citations
+    description: Perplexity Sonar Pro grounds every article in cited, real-time web sources. Review, edit, and approve sources before the writer touches the draft.
+  - name: Outline builder
+    description: Generate a structured H2/H3 outline from your research notes, target keyword, audience, and angle. Edit any section before drafting.
+  - name: Drafting and review
+    description: DeepSeek V4 Pro writes the full article from your approved outline, then runs a fact-and-tone review pass before handing you HTML and Markdown.
+  - name: Knowledge Base
+    description: Five document types per workspace (sitemap, tone of voice, brand guidelines, service details, experience notes) keep every article on-brand and on-message.
+
+stats:
+  - value: 4
+    suffix: "-step"
+    label: "Transparent pipeline: research, outline, draft, review (rerun any step in isolation)"
+  - value: 5
+    suffix: ""
+    label: "Knowledge Base document types per workspace (sitemap, tone, brand, services, experience)"
+  - value: 2
+    suffix: ""
+    label: "Specialised models orchestrated: Perplexity Sonar Pro for research, DeepSeek V4 Pro for writing"
+  - value: 1
+    suffix: ":1"
+    label: "Writer workspace per Google Search Console property, so planning and writing share one source of truth"
+
+story:
+  - caption: "Pick a keyword from your Content Planner"
+    highlight: "Open the writer inside the GSC property workspace, or import any keyword straight from the Content Planner. The post is created with the target keyword pre-filled, deduped against anything you've already drafted."
+  - caption: "Run grounded research and approve the sources"
+    highlight: "Perplexity Sonar Pro pulls live, cited sources for the topic and discovers your own internal pages worth linking to. Edit the source list, score link-worthiness, and lock it in before the writer sees it."
+  - caption: "Generate an outline that matches search intent"
+    highlight: "DeepSeek V4 Pro builds an H2/H3 outline from the brief, the research notes, and your Knowledge Base. Reorder sections, tighten angles, or rerun the step until the structure earns the click."
+  - caption: "Draft, review, and export to publish"
+    highlight: "The writer drafts the full article in your tone of voice with internal links from your real sitemap, runs a review pass, and hands you clean HTML and Markdown. No em-dashes, no horizontal-rule artifacts, no boilerplate."
+
+opportunities:
+  - title: Cited research, not invented facts
+    description: Most AI content writers hallucinate stats and sources. This one grounds every article in real-time Sonar Pro web search with citations you can audit before drafting.
+    icon: search
+  - title: Planner-to-writer pipeline
+    description: Keywords you research and plan in DataWise import directly into the writer with one click, dedup-checked against existing drafts.
+    icon: zap
+  - title: Brand voice from a real Knowledge Base
+    description: Train the writer on your tone of voice, service details, brand guidelines, and first-hand experience notes. Every article inherits your voice instead of generic AI prose.
+    icon: pen-tool
+  - title: Internal linking from your actual sitemap
+    description: The writer auto-discovers your sitemap, scores each page for link-worthiness, and weaves real internal links into drafts instead of inventing URLs.
+    icon: link
+  - title: Rerun any step without losing the rest
+    description: Hit a weak section after drafting? Rerun research, outline, or review in isolation while keeping the parts that already work. No more starting over.
+    icon: trending-up
+  - title: BYOK on OpenRouter
+    description: Bring your own OpenRouter key and pay model costs at cost. No marked-up token resale, no opaque enterprise pricing.
+    icon: bar-chart
+
+useCases:
+  - icon: users
+    audience: "In-house SEO managers"
+    scenario: "Weekly publishing targets and a backlog of GSC keywords. SEO managers turn the Content Planner into shipped articles with grounded research, brand voice, and clean exports, without juggling five separate tools."
+  - icon: bar-chart
+    audience: "SEO and content agencies"
+    scenario: "A separate writer workspace per client property keeps tone, services, sitemap, and research isolated. Account managers brief once, then let the AI SEO content writer handle the volume."
+  - icon: globe
+    audience: "Local service businesses"
+    scenario: "Service-area pages and city blog posts share the same brand voice and link graph. The Knowledge Base captures real first-hand experience so AI drafts read like a local expert wrote them."
+  - icon: trending-up
+    audience: "SaaS and ecommerce marketers"
+    scenario: "Long-tail product and category content compounds quickly when planning, research, and writing are in one loop. The four-step pipeline keeps quality control on the human side without slowing throughput."
+
+faqs:
+  - question: What does an AI content writer actually do?
+    answer: "An AI content writer takes a topic, target keyword, and brief, then generates structured long-form content for blog posts, articles, and landing pages. DataWise Content Writer goes further than a single prompt: it runs four discrete steps (research with citations, outline, draft, review), grounds every article in real-time web sources via Perplexity Sonar Pro, drafts the body with DeepSeek V4 Pro in your brand voice, and exports clean HTML and Markdown. You stay in control at every step rather than receiving one black-box article."
+  - question: Will Google penalize content written by an AI SEO content writer?
+    answer: "Google's official guidance is that it rewards helpful, accurate, original content regardless of how it was produced, and penalizes thin, scraped, or unhelpful content regardless of authorship. The risk with most AI writers is that they produce ungrounded, generic articles that fail the helpfulness test. DataWise reduces that risk by grounding every article in cited research, drafting against your real Knowledge Base, and giving you human review checkpoints between every step. Treat it as a writing partner you fact-check, not a publish button."
+  - question: Can AI-generated content actually rank on Google?
+    answer: "Yes, when the underlying article is genuinely useful, accurate, well-structured, and matches search intent. AI content fails to rank when it is shallow, generic, or contradicts authoritative sources. The four-step pipeline is built to address those failure modes: cited research prevents factual drift, the Knowledge Base prevents generic voice, your sitemap-aware internal linking signals topical authority, and the review pass catches obvious tells before publication."
+  - question: How is this different from ChatGPT or a generic AI writer?
+    answer: "ChatGPT and most generic AI writers are single-prompt black boxes with no grounding. DataWise Content Writer is a four-step pipeline with a research model (Perplexity Sonar Pro for cited, real-time web search) and a separate drafting model (DeepSeek V4 Pro for long-form writing), each tuned for its job. It is also workspace-aware: every post is tied to a Google Search Console property, your Content Planner keywords import in one click, and your Knowledge Base shapes voice and internal linking automatically."
+  - question: Does the AI writer cite real sources, or does it make them up?
+    answer: "Real sources. The research step runs on Perplexity Sonar Pro, which performs grounded live web search and returns citations for every claim. You review and approve the source list before the writer drafts a single sentence. If a source looks weak, edit it out or rerun research with a different angle. The drafting model then references the approved sources rather than inventing new ones."
+  - question: How do I make AI content sound human and on-brand?
+    answer: "Three layers: load your tone of voice and brand guidelines into the Knowledge Base, capture genuine first-hand experience notes (case studies, customer quotes, lessons learned) so the writer has substance to draw from, and use the review step to tighten phrasing. The post-processor also strips common AI tells (em-dashes and horizontal-rule artifacts) so drafts arrive cleaner than what you typically get from a raw model."
+  - question: Does this AI SEO content writer use my Search Console data?
+    answer: "Yes. Each writer workspace is bound 1:1 to a Google Search Console property, so the keywords surfaced in DataWise's keyword research and Content Planner flow directly into the writer with one click. Internal link suggestions also draw from your sitemap, which means drafts link to pages you actually have rather than invented URLs."

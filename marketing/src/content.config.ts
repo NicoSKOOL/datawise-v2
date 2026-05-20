@@ -40,6 +40,16 @@ const features = defineCollection({
       audience: z.string(),
       scenario: z.string(),
     })).optional(),
+    video: z.object({
+      youtubeId: z.string(),
+      title: z.string(),
+      description: z.string(),
+      uploadDate: z.string(),
+      duration: z.string(),
+      thumbnail: z.string().optional(),
+      eyebrow: z.string().optional(),
+      heading: z.string().optional(),
+    }).optional(),
   }),
 });
 

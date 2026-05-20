@@ -1,0 +1,128 @@
+# SEO KEYWORD RESEARCH NOTES
+# Primary keyword: "backlink analysis tool"
+#   - Classic high-intent term, evergreen search volume
+# Runner-up keywords:
+#   - "referring domain checker"
+#   - "backlink profile monitor"
+#   - "competitor backlink gap analysis"
+# LSI and supporting terms woven into copy:
+#   - domain rank, spam score, toxic links, disavow
+#   - anchor text distribution, referring ips, link velocity
+#   - lost vs new backlinks, broken backlinks
+#   - link gap analysis, competitor link intersection
+#   - follow vs nofollow, dofollow links
+# Differentiation from other feature pages:
+#   - Focus on portfolio hygiene and velocity rather than discovery
+#   - Emphasize the "new vs lost" time series which no other page discusses
+#   - Frame spam score and broken links as defensive metrics, distinct from
+#     the keyword/rank/AI pages which all focus on offense
+
+title: Backlink Analysis
+description: Audit any domain's full backlink profile in seconds. Track referring domains, anchor text mix, spam signals, broken links, and the exact gaps between you and your competitors.
+metaDescription: "Analyze any backlink profile: referring domains, anchors, spam score, broken links, and monthly link velocity. Find the gaps between you and your competitors and prioritize link building that actually moves the needle."
+icon: "🔗"
+heroTagline: "Audit the links behind the rankings"
+
+benefits:
+  - title: Portfolio hygiene first
+    description: "Before you chase new links, find the ones dragging you down. Spam score, broken backlinks, and toxic referring patterns get surfaced up front so you can disavow with confidence."
+  - title: Velocity and trend visibility
+    description: "The new-vs-lost monthly chart is the single most useful diagnostic for link health: acquired links in green, lost links in red, stacked month by month. A red-heavy chart is a red flag."
+  - title: True competitor gap, not vanity metrics
+    description: "Skip the shallow 'top 100 backlinks' lists every tool ships. The gap analysis surfaces the exact referring domains your rivals have that you don't, ranked by authority and achievability."
+
+subTools:
+  - name: Backlink Overview
+    description: "One-screen summary of every key number: total backlinks, referring domains, domain rank, spam score, broken backlinks, and unique main domains. Exportable as a client-ready snapshot."
+  - name: Referring Domains
+    description: "Drill into the unique sites linking to any domain, sorted by authority. Filter by follow vs nofollow, new vs existing, country, and TLD to find the patterns that matter."
+  - name: Anchor Text Distribution
+    description: "See the exact mix of anchor phrases pointing at any page, down to the percentage. Catch over-optimized branded anchors or suspicious money-keyword concentrations before Google does."
+  - name: Competitor Link Gap
+    description: "Compare your backlink profile against up to three rivals in one view. Surface the domains that link to all of them but none to you, the fastest path to relevant, high-authority links."
+  - name: New vs Lost Velocity
+    description: "Monthly time series of acquired and lost backlinks stacked on one chart. Spot a deleted post that nuked twenty links, or a PR hit that drove a spike, in the month it happened."
+  - name: Broken Backlink Recovery
+    description: "Find external backlinks pointing at 404 pages on your own site, then redirect them to reclaim the authority without earning a single new link."
+
+stats:
+  - value: 48
+    suffix: "T+"
+    label: "Backlinks indexed across the DataForSEO live link graph"
+  - value: 5
+    suffix: ""
+    label: "Analytical views per domain: overview, backlinks, referring domains, anchors, competitor gap"
+  - value: 100
+    suffix: ""
+    label: "Domain rank scoring scale calibrated against live SERP performance"
+  - value: 0
+    suffix: "$"
+    label: "Cost per lookup inside your AI Ranking membership"
+
+story:
+  - caption: "Drop any domain, yours or a competitor's"
+    highlight: "Paste the root URL and hit Analyze. DataWise pulls the live backlink index and renders the full profile in under ten seconds, no crawl wait."
+  - caption: "Read the health signals before the growth signals"
+    highlight: "Spam score, broken backlinks, and the red half of the new-vs-lost chart tell you what to fix first. Cleaning up is faster and cheaper than building new links."
+  - caption: "Hunt the gaps and ship the outreach list"
+    highlight: "Open the competitor gap tab, filter for domains that link to all rivals and none to you, export to CSV, and hand the list straight to your outreach or PR team."
+
+opportunities:
+  - title: "Fix broken backlinks you already earned"
+    description: "External links pointing at dead pages on your own site are wasted equity. Redirect them and reclaim authority without writing a single outreach email."
+    icon: "target"
+  - title: "Spot link decay before it tanks rankings"
+    description: "The monthly new-vs-lost chart catches a quietly-disappearing link profile months before organic traffic starts slipping. Early warning beats a postmortem."
+    icon: "activity"
+  - title: "Disavow spam without guesswork"
+    description: "Filter referring domains by spam score, review the bottom of the pile, and build a disavow file with the confidence that comes from actually seeing the data, not guessing."
+    icon: "shield"
+  - title: "Anchor text over-optimization check"
+    description: "Pages with more than ten to fifteen percent exact-match money-keyword anchors look manipulated to Google. The anchor mix view catches the problem in seconds."
+    icon: "eye"
+  - title: "Competitor PR reverse-engineering"
+    description: "When a competitor suddenly jumps in a ranking, their new-links chart tells you which publications, podcasts, or blogs drove it. Replicate the outreach, don't guess at tactics."
+    icon: "trending-up"
+  - title: "Link intersection at scale"
+    description: "Upload three competitors and find the referring domains that link to all of them but not to you. These are the highest-probability outreach targets on the internet for your niche."
+    icon: "bar-chart"
+
+useCases:
+  - icon: "users"
+    audience: "SEO agencies and freelancers"
+    scenario: "A freelance SEO auditing a new client runs the backlink overview first, flags a spam score of fourteen and thirty broken inbound links, and delivers a first-month action plan that earns a win before a single new link gets built. Cleanup beats acquisition for the initial proof of value."
+  - icon: "shield"
+    audience: "In-house SEO leads"
+    scenario: "An in-house SEO monitors the new-vs-lost velocity chart every Monday morning. When they see a month with forty links lost and only fifteen new, they trace the decay to a specific deleted guest post, contact the host, and restore the page before rankings move."
+  - icon: "pen-tool"
+    audience: "Founders doing SEO themselves"
+    scenario: "A solo founder compares their referring-domain list against two larger competitors using the gap tool, finds twelve mid-authority blogs linking to both rivals but not to them, and spends one focused weekend on pitching guest posts. Three land in a month, all to audiences of real buyers."
+  - icon: "trending-up"
+    audience: "Content and PR teams"
+    scenario: "A PR lead wants to know which campaigns actually produced backlinks last quarter. They pull the monthly velocity chart, tag spikes by campaign, and discover that a single podcast appearance drove more referring domains than an entire paid awards program. The budget conversation changes in the next planning meeting."
+
+faqs:
+  - question: "How accurate is DataWise's backlink data compared to Ahrefs or Semrush?"
+    answer: "DataWise's backlink data is powered by DataForSEO, which operates one of the largest independent link indexes on the internet (billions of live links across tens of millions of domains). Coverage for major sites is generally on par with Ahrefs and Semrush; for long-tail domains, any single vendor will miss some links, so it's normal to see small differences between tools. The important thing is consistency: because every analysis in DataWise uses the same source, you can trust the trends, rankings, and comparisons even if the raw totals differ slightly from another platform. And unlike Ahrefs Lite at $129 a month, every backlink report is included with your membership."
+  - question: "What is domain rank and how is it calculated?"
+    answer: "Domain rank is a 0 to 100 score that estimates the overall authority and ranking power of a domain based primarily on the quantity and quality of backlinks pointing at it. It's calibrated against live SERP data, so a domain with a rank of 80 really does outrank a domain with a rank of 20 far more often than not. Think of it as a calibrated proxy for how much link equity a site has accumulated. It is not the only signal Google uses, but it is one of the strongest, and tracking your domain rank over time is the cleanest single-number representation of whether your link building is working."
+  - question: "Should I disavow backlinks, and how do I know which ones?"
+    answer: "Disavowing is a defensive tool and should be used sparingly. Google explicitly says most sites don't need it because the search engine already ignores most spammy links automatically. That said, if you have a history of shady link building (past agency, PBN purchases, mass directory submissions) or if you see a manual action in Search Console, disavowing is warranted. Use the backlink tab in DataWise, sort by spam score, inspect the lowest-quality domains manually, and add only the clearly toxic ones to your disavow file. A typical disavow list is tens of domains, not thousands. When in doubt, leave it out."
+  - question: "What is the difference between referring domains and backlinks?"
+    answer: "Backlinks are individual links, referring domains are the unique sites those links come from. One domain can link to you a hundred times and still count as a single referring domain. For ranking purposes, referring domains is the more useful metric, a hundred links from fifty distinct domains is almost always better than a hundred links from five domains. DataWise surfaces both numbers prominently on the overview so you can judge profile diversity at a glance."
+  - question: "How do I find the backlinks my competitors have that I don't?"
+    answer: "Open any domain in the backlink analyzer, switch to the Competitor gap tab, and enter up to three rival domains. DataWise performs an intersection query across all backlink profiles and returns the referring domains that link to your competitors but do not currently link to you, ranked by domain rank. Filter by country, TLD, or anchor type to narrow it down. The output is a clean CSV-exportable list of the highest-probability outreach targets in your niche, already qualified by the fact that at least one peer has earned a link from them."
+  - question: "How often should I audit my backlink profile?"
+    answer: "A full audit is useful quarterly, since link building results trail content work by weeks or months. For ongoing monitoring, the monthly new-vs-lost velocity chart is enough to spot problems early without drowning in data. If you run PR or publish content regularly, increase the check-in cadence to weekly during active campaigns so you can attribute specific link gains or losses to specific activities. After a site migration or redesign, audit twice in the first month, catching broken inbound links early is the single highest-ROI thing you can do with a backlink tool."
+  - question: "What is the anchor text distribution, and why does it matter?"
+    answer: "Anchor text is the visible, clickable text of a link, and Google uses the anchor text of incoming links as one signal of what a page is about. A natural backlink profile has a diverse anchor mix: branded terms, naked URLs, generic clicks like 'learn more,' and a smaller share of topical or money-keyword anchors. When exact-match anchors for a single high-value keyword exceed about ten to fifteen percent of the mix, the profile looks engineered and becomes a manual-penalty risk. DataWise shows you the full distribution in one chart so you can catch over-optimization early and rebalance with natural links before it causes trouble."
+
+video:
+  youtubeId: "IUGaQFvxYms"
+  title: "How To Use The Backlink Tool | DataWise"
+  description: "Walk through DataWise's Backlink tool: the new-vs-lost overview, total backlinks versus referring domains, domain rank and spam score, individual backlinks and anchor text, the referring-domains view, and the Competitor Gap to compare your backlink profile against several competitors at once."
+  uploadDate: "2026-05-19"
+  duration: "PT2M45S"
+  thumbnail: "https://i.ytimg.com/vi/IUGaQFvxYms/maxresdefault.jpg"
+  eyebrow: "Walkthrough"
+  heading: "See the Backlink tool in action"

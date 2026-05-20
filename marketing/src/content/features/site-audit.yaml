@@ -1,0 +1,127 @@
+# SEO KEYWORD RESEARCH NOTES
+# Primary keyword: "site audit tool"
+#   - High commercial intent, dominated by Ahrefs / Semrush / Sitechecker.
+# Runner-up keywords:
+#   - "website audit tool"
+#   - "technical seo audit tool"
+#   - "free site audit"
+# LSI and supporting terms woven into copy:
+#   - core web vitals, lcp, cls, inp, page speed
+#   - crawl, indexation, robots, sitemap, canonical
+#   - meta description, title tag, h1, heading structure
+#   - broken link, redirect chain, image weight, webp
+#   - kanban, fix list, prioritized issues
+# Differentiation from other feature pages:
+#   - Outcome-first: the audit ends in a Kanban action board, not a PDF dump.
+#   - DataForSEO-powered crawl, no LLM enrichment in the critical path (data integrity rule).
+#   - Per-image suggestions (compress / convert to WebP) rather than generic "optimize images" advice.
+
+title: Site Audit
+description: Crawl any site and surface the on-page issues that actually move rankings. Speed score, load time, the exact reasons a page is slow, title and meta gaps, heading structure, and a Kanban fix board so issues get shipped, not filed.
+metaDescription: "DataWise's site audit tool crawls any URL and returns a prioritized fix list: speed score, page-slowness causes (heavy images, unused JS), title and meta gaps, heading structure, and per-image WebP suggestions, all routed to a Kanban action board."
+icon: "📊"
+heroTagline: "From audit to action, in one board"
+
+benefits:
+  - title: Real performance data, not a vibe check
+    description: "Every crawl returns a hard speed score, total load time in seconds, and the specific render-blocking culprits (oversized images, unused JavaScript, missing compression). No guessing where the slowdown is."
+  - title: On-page checks that map to ranking factors
+    description: "Title tags, meta descriptions, H1 presence, heading order, internal link depth, canonicals, and indexation signals are all checked against Google's documented best practices. If it matters to ranking, it gets graded."
+  - title: A fix list that actually ships
+    description: "Every issue flows into a Kanban action board with step-by-step remediation notes. Drag from To do to In progress to Done, accountable to you and your team, instead of another report sitting in a Drive folder."
+
+subTools:
+  - name: Crawl Overview
+    description: "One-screen summary of every page crawled: status codes, response times, page weight, and the count of critical, warning, and info issues per URL."
+  - name: Core Web Vitals
+    description: "LCP, CLS, INP and total load time per page, color-coded against Google's pass / needs-improvement / fail thresholds, with the heaviest assets called out by name."
+  - name: On-Page Issues
+    description: "Title tag length, missing meta descriptions, duplicate or missing H1s, broken internal links, redirect chains, and orphan pages, surfaced in one filterable table."
+  - name: Image Audit
+    description: "Every oversized image flagged with current size, recommended size, and whether converting to WebP would save more than fifty percent of the file weight. Click straight through to the URL that needs work."
+  - name: Indexation Check
+    description: "Robots.txt, canonical, noindex, and sitemap inclusion checked per URL so you can spot pages Google cannot index and pages it should not be indexing."
+  - name: Kanban Action Board
+    description: "Every issue auto-promoted to a card with severity, affected URL, and a remediation checklist. Drag through To do, In progress, and Done to actually close the loop."
+
+stats:
+  - value: 100
+    suffix: ""
+    label: "Speed score scale, calibrated to Google's PageSpeed grading"
+  - value: 3
+    suffix: ""
+    label: "Core Web Vitals tracked per page (LCP, CLS, INP)"
+  - value: 25
+    suffix: "+"
+    label: "On-page checks run on every URL"
+  - value: 0
+    suffix: "$"
+    label: "Cost per audit inside your AI Ranking membership"
+
+story:
+  - caption: "Paste in a URL and start the crawl"
+    highlight: "Drop any domain or specific URL, hit Audit, and DataWise spins up a DataForSEO crawl. Most sites return a full report in a couple of minutes."
+  - caption: "Read the speed score and the heaviest assets first"
+    highlight: "The overview opens on Core Web Vitals and total load time, with the exact images, scripts, and styles slowing the page down ranked by impact."
+  - caption: "Send every issue to the Kanban board and ship the fixes"
+    highlight: "Click Send to board and every flagged issue becomes a card with a remediation checklist. The audit stops being a document and starts being a backlog you can burn down."
+
+opportunities:
+  - title: "Compress the images dragging down your LCP"
+    description: "The image audit names every oversized asset, the URL it sits on, and how much weight a WebP conversion would save. Most sites recover one to three seconds of load time from this alone."
+    icon: "target"
+  - title: "Catch the missing meta description tax"
+    description: "Pages with no meta description hand Google a free pass to write one for you, almost always worse than what you'd write. The audit lists every offender so you can rewrite once and ship in a sprint."
+    icon: "edit"
+  - title: "Fix heading structure without reading every page"
+    description: "Pages with two H1s, no H1, or heading levels skipped (H1 to H4) confuse both Google and screen readers. The audit flags every page with broken heading order so you can fix structure in bulk."
+    icon: "list"
+  - title: "Find the redirect chains tanking crawl budget"
+    description: "Three-hop redirect chains and redirect loops waste crawl budget and frustrate users. The audit traces every chain end to end and tells you exactly which final URL to point at."
+    icon: "shuffle"
+  - title: "Spot the pages Google should not be indexing"
+    description: "Thin tags, faceted-filter URLs, and old campaign landing pages bloat your index and dilute topical authority. The indexation check shows you what's in the index that should not be, ready for a noindex push."
+    icon: "shield"
+  - title: "Close the loop with a real fix board"
+    description: "Most audits die in a PDF nobody opens. The Kanban board turns the audit into a ranked, owner-assignable backlog so the work actually happens and you can prove progress month over month."
+    icon: "trending-up"
+
+useCases:
+  - icon: "users"
+    audience: "SEO agencies and freelancers"
+    scenario: "A freelance SEO running a discovery audit pastes a new client's homepage URL, returns in three minutes with a speed score of forty-one, a list of seven oversized hero images, and four pages missing H1s. The Kanban board becomes the first month's deliverable, with the client signing off on each fix as it closes."
+  - icon: "pen-tool"
+    audience: "Founders and indie hackers"
+    scenario: "A founder shipping a new marketing site runs the audit before launch, catches a meta-description gap on six pillar pages and a 4MB hero image on the homepage, and ships fixes the same afternoon. Pre-launch instead of post-mortem."
+  - icon: "shield"
+    audience: "In-house SEO and dev teams"
+    scenario: "An in-house SEO runs the audit weekly against a staging deploy, catches a regression where a recent push reintroduced a 301 to 302 redirect chain, and files a single Kanban card linked to the offending commit. The fix lands in the next sprint without a war room."
+  - icon: "trending-up"
+    audience: "Content teams owning rankings"
+    scenario: "A content lead pulls the audit each month and works the on-page issues board, rewriting title tags and meta descriptions for the bottom-decile CTR pages first. Six weeks in, average position on the rewritten pages is up by 1.4 spots, no new content required."
+
+faqs:
+  - question: "How is DataWise's site audit different from Semrush or Ahrefs?"
+    answer: "DataWise's site audit is powered by DataForSEO's crawl engine, the same underlying infrastructure many enterprise SEO platforms license. Coverage of standard issues (Core Web Vitals, on-page checks, indexation) is on par with Semrush and Ahrefs. The two real differences: DataWise renders the audit directly from the crawl data with no LLM rewriting in between, so the numbers you see are the numbers DataForSEO returned (memory rule, data integrity matters), and every issue flows into a Kanban action board you actually work, instead of a static PDF you skim once and forget."
+  - question: "How long does a site audit take to run?"
+    answer: "For most marketing sites under a few hundred pages, the audit completes in two to five minutes. The crawl is asynchronous, so you can kick off an audit, work on something else, and come back to the results when they're ready. Larger sites (thousands of URLs) can take ten to thirty minutes, depending on response times and rate limits, and you'll see the progress count tick up live."
+  - question: "Can I audit a competitor's site?"
+    answer: "Yes. You can run the audit against any public URL, your own or anyone else's, as long as the site is reachable without authentication. This is one of the fastest ways to spot why a competitor's pages load faster, what their title-tag pattern looks like, and whether they're indexing pages you should be too."
+  - question: "Does the audit cover Core Web Vitals (LCP, CLS, INP)?"
+    answer: "Yes. Every audited URL returns LCP (Largest Contentful Paint), CLS (Cumulative Layout Shift), and INP (Interaction to Next Paint) measured against Google's pass / needs-improvement / fail thresholds, plus total load time in seconds. For pages that fail, the heaviest contributing assets (oversized images, unused JavaScript, render-blocking styles) are called out by name so you know exactly what to fix."
+  - question: "What is the Kanban action board, and why does it matter?"
+    answer: "The Kanban action board is where the audit stops being a report and starts being a backlog. Each flagged issue becomes a card with severity, affected URL, and a step-by-step remediation checklist. Drag the card across To do, In progress, and Done. The board is shared per workspace, so a freelancer, in-house SEO, or agency can hand cards to a developer or content writer and actually see the fixes ship. Most audits die in a PDF; this one closes the loop."
+  - question: "Do I need to install anything on my site to run the audit?"
+    answer: "No installation, no script, no DNS change. The audit crawls your site from the public internet, just like Googlebot does, and reads everything it needs from the live HTML and headers. If your site is reachable in a browser, DataWise can audit it. Authenticated or staging URLs behind a login can be audited by allowlisting our crawler's IPs (instructions in the dashboard)."
+  - question: "How often should I run a site audit?"
+    answer: "For most marketing sites, monthly is a good cadence: enough to catch regressions early, not so frequent that you drown in repeated findings. After a redesign, migration, or major release, run the audit immediately and again a week later so any cache-invalidation or crawl-budget issues surface. Active dev teams often run the audit against a staging deploy on every release to catch performance and SEO regressions before they ship to production."
+
+video:
+  youtubeId: "sApeawiCV8A"
+  title: "How To Do a Website Audit | DataWise"
+  description: "Walk through DataWise's Site Audit tool: paste a URL, run the audit, and read the speed score, total load time, the specific reasons a page is slow (heavy images, unused JavaScript), plus a quick read on title tags, meta descriptions and heading structure. Every issue flows into a Kanban action board with step-by-step fix instructions."
+  uploadDate: "2026-05-18"
+  duration: "PT2M45S"
+  thumbnail: "https://i.ytimg.com/vi/sApeawiCV8A/maxresdefault.jpg"
+  eyebrow: "Walkthrough"
+  heading: "See the Site Audit tool in action"

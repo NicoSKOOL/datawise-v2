@@ -11,6 +11,7 @@ import StoryScroller from '../../components/feature/StoryScroller.astro';
 import FAQSection from '../../components/feature/FAQSection.astro';
 import OpportunitiesGrid from '../../components/feature/OpportunitiesGrid.astro';
 import UseCases from '../../components/feature/UseCases.astro';
+import FeatureVideo from '../../components/feature/FeatureVideo.astro';
 import { getCollection } from 'astro:content';
 
 export async function getStaticPaths() {
@@ -22,7 +23,7 @@ export async function getStaticPaths() {
 }
 
 const { feature } = Astro.props;
-const { title, description, metaDescription, icon, heroTagline, benefits, subTools, stats, story, faqs, opportunities, useCases } = feature.data;
+const { title, description, metaDescription, icon, heroTagline, benefits, subTools, stats, story, faqs, opportunities, useCases, video } = feature.data;
 
 const iconMap: Record<string, string> = {
   '🔍': 'search',
@@ -31,6 +32,8 @@ const iconMap: Record<string, string> = {
   '📈': 'trending-up',
   '💬': 'message-circle',
   '✍️': 'pen-tool',
+  '🔗': 'link',
+  '🛠️': 'settings',
 };
 
 const iconName = iconMap[icon] || 'search';
@@ -43,6 +46,9 @@ const seoTitleMap: Record<string, string> = {
   'ai-visibility': 'AI Search Visibility Tool for SEO',
   'seo-assistant': 'AI SEO Assistant Tool',
   'content-tools': 'SEO Content Optimization Tool',
+  'backlinks': 'Backlink Analysis and Competitor Link Gap Tool',
+  'site-audit': 'Site Audit Tool for SEO',
+  'content-writer': 'AI SEO Content Writer',
 };
 const seoTitle = seoTitleMap[feature.id] || `${feature.data.title} SEO Tool`;
 
@@ -54,6 +60,9 @@ const screenshotMap: Record<string, string> = {
   'ai-visibility': '/images/screenshots/ai-visibility.jpg',
   'seo-assistant': '/images/screenshots/seo-assistant.jpg',
   'content-tools': '/images/screenshots/content-tools.jpg',
+  'backlinks': '/images/screenshots/backlinks.jpg',
+  'site-audit': '/images/screenshots/site-audit.jpg',
+  'content-writer': '/images/screenshots/content-writer.jpg',
 };
 const screenshotSrc = screenshotMap[feature.id] || `/images/screenshots/${feature.id}.svg`;
 
@@ -106,6 +115,28 @@ const resolvedStory =
           "text": f.answer,
         },
       })),
+    })} />
+  )}
+
+  {video && (
+    <script slot="head" type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "VideoObject",
+      "name": video.title,
+      "description": video.description,
+      "thumbnailUrl": video.thumbnail || `https://i.ytimg.com/vi/${video.youtubeId}/maxresdefault.jpg`,
+      "uploadDate": video.uploadDate,
+      "duration": video.duration,
+      "contentUrl": `https://www.youtube.com/watch?v=${video.youtubeId}`,
+      "embedUrl": `https://www.youtube.com/embed/${video.youtubeId}`,
+      "publisher": {
+        "@type": "Organization",
+        "name": "DataWise SEO",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://www.datawiseseo.com/icon-512.png",
+        },
+      },
     })} />
   )}
 
@@ -189,6 +220,20 @@ const resolvedStory =
       imageAlt={`${title} in action`}
     />
   </div>
+
+  <!-- ============================================= -->
+  <!-- FEATURE VIDEO                                  -->
+  <!-- ============================================= -->
+  {video && (
+    <FeatureVideo
+      youtubeId={video.youtubeId}
+      title={video.title}
+      description={video.description}
+      thumbnail={video.thumbnail}
+      eyebrow={video.eyebrow}
+      heading={video.heading}
+    />
+  )}
 
   <!-- ============================================= -->
   <!-- OPPORTUNITIES GRID                             -->
