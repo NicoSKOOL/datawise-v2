@@ -26,6 +26,18 @@ export class OutOfCreditsError extends Error {
   }
 }
 
+export class ProviderQuotaError extends Error {
+  provider: string;
+  retryAfterSeconds: number;
+
+  constructor(message: string, provider: string, retryAfterSeconds: number) {
+    super(message);
+    this.name = 'ProviderQuotaError';
+    this.provider = provider;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 // Global event for out-of-credits (components can listen to this)
 export const outOfCreditsEvent = new EventTarget();
 
@@ -75,6 +87,17 @@ export async function api<T = unknown>(path: string, options: ApiOptions = {}): 
       );
       outOfCreditsEvent.dispatchEvent(new CustomEvent('out_of_credits'));
       throw err;
+    }
+  }
+
+  if (response.status === 503) {
+    const errorData = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (errorData.error === 'provider_quota_exhausted') {
+      throw new ProviderQuotaError(
+        (errorData.message as string) || 'Our SEO data provider is temporarily unavailable. Please try again shortly.',
+        (errorData.provider as string) || 'dataforseo',
+        (errorData.retry_after_seconds as number) || 3600,
+      );
     }
   }
 

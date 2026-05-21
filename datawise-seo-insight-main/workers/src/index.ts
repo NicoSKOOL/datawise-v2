@@ -29,6 +29,7 @@ export interface Env {
 }
 
 import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe, handleUpdateDefaults } from './auth/google';
+import { DataForSeoQuotaError } from './dataforseo/client';
 import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetPassword } from './auth/email';
 import { handleDevLogin } from './auth/dev';
 import { isAllowedFrontendOrigin } from './auth/origins';
@@ -932,6 +933,20 @@ export default {
     } catch (error) {
       const requestId = crypto.randomUUID().slice(0, 8);
       console.error(`Worker error [${requestId}]:`, error);
+      if (error instanceof DataForSeoQuotaError) {
+        const now = new Date();
+        const nextUtcMidnight = Date.UTC(
+          now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0
+        );
+        const retryAfterSeconds = Math.max(60, Math.floor((nextUtcMidnight - now.getTime()) / 1000));
+        return addCors(json({
+          error: 'provider_quota_exhausted',
+          provider: 'dataforseo',
+          message: 'Our SEO data provider has hit its daily quota. Please try again in a few hours.',
+          retry_after_seconds: retryAfterSeconds,
+          request_id: requestId,
+        }, 503));
+      }
       return addCors(json({ error: 'internal_error', request_id: requestId }, 500));
     }
   },

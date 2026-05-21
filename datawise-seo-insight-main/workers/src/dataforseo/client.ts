@@ -7,6 +7,17 @@ export interface DataForSeoCacheOptions {
   timeoutMs?: number;
 }
 
+export class DataForSeoQuotaError extends Error {
+  readonly provider = 'dataforseo';
+  readonly statusCode = 402;
+  readonly providerMessage?: string;
+  constructor(providerMessage?: string) {
+    super(providerMessage || 'DataForSEO daily quota exhausted');
+    this.name = 'DataForSeoQuotaError';
+    this.providerMessage = providerMessage;
+  }
+}
+
 function getCredentials(env: Env): string {
   return btoa(`${env.DATAFORSEO_EMAIL}:${env.DATAFORSEO_PASSWORD}`);
 }
@@ -33,6 +44,11 @@ async function fetchDataForSeo(
 
     if (!response.ok) {
       console.error(`DataForSEO error [${endpoint}]:`, JSON.stringify(data));
+      if (response.status === 402) {
+        const statusMsg = (data as { status_message?: unknown })?.status_message;
+        const providerMessage = typeof statusMsg === 'string' ? statusMsg : undefined;
+        throw new DataForSeoQuotaError(providerMessage);
+      }
       throw new Error(`DataForSEO API error: ${response.status}`);
     }
 
