@@ -1,5 +1,11 @@
 import type { Env } from '../index';
-import { dataforseoRequest } from '../dataforseo/client';
+import { dataforseoRequestCached } from '../dataforseo/client';
+
+// Labs endpoints (keyword volume, ideas, related, suggestions, difficulty, overview)
+// are read-mostly: DataForSEO refreshes the underlying data on a monthly cycle, so a
+// 24h KV cache returns the same numbers users would have seen anyway and cuts the
+// outbound subrequest count substantially.
+const LABS_TTL_SECONDS = 86400;
 
 // POST /api/keywords/related
 export async function handleRelatedKeywords(request: Request, env: Env): Promise<Response> {
@@ -8,7 +14,7 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
 
   // Parallel calls to related_keywords + keyword_ideas for broader results
   const [relatedData, ideasData] = await Promise.all([
-    dataforseoRequest(env, '/dataforseo_labs/google/related_keywords/live', [{
+    dataforseoRequestCached(env, '/dataforseo_labs/google/related_keywords/live', [{
       keyword,
       location_code,
       language_code,
@@ -16,15 +22,15 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
       limit: Math.min(limit, 1000),
       depth: 2,
       filters: [['keyword_data.keyword_info.search_volume', '>', 0]],
-    }]),
-    dataforseoRequest(env, '/dataforseo_labs/google/keyword_ideas/live', [{
+    }], { ttlSeconds: LABS_TTL_SECONDS }),
+    dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_ideas/live', [{
       keywords: [keyword],
       location_code,
       language_code,
       limit: Math.min(limit, 1000),
       filters: [['keyword_info.search_volume', '>', 0]],
       order_by: ['keyword_info.search_volume,desc'],
-    }]),
+    }], { ttlSeconds: LABS_TTL_SECONDS }),
   ]);
 
   // Deduplicate and merge
@@ -89,12 +95,12 @@ export async function handleKeywordSuggestions(request: Request, env: Env): Prom
   const { keyword, location_code = 2840, language_code = 'en', limit = 100 } = await request.json() as any;
   if (!keyword) return new Response(JSON.stringify({ error: 'Keyword is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/keyword_suggestions/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_suggestions/live', [{
     keyword,
     location_code,
     language_code,
     limit,
-  }]);
+  }], { ttlSeconds: LABS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
@@ -104,14 +110,14 @@ export async function handleKeywordIdeas(request: Request, env: Env): Promise<Re
   const { keyword, location_code = 2840, language_code = 'en' } = await request.json() as any;
   if (!keyword) return new Response(JSON.stringify({ error: 'Keyword is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/keyword_ideas/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_ideas/live', [{
     keywords: [keyword],
     location_code,
     language_code,
     limit: 100,
     filters: [['keyword_info.search_volume', '>', 0]],
     order_by: ['keyword_info.search_volume,desc'],
-  }]);
+  }], { ttlSeconds: LABS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
@@ -121,11 +127,11 @@ export async function handleKeywordDifficulty(request: Request, env: Env): Promi
   const { keywords, location_code = 2840, language_code = 'en' } = await request.json() as any;
   if (!keywords || !Array.isArray(keywords)) return new Response(JSON.stringify({ error: 'Keywords array is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/bulk_keyword_difficulty/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/bulk_keyword_difficulty/live', [{
     keywords,
     location_code,
     language_code,
-  }]);
+  }], { ttlSeconds: LABS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
@@ -135,11 +141,11 @@ export async function handleKeywordOverview(request: Request, env: Env): Promise
   const { keyword, location_code = 2840, language_code = 'en' } = await request.json() as any;
   if (!keyword) return new Response(JSON.stringify({ error: 'Keyword is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/keyword_overview/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_overview/live', [{
     keywords: [keyword],
     location_code,
     language_code,
-  }]);
+  }], { ttlSeconds: LABS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }

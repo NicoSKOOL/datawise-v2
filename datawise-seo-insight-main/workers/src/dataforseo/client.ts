@@ -26,11 +26,32 @@ function isAbortError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'name' in err && err.name === 'AbortError';
 }
 
+// Short-circuit guard: once a 402 has been observed today, every subsequent
+// outbound DataForSEO call would burn ~3.8s of wall time only to receive the
+// same 402. We KV-flag the day so future calls fail fast until UTC midnight.
+function quotaBlockedKey(): string {
+  return `dfs-quota-blocked:${new Date().toISOString().slice(0, 10)}`;
+}
+
+function secondsUntilNextUtcMidnight(): number {
+  const now = new Date();
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0);
+  return Math.max(60, Math.floor((next - now.getTime()) / 1000));
+}
+
 async function fetchDataForSeo(
+  env: Env,
   endpoint: string,
   init: RequestInit,
   timeoutMs?: number
 ): Promise<any> {
+  // Fast path: if today is already flagged as quota-exhausted, throw
+  // immediately without making the subrequest.
+  const blocked = await env.KV.get(quotaBlockedKey());
+  if (blocked) {
+    throw new DataForSeoQuotaError('DataForSEO daily quota exhausted (cached)');
+  }
+
   const controller = timeoutMs != null ? new AbortController() : null;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   if (controller) {
@@ -47,6 +68,12 @@ async function fetchDataForSeo(
       if (response.status === 402) {
         const statusMsg = (data as { status_message?: unknown })?.status_message;
         const providerMessage = typeof statusMsg === 'string' ? statusMsg : undefined;
+        // Flag the day so the next call short-circuits.
+        try {
+          await env.KV.put(quotaBlockedKey(), '1', { expirationTtl: secondsUntilNextUtcMidnight() + 3600 });
+        } catch (kvErr) {
+          console.error('KV put failed for dfs-quota-blocked key:', kvErr);
+        }
         throw new DataForSeoQuotaError(providerMessage);
       }
       throw new Error(`DataForSEO API error: ${response.status}`);
@@ -69,7 +96,7 @@ export async function dataforseoRequest(
   body: unknown[],
   timeoutMs?: number
 ): Promise<any> {
-  return fetchDataForSeo(endpoint, {
+  return fetchDataForSeo(env, endpoint, {
     method: 'POST',
     headers: {
       'Authorization': `Basic ${getCredentials(env)}`,
@@ -84,7 +111,7 @@ export async function dataforseoGet(
   endpoint: string,
   timeoutMs?: number
 ): Promise<any> {
-  return fetchDataForSeo(endpoint, {
+  return fetchDataForSeo(env, endpoint, {
     method: 'GET',
     headers: {
       'Authorization': `Basic ${getCredentials(env)}`,

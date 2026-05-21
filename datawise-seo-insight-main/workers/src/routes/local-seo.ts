@@ -1,5 +1,11 @@
 import type { Env } from '../index';
-import { dataforseoRequest, dataforseoGet } from '../dataforseo/client';
+import { dataforseoRequest, dataforseoRequestCached, dataforseoGet } from '../dataforseo/client';
+
+// Slow-changing local SEO datasets: keyword_suggestions for a category is
+// effectively monthly upstream; GBP profile state is live but acceptable to
+// surface within an hour.
+const LOCAL_KEYWORDS_TTL_SECONDS = 86400;
+const LOCAL_GBP_TTL_SECONDS = 3600;
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 
 const json = (data: unknown, status = 200) =>
@@ -326,11 +332,11 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
   let business: any = null;
   const keyword = place_id ? `place_id:${place_id}` : business_name;
   try {
-    const data = await dataforseoRequest(env, '/business_data/google/my_business_info/live', [{
+    const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
       keyword,
       location_code,
       language_code,
-    }]);
+    }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
     const candidate = data?.tasks?.[0]?.result?.[0];
     if (candidate?.title) business = candidate;
   } catch (err) {
@@ -508,12 +514,12 @@ export async function handleLocalKeywordSuggestions(request: Request, env: Env):
   // Call DataForSEO keyword_suggestions with category as seed
   let apiKeywords: { keyword: string; search_volume: number }[] = [];
   try {
-    const data = await dataforseoRequest(env, '/dataforseo_labs/google/keyword_suggestions/live', [{
+    const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_suggestions/live', [{
       keyword: cat,
       location_code,
       language_code,
       limit: 200,
-    }]);
+    }], { ttlSeconds: LOCAL_KEYWORDS_TTL_SECONDS });
 
     const items = data?.tasks?.[0]?.result?.[0]?.items || [];
     const cityLower = loc.toLowerCase();
@@ -685,7 +691,7 @@ export async function handleResolveGBPUrl(request: Request, env: Env): Promise<R
     language_code: 'en',
   }];
 
-  const data = await dataforseoRequest(env, '/business_data/google/my_business_info/live', payload);
+  const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', payload, { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
   const business = data?.tasks?.[0]?.result?.[0];
 
   if (!business) {
@@ -784,11 +790,11 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     if (!gbpKeyword) return json({ error: 'Business has no location data. Update project with coordinates.' }, 400);
 
     try {
-      const data = await dataforseoRequest(env, '/business_data/google/my_business_info/live', [{
+      const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
         keyword: gbpKeyword,
         location_code: project.location_code || 2840,
         language_code: 'en',
-      }]);
+      }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
       const biz = data?.tasks?.[0]?.result?.[0];
       if (biz?.latitude && biz?.longitude) {
         centerLat = biz.latitude;
@@ -1021,9 +1027,9 @@ export async function handleGeoGridInsights(request: Request, env: Env, userId: 
     const gbpKeyword = scan.place_id ? `place_id:${scan.place_id}` : scan.business_name;
     if (gbpKeyword) {
       try {
-        const gbpData = await dataforseoRequest(env, '/business_data/google/my_business_info/live', [{
+        const gbpData = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
           keyword: gbpKeyword, location_code: locCode, language_code: 'en',
-        }]);
+        }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
         const candidate = gbpData?.tasks?.[0]?.result?.[0];
         if (candidate?.title) biz = candidate;
       } catch { /* fall through to Maps SERP */ }

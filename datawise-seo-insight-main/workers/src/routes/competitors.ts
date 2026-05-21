@@ -1,5 +1,8 @@
 import type { Env } from '../index';
-import { dataforseoRequest } from '../dataforseo/client';
+import { dataforseoRequestCached } from '../dataforseo/client';
+
+// Competitor / domain rankings drift slower than search volume — 6h KV cache.
+const COMPETITORS_TTL_SECONDS = 21600;
 
 function normalizeGapKeyword(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -10,12 +13,12 @@ export async function handleRankedKeywords(request: Request, env: Env): Promise<
   const { target, location_code = 2840, language_code = 'en', limit = 100 } = await request.json() as any;
   if (!target) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/ranked_keywords/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
     target,
     location_code,
     language_code,
     limit,
-  }]);
+  }], { ttlSeconds: COMPETITORS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
@@ -31,11 +34,11 @@ export async function handleDomainRankOverview(request: Request, env: Env): Prom
   // Send individual requests per domain to avoid batch API quirks
   const results = await Promise.all(
     domainTargets.map((t: string) =>
-      dataforseoRequest(env, '/dataforseo_labs/google/domain_rank_overview/live', [{
+      dataforseoRequestCached(env, '/dataforseo_labs/google/domain_rank_overview/live', [{
         target: t,
         location_code,
         language_code,
-      }])
+      }], { ttlSeconds: COMPETITORS_TTL_SECONDS })
     )
   );
 
@@ -58,12 +61,12 @@ export async function handleKeywordGapAnalysis(request: Request, env: Env): Prom
 
   // Get ranked keywords for both domains in parallel
   const [myData, compData] = await Promise.all([
-    dataforseoRequest(env, '/dataforseo_labs/google/ranked_keywords/live', [{
+    dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
       target: my_domain, location_code, language_code, limit: 1000,
-    }]),
-    dataforseoRequest(env, '/dataforseo_labs/google/ranked_keywords/live', [{
+    }], { ttlSeconds: COMPETITORS_TTL_SECONDS }),
+    dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
       target: competitor_domain, location_code, language_code, limit: 1000,
-    }]),
+    }], { ttlSeconds: COMPETITORS_TTL_SECONDS }),
   ]);
 
   const myKeywords = new Map<string, any>();
@@ -130,11 +133,11 @@ export async function handleBulkTrafficEstimation(request: Request, env: Env): P
   const { targets, location_code = 2840, language_code = 'en' } = await request.json() as any;
   if (!targets?.length) return new Response(JSON.stringify({ error: 'Targets array is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/bulk_traffic_estimation/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/bulk_traffic_estimation/live', [{
     targets,
     location_code,
     language_code,
-  }]);
+  }], { ttlSeconds: COMPETITORS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
@@ -144,11 +147,11 @@ export async function handleCompetitorsDomain(request: Request, env: Env): Promi
   const { target, location_code = 2840, language_code = 'en' } = await request.json() as any;
   if (!target) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
 
-  const data = await dataforseoRequest(env, '/dataforseo_labs/google/competitors_domain/live', [{
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/competitors_domain/live', [{
     target,
     location_code,
     language_code,
-  }]);
+  }], { ttlSeconds: COMPETITORS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }

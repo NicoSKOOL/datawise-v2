@@ -1,5 +1,10 @@
 import type { Env } from '../index';
-import { dataforseoRequest } from '../dataforseo/client';
+import { dataforseoRequestCached } from '../dataforseo/client';
+
+// SERP positions don't shift faster than a 1h window for the long-tail keywords
+// typical beta users track. Caching at this TTL lets same-user re-clicks (and
+// users tracking identical kw/location/language) skip the 3.8s DataForSEO call.
+const SERP_TTL_SECONDS = 3600;
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -239,7 +244,7 @@ export async function handleCheckRankings(env: Env, userId: string, projectId: s
         depth: 100,
       }));
 
-      const data = await dataforseoRequest(env, '/serp/google/organic/live/regular', payload);
+      const data = await dataforseoRequestCached(env, '/serp/google/organic/live/regular', payload, { ttlSeconds: SERP_TTL_SECONDS });
       const tasks = data?.tasks || [];
 
       for (let taskIndex = 0; taskIndex < keywordChunk.length; taskIndex++) {
