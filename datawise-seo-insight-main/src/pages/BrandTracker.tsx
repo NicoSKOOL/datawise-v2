@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -366,11 +366,12 @@ export default function BrandTracker() {
   const [googleActive, setGoogleActive] = useState(true);
   const [chatgptActive, setChatgptActive] = useState(false);
 
-  // Shared search-rows state so both AnswersTable and MentionsTrendChart
-  // read from the same fetched sample (avoids a duplicate DFS credit hit).
-  const [searchRows, setSearchRows] = useState<LlmSearchRow[]>([]);
-  const [searchTotal, setSearchTotal] = useState<number | undefined>(undefined);
-  const [searchAfterToken, setSearchAfterToken] = useState<string | undefined>(undefined);
+  // Per-platform pagination state. Initial 100 rows come from each search
+  // query; subsequent pages append into the matching extras array.
+  const [googleExtra, setGoogleExtra] = useState<LlmSearchRow[]>([]);
+  const [googleToken, setGoogleToken] = useState<string | undefined>(undefined);
+  const [chatgptExtra, setChatgptExtra] = useState<LlmSearchRow[]>([]);
+  const [chatgptToken, setChatgptToken] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const analysisEnabled = activeDomain.length > 0;
@@ -401,45 +402,111 @@ export default function BrandTracker() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const activePlatform: Platform = chatgptActive && !googleActive ? 'chat_gpt' : 'google';
+  // Top Domains card supports a single platform today. Mirror the toggle
+  // by preferring whichever single platform is active; fall back to google
+  // when both are on (existing behavior — separate widget upgrade later).
+  const topDomainsPlatform: Platform = chatgptActive && !googleActive ? 'chat_gpt' : 'google';
 
-  // Initial search fetch — limit 100 gives enough sample for a useful mentions
-  // timeline without blowing the DFS budget. Pagination appends into searchRows.
-  const searchQuery = useQuery({
-    queryKey: ['llm-search', activeDomain, activePlatform],
-    queryFn: async () => {
-      const result = await fetchLlmSearch({
+  // One search query per platform, each gated on its own toggle. DFS does
+  // not accept an array of platforms on /search/live, so a single-platform
+  // query is the unit we cache and paginate against. React Query keys by
+  // platform so toggling is race-free.
+  const googleSearch = useQuery({
+    queryKey: ['llm-search', activeDomain, 'google'],
+    queryFn: () =>
+      fetchLlmSearch({
         target: [{ domain: activeDomain, include_subdomains: true }],
-        platform: activePlatform,
+        platform: 'google',
         limit: 100,
-      });
-      setSearchRows(result.items || []);
-      setSearchTotal(result.total_count);
-      setSearchAfterToken(result.search_after_token);
-      return result;
-    },
-    enabled: analysisEnabled,
+      }),
+    enabled: analysisEnabled && googleActive,
     staleTime: 60 * 1000,
   });
 
+  const chatgptSearch = useQuery({
+    queryKey: ['llm-search', activeDomain, 'chat_gpt'],
+    queryFn: () =>
+      fetchLlmSearch({
+        target: [{ domain: activeDomain, include_subdomains: true }],
+        platform: 'chat_gpt',
+        limit: 100,
+      }),
+    enabled: analysisEnabled && chatgptActive,
+    staleTime: 60 * 1000,
+  });
+
+  // Sync per-platform pagination tokens whenever a fresh first page lands.
+  // useMemo here would be wrong — we need to react to data identity changes
+  // exactly once each, so it lives in derived state via a passive useEffect.
+  useEffect(() => {
+    setGoogleExtra([]);
+    setGoogleToken(googleSearch.data?.search_after_token);
+  }, [googleSearch.data]);
+  useEffect(() => {
+    setChatgptExtra([]);
+    setChatgptToken(chatgptSearch.data?.search_after_token);
+  }, [chatgptSearch.data]);
+  // Reset extras when switching domain so stale rows never bleed across analyses.
+  useEffect(() => {
+    setGoogleExtra([]);
+    setGoogleToken(undefined);
+    setChatgptExtra([]);
+    setChatgptToken(undefined);
+  }, [activeDomain]);
+
+  const searchRows = useMemo<LlmSearchRow[]>(() => {
+    const g = googleActive ? [...(googleSearch.data?.items || []), ...googleExtra] : [];
+    const c = chatgptActive ? [...(chatgptSearch.data?.items || []), ...chatgptExtra] : [];
+    const merged = [...g, ...c];
+    // Sort by most-recent response first so the merged list reads chronologically.
+    merged.sort((a, b) => (b.last_response_at || '').localeCompare(a.last_response_at || ''));
+    return merged;
+  }, [googleActive, chatgptActive, googleSearch.data, chatgptSearch.data, googleExtra, chatgptExtra]);
+
+  const searchTotal = useMemo<number | undefined>(() => {
+    const g = googleActive ? googleSearch.data?.total_count ?? 0 : 0;
+    const c = chatgptActive ? chatgptSearch.data?.total_count ?? 0 : 0;
+    const total = g + c;
+    return total > 0 ? total : undefined;
+  }, [googleActive, chatgptActive, googleSearch.data, chatgptSearch.data]);
+
+  const hasMoreToken =
+    (googleActive && !!googleToken) || (chatgptActive && !!chatgptToken);
+
   const handleLoadMore = async () => {
-    if (!searchAfterToken) return;
     setLoadingMore(true);
     try {
-      const result = await fetchLlmSearch({
-        target: [{ domain: activeDomain, include_subdomains: true }],
-        platform: activePlatform,
-        limit: 100,
-        search_after_token: searchAfterToken,
-      });
-      const newItems = result.items || [];
-      if (newItems.length === 0) {
-        setSearchAfterToken(undefined);
-        toast({ title: 'No more results', description: 'All available answers have been loaded.' });
-        return;
+      const tasks: Promise<void>[] = [];
+      if (googleActive && googleToken) {
+        tasks.push(
+          fetchLlmSearch({
+            target: [{ domain: activeDomain, include_subdomains: true }],
+            platform: 'google',
+            limit: 100,
+            search_after_token: googleToken,
+          }).then((result) => {
+            const newItems = result.items || [];
+            setGoogleExtra((prev) => [...prev, ...newItems]);
+            setGoogleToken(newItems.length === 0 ? undefined : result.search_after_token);
+          }),
+        );
       }
-      setSearchRows((prev) => [...prev, ...newItems]);
-      setSearchAfterToken(result.search_after_token);
+      if (chatgptActive && chatgptToken) {
+        tasks.push(
+          fetchLlmSearch({
+            target: [{ domain: activeDomain, include_subdomains: true }],
+            platform: 'chat_gpt',
+            limit: 100,
+            search_after_token: chatgptToken,
+          }).then((result) => {
+            const newItems = result.items || [];
+            setChatgptExtra((prev) => [...prev, ...newItems]);
+            setChatgptToken(newItems.length === 0 ? undefined : result.search_after_token);
+          }),
+        );
+      }
+      if (tasks.length === 0) return;
+      await Promise.all(tasks);
     } catch (e) {
       console.error(e);
       toast({ variant: 'destructive', title: 'Error', description: 'Failed to load more results. Please try again.' });
@@ -450,19 +517,19 @@ export default function BrandTracker() {
 
   const gMentions = sumDim(googleAgg.data?.total?.platform, 'mentions');
   const cMentions = sumDim(chatgptAgg.data?.total?.platform, 'mentions');
-  const totalMentions = gMentions + cMentions;
+  const totalMentions = (googleActive ? gMentions : 0) + (chatgptActive ? cMentions : 0);
 
   const gImpressions = sumDim(googleAgg.data?.total?.platform, 'impressions');
   const cImpressions = sumDim(chatgptAgg.data?.total?.platform, 'impressions');
-  const totalImpressions = gImpressions + cImpressions;
+  const totalImpressions = (googleActive ? gImpressions : 0) + (chatgptActive ? cImpressions : 0);
 
   const gVolume = sumDim(googleAgg.data?.total?.platform, 'ai_search_volume');
   const cVolume = sumDim(chatgptAgg.data?.total?.platform, 'ai_search_volume');
-  const totalVolume = gVolume + cVolume;
+  const totalVolume = (googleActive ? gVolume : 0) + (chatgptActive ? cVolume : 0);
 
   const sourceDomains = [
-    ...(googleAgg.data?.total?.sources_domain || []),
-    ...(chatgptAgg.data?.total?.sources_domain || []),
+    ...(googleActive ? googleAgg.data?.total?.sources_domain || [] : []),
+    ...(chatgptActive ? chatgptAgg.data?.total?.sources_domain || [] : []),
   ];
   const uniqueSourceCount = new Set(sourceDomains.map((d) => d.key)).size;
 
@@ -622,7 +689,7 @@ export default function BrandTracker() {
         <div className="lg:col-span-2 h-full">
           <TopDomainsCard
             domain={activeDomain}
-            platform={activePlatform}
+            platform={topDomainsPlatform}
             enabled={analysisEnabled}
           />
         </div>
@@ -631,16 +698,16 @@ export default function BrandTracker() {
       <MentionsTrendChart
         rows={searchRows}
         totalCount={searchTotal}
-        loading={analysisEnabled && searchQuery.isLoading}
+        loading={analysisEnabled && (googleSearch.isLoading || chatgptSearch.isLoading)}
         enabled={analysisEnabled}
       />
 
       <AnswersTable
         rows={searchRows}
-        isLoading={searchQuery.isLoading}
-        error={searchQuery.error}
+        isLoading={googleSearch.isLoading || chatgptSearch.isLoading}
+        error={googleSearch.error || chatgptSearch.error}
         enabled={analysisEnabled}
-        searchAfterToken={searchAfterToken}
+        searchAfterToken={hasMoreToken ? 'more' : undefined}
         loadingMore={loadingMore}
         onLoadMore={handleLoadMore}
       />
