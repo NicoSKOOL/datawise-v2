@@ -108,6 +108,7 @@ Named recovery tags (use `git checkout <tag>` to restore source state):
 - `prod-2026-05-13-2327-live` — last known-good live state before the 2026-05-14 incident.
 - `prod-2026-05-21-1435` — after worker+SPA: typed `DataForSeoQuotaError` + 503 friendly message for `provider_quota_exhausted` (Bob's rank-tracking 402).
 - `prod-2026-05-21-1504` — after worker-only perf pass: caching on keywords/competitors/rank-tracking/local-seo DFS calls, cron `*/2 → */5`, KV short-circuit on DFS 402. Worker version `012530e8`.
+- `prod-2026-05-21-1552` — Brand Tracker per-platform split (fixes imregabri's `e0c73d59` concurrency bug); AI Visibility tabs trimmed to AI Search Tracker + Brand Tracker (removed duplicate People Also Ask + orphan On-Page SEO). Merge commit `96205a4`, PR #16. SPA-only; rollback via `git revert 96205a4 && git push origin production`.
 
 ## Rollback (Worker, `datawise-api`)
 
