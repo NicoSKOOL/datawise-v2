@@ -3,7 +3,6 @@ import { SiteAuditErrorBoundary } from '@/components/site-audit/ErrorBoundary';
 import { useTabParam } from '@/hooks/use-tab-param';
 import AIOverview from './AIOverview';
 import BrandTracker from './BrandTracker';
-import PeopleAlsoAsk from './PeopleAlsoAsk';
 import OnPageSEO from './OnPageSEO';
 
 export default function AIVisibility() {
@@ -21,7 +20,6 @@ export default function AIVisibility() {
         <TabsList>
           <TabsTrigger value="ai-overview">AI Search Tracker</TabsTrigger>
           <TabsTrigger value="brand-tracker">Brand Tracker</TabsTrigger>
-          <TabsTrigger value="people-also-ask">People Also Ask</TabsTrigger>
           <TabsTrigger value="onpage-seo">On-Page SEO</TabsTrigger>
         </TabsList>
 
@@ -30,9 +28,6 @@ export default function AIVisibility() {
         </TabsContent>
         <TabsContent value="brand-tracker" className="mt-6">
           <BrandTracker />
-        </TabsContent>
-        <TabsContent value="people-also-ask" className="mt-6">
-          <PeopleAlsoAsk />
         </TabsContent>
         <TabsContent value="onpage-seo" className="mt-6">
           <OnPageSEO />
