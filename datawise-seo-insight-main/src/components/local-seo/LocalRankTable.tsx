@@ -71,8 +71,6 @@ export default function LocalRankTable({ keywords, loading, onDelete, onAddKeywo
             <th className="text-left py-3 px-4 font-medium">Keyword</th>
             <th className="text-center py-3 px-4 font-medium">Pack Position</th>
             <th className="text-center py-3 px-4 font-medium">Change</th>
-            <th className="text-center py-3 px-4 font-medium">Rating</th>
-            <th className="text-center py-3 px-4 font-medium">Reviews</th>
             <th className="text-center py-3 px-4 font-medium">Last Checked</th>
             <th className="text-right py-3 px-4 font-medium"></th>
           </tr>
@@ -88,12 +86,6 @@ export default function LocalRankTable({ keywords, loading, onDelete, onAddKeywo
               </td>
               <td className="py-3 px-4 text-center">
                 <ChangeIndicator current={kw.pack_position} previous={kw.prev_pack_position} />
-              </td>
-              <td className="py-3 px-4 text-center">
-                <span className="text-sm tabular-nums">{kw.rating ?? '--'}</span>
-              </td>
-              <td className="py-3 px-4 text-center">
-                <span className="text-sm tabular-nums">{kw.reviews_count ?? '--'}</span>
               </td>
               <td className="py-3 px-4 text-center">
                 <span className="text-xs text-muted-foreground">
