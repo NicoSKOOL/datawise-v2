@@ -105,6 +105,7 @@ export async function handleListAllFeedback(request: Request, env: Env, user: Au
 
   let query = `SELECT f.id, f.type, f.title, f.description, f.severity, f.status, f.admin_notes,
     f.page_url, f.browser_info, f.screenshot_info, f.created_at, f.updated_at,
+    f.roadmap_status, f.roadmap_public_title, f.roadmap_public_description, f.shipped_at,
     u.email as user_email, u.name as user_name
     FROM feedback_reports f JOIN users u ON f.user_id = u.id`;
 
@@ -159,6 +160,39 @@ export async function handleUpdateFeedback(request: Request, env: Env, user: Aut
     updates.push('admin_notes = ?');
     bindings.push(body.admin_notes);
   }
+  // Roadmap promotion fields. roadmap_status accepts null to demote.
+  if ('roadmap_status' in body) {
+    const rs = body.roadmap_status;
+    if (rs === null || rs === '' || (typeof rs === 'string' && ['planned', 'in_progress', 'shipped'].includes(rs))) {
+      const normalized = rs === '' ? null : rs;
+      updates.push('roadmap_status = ?');
+      bindings.push(normalized);
+      // Stamp shipped_at the first time it flips to shipped; clear it otherwise.
+      if (normalized === 'shipped') {
+        updates.push("shipped_at = COALESCE(shipped_at, datetime('now'))");
+      } else {
+        updates.push('shipped_at = NULL');
+      }
+    } else {
+      return json({ error: 'roadmap_status must be planned|in_progress|shipped or null' }, 400);
+    }
+  }
+  if (body.roadmap_public_title !== undefined) {
+    const t = body.roadmap_public_title;
+    if (t !== null && (typeof t !== 'string' || t.length > 200)) {
+      return json({ error: 'roadmap_public_title must be a string under 200 chars or null' }, 400);
+    }
+    updates.push('roadmap_public_title = ?');
+    bindings.push(t === '' ? null : t);
+  }
+  if (body.roadmap_public_description !== undefined) {
+    const d = body.roadmap_public_description;
+    if (d !== null && (typeof d !== 'string' || d.length > 2000)) {
+      return json({ error: 'roadmap_public_description must be a string under 2000 chars or null' }, 400);
+    }
+    updates.push('roadmap_public_description = ?');
+    bindings.push(d === '' ? null : d);
+  }
 
   if (updates.length === 0) {
     return json({ error: 'Nothing to update' }, 400);
@@ -172,6 +206,46 @@ export async function handleUpdateFeedback(request: Request, env: Env, user: Aut
   ).bind(...bindings).run();
 
   return json({ success: true });
+}
+
+// GET /api/roadmap
+// Authenticated but available to any user. Returns only PII-stripped public
+// fields grouped by roadmap_status. Items without a public title fall back
+// to the original title (admin should curate, but this avoids empty cards).
+export async function handleRoadmap(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, roadmap_status,
+       COALESCE(roadmap_public_title, title) as title,
+       roadmap_public_description as description,
+       shipped_at, created_at
+     FROM feedback_reports
+     WHERE roadmap_status IN ('planned', 'in_progress', 'shipped')
+     ORDER BY
+       CASE roadmap_status
+         WHEN 'in_progress' THEN 0
+         WHEN 'planned' THEN 1
+         WHEN 'shipped' THEN 2
+       END,
+       COALESCE(shipped_at, created_at) DESC`
+  ).all();
+
+  const planned: unknown[] = [];
+  const in_progress: unknown[] = [];
+  const shipped: unknown[] = [];
+  for (const row of results as Array<Record<string, unknown>>) {
+    const item = {
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      shipped_at: row.shipped_at,
+      created_at: row.created_at,
+    };
+    if (row.roadmap_status === 'planned') planned.push(item);
+    else if (row.roadmap_status === 'in_progress') in_progress.push(item);
+    else if (row.roadmap_status === 'shipped') shipped.push(item);
+  }
+
+  return json({ planned, in_progress, shipped });
 }
 
 // DELETE /api/admin/feedback/:id

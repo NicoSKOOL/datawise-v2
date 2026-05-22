@@ -10,6 +10,7 @@ import {
   FileText,
   ClipboardCheck,
   Link2,
+  Map,
   Settings,
   LogOut,
   Shield,
@@ -155,6 +156,11 @@ const bottomNavItems: NavItem[] = [
     title: 'Settings',
     url: '/settings',
     icon: Settings,
+  },
+  {
+    title: 'Roadmap',
+    url: '/roadmap',
+    icon: Map,
   },
 ];
 
