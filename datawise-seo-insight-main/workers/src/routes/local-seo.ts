@@ -297,6 +297,9 @@ export async function handleLocalKeywords(env: Env, userId: string, projectId: s
 export async function handleCreateLocalProject(request: Request, env: Env, userId: string): Promise<Response> {
   const { name, business_name, place_id, cid, domain, location_code, latitude, longitude } = await request.json() as any;
   if (!name?.trim()) return json({ error: 'Name is required' }, 400);
+  if (!place_id && !business_name?.trim()) {
+    return json({ error: 'Select a Google Business Profile (search or paste a Maps URL) before creating the project.' }, 400);
+  }
 
   const id = generateId();
   const locCode = location_code || 2840;
@@ -316,6 +319,54 @@ export async function handleCreateLocalProject(request: Request, env: Env, userI
     location_code: locCode,
     keyword_count: 0,
   }, 201);
+}
+
+// PATCH /api/local-seo/projects/:id/gbp
+// Link or relink a Google Business Profile on an existing local project. Used to
+// backfill legacy projects that were created without GBP data and to relink if
+// the user picked the wrong business.
+export async function handleLinkLocalProjectGBP(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const { business_name, place_id, cid, location_code, latitude, longitude } = await request.json() as any;
+  if (!place_id && !business_name?.trim()) {
+    return json({ error: 'place_id or business_name is required' }, 400);
+  }
+
+  const existing = await env.DB.prepare(
+    'SELECT id FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first();
+  if (!existing) return json({ error: 'Local project not found' }, 404);
+
+  // Reset lat/lng when caller passes new ones explicitly, otherwise clear them so
+  // the next geogrid scan re-resolves coords from the freshly linked GBP rather
+  // than reusing stale coordinates from a previous (wrong) business.
+  const newLat = latitude ?? null;
+  const newLng = longitude ?? null;
+
+  await env.DB.prepare(
+    `UPDATE seo_projects
+       SET place_id = COALESCE(?, place_id),
+           cid = COALESCE(?, cid),
+           business_name = COALESCE(?, business_name),
+           location_code = COALESCE(?, location_code),
+           latitude = ?,
+           longitude = ?
+     WHERE id = ? AND user_id = ?`
+  ).bind(
+    place_id || null,
+    cid || null,
+    business_name?.trim() || null,
+    location_code || null,
+    newLat,
+    newLng,
+    projectId,
+    userId,
+  ).run();
+
+  const updated = await env.DB.prepare(
+    'SELECT id, name, domain, project_type, place_id, cid, business_name, location_code, latitude, longitude FROM seo_projects WHERE id = ? AND user_id = ?'
+  ).bind(projectId, userId).first();
+
+  return json(updated);
 }
 
 // POST /api/local-seo/gbp-profile

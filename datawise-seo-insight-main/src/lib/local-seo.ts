@@ -27,6 +27,18 @@ export async function deleteLocalProject(projectId: string) {
   return api(`/api/rank-tracking/projects/${projectId}`, { method: 'DELETE' });
 }
 
+export async function linkLocalProjectGBP(projectId: string, params: {
+  business_name?: string;
+  place_id?: string;
+  cid?: string;
+  location_code?: number;
+}) {
+  return api<LocalProject>(`/api/local-seo/projects/${projectId}/gbp`, {
+    method: 'PATCH',
+    body: params,
+  });
+}
+
 // --- Local Keywords ---
 
 export async function fetchLocalKeywords(projectId: string) {

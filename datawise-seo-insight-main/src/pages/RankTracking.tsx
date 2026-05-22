@@ -20,7 +20,7 @@ import {
 import {
   fetchLocalProjects, createLocalProject, deleteLocalProject,
   fetchLocalKeywords, addLocalKeywords, checkLocalRankings, fetchLocalReport,
-  fetchGBPProfile,
+  fetchGBPProfile, linkLocalProjectGBP,
 } from '@/lib/local-seo';
 import { Input } from '@/components/ui/input';
 import { RefreshCw, Link2, Sparkles, Activity, Search, ArrowLeft, MapPin, LayoutGrid, List } from 'lucide-react';
@@ -47,6 +47,7 @@ import GBPProfileCard from '@/components/local-seo/GBPProfileCard';
 import ReviewsSection from '@/components/local-seo/ReviewsSection';
 import LocalCompetitorGrid from '@/components/local-seo/LocalCompetitorGrid';
 import GeoGridPanel from '@/components/local-seo/GeoGridPanel';
+import LinkGBPDialog from '@/components/local-seo/LinkGBPDialog';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildRankTrackingReport } from '@/lib/export/adapters/rankTracking';
 import { captureElementPng } from '@/lib/export/chartCapture';
@@ -103,6 +104,7 @@ export default function RankTracking() {
   const [localCategory, setLocalCategory] = useState<string | null>(null);
   const [localCity, setLocalCity] = useState<string | null>(null);
   const [localGBPProfile, setLocalGBPProfile] = useState<GBPProfile | null>(null);
+  const [linkGBPOpen, setLinkGBPOpen] = useState(false);
   const { toast } = useToast();
 
   const availableProperties = gscProperties.filter((property) => property.is_enabled !== 0);
@@ -459,6 +461,23 @@ export default function RankTracking() {
     }
   };
 
+  const handleLinkLocalGBP = async (params: {
+    business_name: string;
+    place_id?: string;
+    cid?: string;
+    location_code: number;
+  }) => {
+    if (!selectedLocalProject) return;
+    try {
+      const updated = await linkLocalProjectGBP(selectedLocalProject.id, params);
+      setSelectedLocalProject((prev) => prev ? { ...prev, ...updated } : prev);
+      setLocalProjects((prev) => prev.map((p) => p.id === updated.id ? { ...p, ...updated } : p));
+      toast({ title: 'Business profile linked', description: params.business_name });
+    } catch (err: unknown) {
+      toast({ title: 'Could not link business profile', description: getErrorMessage(err), variant: 'destructive' });
+    }
+  };
+
   const handleDeleteLocalProject = async (projectId: string) => {
     try {
       await deleteLocalProject(projectId);
@@ -565,6 +584,42 @@ export default function RankTracking() {
 
   // Local project detail view
   if (selectedLocalProject) {
+    const needsGBPLink = !selectedLocalProject.place_id && !selectedLocalProject.business_name;
+    if (needsGBPLink) {
+      return (
+        <div className="space-y-6">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => { setSelectedLocalProject(null); setLocalKeywords([]); loadLocalProjects(); }}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <h2 className="text-xl font-semibold">{selectedLocalProject.name}</h2>
+          </div>
+          <Card>
+            <CardContent className="p-8 flex flex-col items-center text-center gap-3">
+              <div className="rounded-full bg-muted p-3">
+                <MapPin className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <h3 className="text-base font-semibold">Connect your Google Business Profile</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                This project has no business linked yet, so the Rank Map and Local Pack checks can't run.
+                Pick your business below and we'll attach it.
+              </p>
+              <Button className="mt-2" onClick={() => setLinkGBPOpen(true)}>
+                <Link2 className="h-4 w-4 mr-2" />
+                Link Business Profile
+              </Button>
+            </CardContent>
+          </Card>
+          <LinkGBPDialog
+            open={linkGBPOpen}
+            onOpenChange={setLinkGBPOpen}
+            defaultLocationCode={selectedLocalProject.location_code}
+            defaultQuery={selectedLocalProject.name}
+            onLink={handleLinkLocalGBP}
+          />
+        </div>
+      );
+    }
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
