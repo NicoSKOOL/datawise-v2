@@ -28,3 +28,11 @@ database_id = "b9355723-e02c-4877-8dce-c57cc1965068"
 binding = "KV"
 id = "2302e0b0369842e799b5f4a144d6dce4"
 preview_id = "30288cb442c84e038406b0e174f90398"
+
+# Site Audit to-do attachments (10 MB cap, images + PDFs) — see
+# handleUploadTaskAttachment in src/routes/site-audit.ts. The bucket exists
+# since 2026-04-19 but the top-level binding was missing, so the feature
+# 500'd on every upload in production.
+[[r2_buckets]]
+binding = "TASK_ATTACHMENTS"
+bucket_name = "datawise-task-attachments"
