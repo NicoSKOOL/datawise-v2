@@ -149,11 +149,6 @@ const mainNavItems: NavItem[] = [
       { label: 'Tools', url: '/content-tools' },
     ],
   },
-  {
-    title: 'Roadmap',
-    url: '/roadmap',
-    icon: Map,
-  },
 ];
 
 const bottomNavItems: NavItem[] = [
@@ -161,6 +156,11 @@ const bottomNavItems: NavItem[] = [
     title: 'Settings',
     url: '/settings',
     icon: Settings,
+  },
+  {
+    title: 'Roadmap',
+    url: '/roadmap',
+    icon: Map,
   },
 ];
 
