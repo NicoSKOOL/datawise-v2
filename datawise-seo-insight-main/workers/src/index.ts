@@ -67,7 +67,7 @@ import {
   handleDeleteCluster, handleSetClusterPillar,
 } from './routes/planner-clusters';
 import {
-  handleBusinessSearch, handleCreateLocalProject, handleLinkLocalProjectGBP, handleLocalKeywords,
+  handleBusinessSearch, handleCreateLocalProject, handleLinkLocalProjectGBP, handleLocalKeywordDiscovery, handleLocalKeywords,
   handleLocalRankCheck, handleLocalProjectReport,
   handleGBPProfile, handleReviews, handleLocalCompetitors, handleLocalKeywordSuggestions,
   handleResolveGBPUrl,
@@ -462,6 +462,10 @@ export default {
       if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/gbp$/) && method === 'PATCH') {
         const projectId = path.split('/')[4];
         return addCors(await handleLinkLocalProjectGBP(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/keyword-discovery$/) && method === 'POST') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleLocalKeywordDiscovery(env, user.id, projectId));
       }
       if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/keywords$/) && method === 'GET') {
         const projectId = path.split('/')[4];

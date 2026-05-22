@@ -49,6 +49,7 @@ import LocalCompetitorGrid from '@/components/local-seo/LocalCompetitorGrid';
 import GeoGridPanel from '@/components/local-seo/GeoGridPanel';
 import LinkGBPDialog from '@/components/local-seo/LinkGBPDialog';
 import LocalSuggestionsInline from '@/components/local-seo/LocalSuggestionsInline';
+import LocalKeywordDiscoveryPanel from '@/components/local-seo/LocalKeywordDiscoveryPanel';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildRankTrackingReport } from '@/lib/export/adapters/rankTracking';
 import { captureElementPng } from '@/lib/export/chartCapture';
@@ -688,13 +689,22 @@ export default function RankTracking() {
               </CardHeader>
               <CardContent className={(localKeywords.length === 0 && !loadingLocalKeywords) ? 'pt-0' : (localViewMode === 'table' ? 'p-0' : 'pt-0')}>
                 {(localKeywords.length === 0 && !loadingLocalKeywords) ? (
-                  <LocalSuggestionsInline
-                    category={localCategory}
-                    city={localCity}
-                    locationCode={selectedLocalProject.location_code || 2840}
-                    onAdd={handleAddLocalKeywords}
-                    onOpenManual={() => setLocalAddKeywordsOpen(true)}
-                  />
+                  (selectedLocalProject.place_id || selectedLocalProject.business_name) ? (
+                    <LocalKeywordDiscoveryPanel
+                      projectId={selectedLocalProject.id}
+                      locationCode={selectedLocalProject.location_code || 2840}
+                      onAdd={handleAddLocalKeywords}
+                      onOpenManual={() => setLocalAddKeywordsOpen(true)}
+                    />
+                  ) : (
+                    <LocalSuggestionsInline
+                      category={localCategory}
+                      city={localCity}
+                      locationCode={selectedLocalProject.location_code || 2840}
+                      onAdd={handleAddLocalKeywords}
+                      onOpenManual={() => setLocalAddKeywordsOpen(true)}
+                    />
+                  )
                 ) : localViewMode === 'table' ? (
                   <LocalRankTable
                     keywords={localKeywords}

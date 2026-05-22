@@ -127,6 +127,29 @@ export async function fetchLocalKeywordSuggestions(params: {
   );
 }
 
+export interface LocalDiscoveredKeyword {
+  keyword: string;
+  rank: number | null;
+  search_volume?: number;
+}
+
+export interface LocalKeywordDiscovery {
+  location_code: number;
+  category: string | null;
+  city: string | null;
+  ranking: LocalDiscoveredKeyword[];
+  close: LocalDiscoveredKeyword[];
+  expansion: LocalDiscoveredKeyword[];
+  generated_at: string;
+}
+
+export async function runLocalKeywordDiscovery(projectId: string) {
+  return api<LocalKeywordDiscovery>(
+    `/api/local-seo/projects/${projectId}/keyword-discovery`,
+    { method: 'POST' },
+  );
+}
+
 // --- Resolve GBP URL ---
 
 export async function resolveGBPUrl(url: string) {
