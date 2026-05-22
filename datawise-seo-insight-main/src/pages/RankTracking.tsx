@@ -494,13 +494,19 @@ export default function RankTracking() {
     }
   };
 
-  const handleAddLocalKeywords = async (keywordList: string[], locationCode: number, languageCode: string) => {
+  const handleAddLocalKeywords = async (
+    keywordList: string[],
+    locationCode: number,
+    languageCode: string,
+    initialPositions?: Record<string, number>,
+  ) => {
     if (!selectedLocalProject) return;
     try {
       const result = await addLocalKeywords(selectedLocalProject.id, {
         keywords: keywordList,
         location_code: locationCode,
         language_code: languageCode,
+        initial_positions: initialPositions,
       });
       toast({ title: 'Keywords added', description: `Added ${result.added}, skipped ${result.skipped} duplicates` });
       setLocalAddKeywordsOpen(false);

@@ -49,6 +49,7 @@ export async function addLocalKeywords(projectId: string, params: {
   keywords: string[];
   location_code?: number;
   language_code?: string;
+  initial_positions?: Record<string, number>;
 }) {
   return api<{ added: number; skipped: number }>(
     `/api/rank-tracking/projects/${projectId}/keywords`,

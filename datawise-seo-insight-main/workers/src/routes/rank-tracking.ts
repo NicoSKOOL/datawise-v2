@@ -132,10 +132,11 @@ export async function handleListKeywords(env: Env, userId: string, projectId: st
 // POST /api/rank-tracking/projects/:id/keywords
 export async function handleAddKeywords(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
   const project = await env.DB.prepare(
-    'SELECT id FROM seo_projects WHERE id = ? AND user_id = ?'
-  ).bind(projectId, userId).first();
+    'SELECT id, project_type FROM seo_projects WHERE id = ? AND user_id = ?'
+  ).bind(projectId, userId).first() as { id: string; project_type: string } | null;
 
   if (!project) return json({ error: 'Project not found' }, 404);
+  const isLocal = project.project_type === 'local';
 
   const { keywords, location_code = 2840, language_code = 'en', initial_positions } = await request.json() as any;
   if (!keywords?.length) return json({ error: 'Keywords array is required' }, 400);
@@ -161,14 +162,26 @@ export async function handleAddKeywords(request: Request, env: Env, userId: stri
       ).bind(keywordId, projectId, cleaned, location_code, language_code)
     );
 
-    // Seed rank_history with GSC position if provided
+    // Seed history with the provided position so the first row of the
+    // rank/local-pack table is populated immediately. For local projects
+    // the position represents Local Pack rank (1-3) or Maps rank (4-20)
+    // and goes into local_rank_history; for organic projects it's an
+    // SERP position and goes into rank_history.
     const pos = initial_positions?.[kw] ?? initial_positions?.[cleaned];
     if (pos != null) {
-      stmts.push(
-        env.DB.prepare(
-          'INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at) VALUES (?, ?, ?, ?, ?)'
-        ).bind(keywordId, Math.round(pos), Math.round(pos), null, checkedAt)
-      );
+      if (isLocal) {
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO local_rank_history (keyword_id, pack_position, rating, reviews_count, checked_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(keywordId, Math.round(pos), null, null, checkedAt)
+        );
+      } else {
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(keywordId, Math.round(pos), Math.round(pos), null, checkedAt)
+        );
+      }
     }
 
     added++;

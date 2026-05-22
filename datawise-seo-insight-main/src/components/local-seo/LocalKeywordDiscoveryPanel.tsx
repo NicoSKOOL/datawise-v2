@@ -8,7 +8,12 @@ interface LocalKeywordDiscoveryPanelProps {
   projectId: string;
   locationCode: number;
   languageCode?: string;
-  onAdd: (keywords: string[], locationCode: number, languageCode: string) => Promise<void>;
+  onAdd: (
+    keywords: string[],
+    locationCode: number,
+    languageCode: string,
+    initialPositions?: Record<string, number>,
+  ) => Promise<void>;
   onOpenManual: () => void;
 }
 
@@ -73,10 +78,23 @@ export default function LocalKeywordDiscoveryPanel({
 
   const handleAdd = async () => {
     const keywords = Array.from(selected);
-    if (keywords.length === 0) return;
+    if (keywords.length === 0 || !data) return;
+    // Reuse the rank we already discovered so the table is populated
+    // immediately instead of showing "Not in pack / Last checked: Never".
+    const rankByKeyword: Record<string, number> = {};
+    const collect = (items: LocalDiscoveredKeyword[]) => {
+      for (const k of items) {
+        if (k.rank != null && selected.has(k.keyword)) {
+          rankByKeyword[k.keyword] = k.rank;
+          rankByKeyword[k.keyword.toLowerCase()] = k.rank;
+        }
+      }
+    };
+    collect(data.ranking);
+    collect(data.close);
     setAdding(true);
     try {
-      await onAdd(keywords, locationCode, languageCode);
+      await onAdd(keywords, locationCode, languageCode, Object.keys(rankByKeyword).length ? rankByKeyword : undefined);
       setSelected(new Set());
     } finally {
       setAdding(false);
