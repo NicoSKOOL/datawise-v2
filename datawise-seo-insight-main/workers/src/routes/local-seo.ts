@@ -297,6 +297,9 @@ export async function handleLocalKeywords(env: Env, userId: string, projectId: s
 export async function handleCreateLocalProject(request: Request, env: Env, userId: string): Promise<Response> {
   const { name, business_name, place_id, cid, domain, location_code, latitude, longitude } = await request.json() as any;
   if (!name?.trim()) return json({ error: 'Name is required' }, 400);
+  if (!place_id && !business_name?.trim()) {
+    return json({ error: 'Select a Google Business Profile (search or paste a Maps URL) before creating the project.' }, 400);
+  }
 
   const id = generateId();
   const locCode = location_code || 2840;
@@ -316,6 +319,54 @@ export async function handleCreateLocalProject(request: Request, env: Env, userI
     location_code: locCode,
     keyword_count: 0,
   }, 201);
+}
+
+// PATCH /api/local-seo/projects/:id/gbp
+// Link or relink a Google Business Profile on an existing local project. Used to
+// backfill legacy projects that were created without GBP data and to relink if
+// the user picked the wrong business.
+export async function handleLinkLocalProjectGBP(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const { business_name, place_id, cid, location_code, latitude, longitude } = await request.json() as any;
+  if (!place_id && !business_name?.trim()) {
+    return json({ error: 'place_id or business_name is required' }, 400);
+  }
+
+  const existing = await env.DB.prepare(
+    'SELECT id FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first();
+  if (!existing) return json({ error: 'Local project not found' }, 404);
+
+  // Reset lat/lng when caller passes new ones explicitly, otherwise clear them so
+  // the next geogrid scan re-resolves coords from the freshly linked GBP rather
+  // than reusing stale coordinates from a previous (wrong) business.
+  const newLat = latitude ?? null;
+  const newLng = longitude ?? null;
+
+  await env.DB.prepare(
+    `UPDATE seo_projects
+       SET place_id = COALESCE(?, place_id),
+           cid = COALESCE(?, cid),
+           business_name = COALESCE(?, business_name),
+           location_code = COALESCE(?, location_code),
+           latitude = ?,
+           longitude = ?
+     WHERE id = ? AND user_id = ?`
+  ).bind(
+    place_id || null,
+    cid || null,
+    business_name?.trim() || null,
+    location_code || null,
+    newLat,
+    newLng,
+    projectId,
+    userId,
+  ).run();
+
+  const updated = await env.DB.prepare(
+    'SELECT id, name, domain, project_type, place_id, cid, business_name, location_code, latitude, longitude FROM seo_projects WHERE id = ? AND user_id = ?'
+  ).bind(projectId, userId).first();
+
+  return json(updated);
 }
 
 // POST /api/local-seo/gbp-profile
@@ -592,6 +643,128 @@ export async function handleLocalKeywordSuggestions(request: Request, env: Env):
     .map(([group, keywords]) => ({ group, keywords }));
 
   return json({ suggestions });
+}
+
+// POST /api/local-seo/projects/:id/keyword-discovery
+// On first connect, find which suggestion keywords the linked GBP is already
+// ranking for in Google Maps and bucket them as "ranking" (1-3) / "close"
+// (4-20) / "expansion" (no presence). Cached in KV for 24h per project.
+export async function handleLocalKeywordDiscovery(env: Env, userId: string, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, user_id, name, domain, project_type, place_id, cid, business_name, location_code FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as (LocalProject & { location_code: number }) | null;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+  if (!project.place_id && !project.business_name) {
+    return json({ error: 'Link a Google Business Profile first.' }, 400);
+  }
+
+  const locationCode = project.location_code || 2840;
+  const cacheKey = `local-discovery:${projectId}:${locationCode}`;
+  const cached = await env.KV.get(cacheKey, 'json');
+  if (cached) return json(cached);
+
+  // 1. Resolve category + city via GBP info (KV cached)
+  const gbpKey = `gbp-profile:${project.place_id || project.business_name}`;
+  let gbp: any = await env.KV.get(gbpKey, 'json');
+  if (!gbp) {
+    try {
+      const data = await dataforseoRequest(env, '/business_data/google/my_business_info/live', [{
+        keyword: project.place_id ? `place_id:${project.place_id}` : project.business_name,
+        location_code: locationCode,
+        language_code: 'en',
+      }]);
+      gbp = data?.tasks?.[0]?.result?.[0] || null;
+      if (gbp) await env.KV.put(gbpKey, JSON.stringify(gbp), { expirationTtl: LOCAL_KEYWORDS_TTL_SECONDS });
+    } catch { gbp = null; }
+  }
+  const category = (gbp?.category || '').toLowerCase();
+  const addrParts = (gbp?.address || '').split(',').map((s: string) => s.trim()).filter(Boolean);
+  const city = addrParts.length >= 2 ? addrParts[addrParts.length - 3] || addrParts[1] || '' : '';
+  const cityLower = city.toLowerCase();
+
+  // 2. Build a compact candidate list (~25). Static patterns + a single DFS
+  // keyword_suggestions call seeded with the category.
+  const candidateMap = new Map<string, number | undefined>();
+  if (category) {
+    const cat = category;
+    const loc = city;
+    const seeds = loc
+      ? [`${cat} ${loc}`, `best ${cat} ${loc}`, `${cat} near me`, `${cat} open now`, `top ${cat} ${loc}`, `affordable ${cat} ${loc}`, `${cat} reviews ${loc}`]
+      : [`${cat} near me`, `best ${cat} near me`, `${cat} open now`, `top rated ${cat}`, `${cat} reviews`];
+    for (const kw of seeds) candidateMap.set(kw, undefined);
+
+    try {
+      const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_suggestions/live', [{
+        keyword: cat,
+        location_code: locationCode,
+        language_code: 'en',
+        limit: 100,
+      }], { ttlSeconds: LOCAL_KEYWORDS_TTL_SECONDS });
+      const items = data?.tasks?.[0]?.result?.[0]?.items || [];
+      const localTerms = ['near me', 'near', 'nearby', 'local', 'closest', 'open now', 'open late'];
+      for (const item of items) {
+        const kw = item.keyword?.toLowerCase();
+        if (!kw) continue;
+        const sv = item.keyword_info?.search_volume || 0;
+        if (sv === 0) continue;
+        const isLocal = (cityLower && kw.includes(cityLower)) || localTerms.some((t) => kw.includes(t)) || kw.includes(cat);
+        if (isLocal && !candidateMap.has(kw)) {
+          candidateMap.set(kw, sv);
+          if (candidateMap.size >= 25) break;
+        }
+      }
+    } catch { /* fall through with static only */ }
+  }
+
+  const candidates = Array.from(candidateMap.entries()).map(([keyword, search_volume]) => ({ keyword, search_volume }));
+
+  // 3. Probe Maps SERP in parallel (same CONCURRENCY pattern as GeoGrid).
+  const CONCURRENCY = 10;
+  type ProbeResult = { keyword: string; rank: number | null; search_volume?: number };
+  const results: ProbeResult[] = [];
+  for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+    const chunk = candidates.slice(i, i + CONCURRENCY);
+    const probes = chunk.map(async ({ keyword, search_volume }) => {
+      try {
+        const data = await dataforseoRequestCached(env, '/serp/google/maps/live/advanced', [{
+          keyword,
+          location_code: locationCode,
+          language_code: 'en',
+          device: 'desktop',
+          os: 'windows',
+          depth: 20,
+        }], { ttlSeconds: LOCAL_KEYWORDS_TTL_SECONDS });
+        const items = data?.tasks?.[0]?.result?.[0]?.items || [];
+        const match = findLocalPackPosition(items, project);
+        const rank = match ? (match.rank_absolute ?? match.rank_group ?? null) : null;
+        return { keyword, rank, search_volume };
+      } catch {
+        return { keyword, rank: null, search_volume };
+      }
+    });
+    results.push(...await Promise.all(probes));
+  }
+
+  // 4. Bucket by rank.
+  const ranking = results.filter((r) => r.rank != null && r.rank <= 3)
+    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
+  const close = results.filter((r) => r.rank != null && r.rank > 3 && r.rank <= 20)
+    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
+  const expansion = results.filter((r) => r.rank == null)
+    .sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0));
+
+  const payload = {
+    location_code: locationCode,
+    category: category || null,
+    city: city || null,
+    ranking,
+    close,
+    expansion,
+    generated_at: new Date().toISOString(),
+  };
+
+  await env.KV.put(cacheKey, JSON.stringify(payload), { expirationTtl: LOCAL_KEYWORDS_TTL_SECONDS });
+  return json(payload);
 }
 
 // POST /api/local-seo/local-competitors

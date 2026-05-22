@@ -27,6 +27,18 @@ export async function deleteLocalProject(projectId: string) {
   return api(`/api/rank-tracking/projects/${projectId}`, { method: 'DELETE' });
 }
 
+export async function linkLocalProjectGBP(projectId: string, params: {
+  business_name?: string;
+  place_id?: string;
+  cid?: string;
+  location_code?: number;
+}) {
+  return api<LocalProject>(`/api/local-seo/projects/${projectId}/gbp`, {
+    method: 'PATCH',
+    body: params,
+  });
+}
+
 // --- Local Keywords ---
 
 export async function fetchLocalKeywords(projectId: string) {
@@ -37,6 +49,7 @@ export async function addLocalKeywords(projectId: string, params: {
   keywords: string[];
   location_code?: number;
   language_code?: string;
+  initial_positions?: Record<string, number>;
 }) {
   return api<{ added: number; skipped: number }>(
     `/api/rank-tracking/projects/${projectId}/keywords`,
@@ -112,6 +125,29 @@ export async function fetchLocalKeywordSuggestions(params: {
   return api<{ suggestions: LocalKeywordSuggestionGroup[] }>(
     '/api/local-seo/keyword-suggestions',
     { method: 'POST', body: params }
+  );
+}
+
+export interface LocalDiscoveredKeyword {
+  keyword: string;
+  rank: number | null;
+  search_volume?: number;
+}
+
+export interface LocalKeywordDiscovery {
+  location_code: number;
+  category: string | null;
+  city: string | null;
+  ranking: LocalDiscoveredKeyword[];
+  close: LocalDiscoveredKeyword[];
+  expansion: LocalDiscoveredKeyword[];
+  generated_at: string;
+}
+
+export async function runLocalKeywordDiscovery(projectId: string) {
+  return api<LocalKeywordDiscovery>(
+    `/api/local-seo/projects/${projectId}/keyword-discovery`,
+    { method: 'POST' },
   );
 }
 

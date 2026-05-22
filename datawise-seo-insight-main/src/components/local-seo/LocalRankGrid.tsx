@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { ArrowUp, ArrowDown, Minus, Star, RefreshCw } from 'lucide-react';
+import { ArrowUp, ArrowDown, Minus, RefreshCw } from 'lucide-react';
 import type { LocalTrackedKeyword } from '@/types/local-seo';
 
 interface LocalRankGridProps {
@@ -76,18 +76,7 @@ export default function LocalRankGrid({ keywords, loading, onAddKeywords }: Loca
             </span>
             <ChangeArrow current={kw.pack_position} previous={kw.prev_pack_position} />
           </div>
-          <p className="text-sm font-medium leading-tight mb-2 line-clamp-2">{kw.keyword}</p>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            {kw.rating != null && (
-              <span className="flex items-center gap-0.5">
-                <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                {kw.rating}
-              </span>
-            )}
-            {kw.reviews_count != null && (
-              <span>{kw.reviews_count} reviews</span>
-            )}
-          </div>
+          <p className="text-sm font-medium leading-tight line-clamp-2">{kw.keyword}</p>
         </div>
       ))}
     </div>
