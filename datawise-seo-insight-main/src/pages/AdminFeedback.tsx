@@ -12,7 +12,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { Bug, Lightbulb, Trash2, Image } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Bug, Lightbulb, Trash2, Image, Map } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -31,7 +32,17 @@ interface FeedbackReport {
   updated_at: string;
   user_email: string;
   user_name: string | null;
+  roadmap_status: 'planned' | 'in_progress' | 'shipped' | null;
+  roadmap_public_title: string | null;
+  roadmap_public_description: string | null;
+  shipped_at: string | null;
 }
+
+const roadmapStatusColors: Record<string, string> = {
+  planned: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
+  in_progress: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
+  shipped: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300',
+};
 
 const statusColors: Record<string, string> = {
   new: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
@@ -55,6 +66,8 @@ export default function AdminFeedback() {
   const [selectedReport, setSelectedReport] = useState<FeedbackReport | null>(null);
   const [adminNotes, setAdminNotes] = useState('');
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
+  const [roadmapTitle, setRoadmapTitle] = useState('');
+  const [roadmapDescription, setRoadmapDescription] = useState('');
 
   const hasScreenshot = (report: FeedbackReport) =>
     report.screenshot_info?.startsWith('__has_screenshot__');
@@ -101,10 +114,17 @@ export default function AdminFeedback() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, status, admin_notes }: { id: string; status?: string; admin_notes?: string }) =>
-      api(`/api/admin/feedback/${id}`, { method: 'PATCH', body: { status, admin_notes } }),
+    mutationFn: ({ id, ...body }: {
+      id: string;
+      status?: string;
+      admin_notes?: string;
+      roadmap_status?: string | null;
+      roadmap_public_title?: string | null;
+      roadmap_public_description?: string | null;
+    }) => api(`/api/admin/feedback/${id}`, { method: 'PATCH', body }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-feedback'] });
+      queryClient.invalidateQueries({ queryKey: ['roadmap'] });
       toast.success('Report updated');
     },
     onError: (err: Error) => toast.error(err.message),
@@ -133,6 +153,8 @@ export default function AdminFeedback() {
   const openDetail = (report: FeedbackReport) => {
     setSelectedReport(report);
     setAdminNotes(report.admin_notes || '');
+    setRoadmapTitle(report.roadmap_public_title || '');
+    setRoadmapDescription(report.roadmap_public_description || '');
   };
 
   return (
@@ -219,6 +241,16 @@ export default function AdminFeedback() {
                       <span className="flex items-center gap-1.5">
                         {report.title}
                         {hasScreenshot(report) && <Image className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />}
+                        {report.roadmap_status && (
+                          <Badge
+                            variant="secondary"
+                            className={`${roadmapStatusColors[report.roadmap_status]} text-[10px] py-0 h-4 flex items-center gap-1`}
+                            title="On public roadmap"
+                          >
+                            <Map className="h-2.5 w-2.5" />
+                            {report.roadmap_status.replace('_', ' ')}
+                          </Badge>
+                        )}
                       </span>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground truncate max-w-[150px]">
@@ -368,6 +400,83 @@ export default function AdminFeedback() {
                     disabled={updateMutation.isPending}
                   >
                     Save Notes
+                  </Button>
+                </div>
+
+                {/* Public roadmap promotion */}
+                <div className="space-y-3 rounded-md border border-dashed p-3 bg-muted/20">
+                  <div className="flex items-center gap-2">
+                    <Map className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">Public Roadmap</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground">Roadmap status</label>
+                    <Select
+                      value={selectedReport.roadmap_status ?? 'none'}
+                      onValueChange={(val) => {
+                        const newStatus = val === 'none' ? null : val;
+                        updateMutation.mutate({
+                          id: selectedReport.id,
+                          roadmap_status: newStatus,
+                        });
+                        setSelectedReport({
+                          ...selectedReport,
+                          roadmap_status: newStatus as FeedbackReport['roadmap_status'],
+                        });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Not on roadmap</SelectItem>
+                        <SelectItem value="planned">Planned</SelectItem>
+                        <SelectItem value="in_progress">In Progress</SelectItem>
+                        <SelectItem value="shipped">Shipped</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground">
+                      Public title (shown to all users; falls back to the original title)
+                    </label>
+                    <Input
+                      value={roadmapTitle}
+                      maxLength={200}
+                      placeholder={selectedReport.title}
+                      onChange={(e) => setRoadmapTitle(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-muted-foreground">
+                      Public description (optional, max 2000 chars)
+                    </label>
+                    <Textarea
+                      rows={3}
+                      value={roadmapDescription}
+                      maxLength={2000}
+                      placeholder="Cleaned-up summary for the public roadmap card..."
+                      onChange={(e) => setRoadmapDescription(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      updateMutation.mutate({
+                        id: selectedReport.id,
+                        roadmap_public_title: roadmapTitle || null,
+                        roadmap_public_description: roadmapDescription || null,
+                      });
+                      setSelectedReport({
+                        ...selectedReport,
+                        roadmap_public_title: roadmapTitle || null,
+                        roadmap_public_description: roadmapDescription || null,
+                      });
+                    }}
+                    disabled={updateMutation.isPending}
+                  >
+                    Save Public Copy
                   </Button>
                 </div>
 

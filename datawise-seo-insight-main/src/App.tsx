@@ -34,6 +34,7 @@ import SiteAudit from './pages/SiteAudit';
 import Backlinks from './pages/Backlinks';
 import SettingsPage from './pages/SettingsPage';
 import NotFound from './pages/NotFound';
+import Roadmap from './pages/Roadmap';
 import AdminMembers from './pages/AdminMembers';
 import AdminFeedback from './pages/AdminFeedback';
 import AdminPromoCodes from './pages/AdminPromoCodes';
@@ -153,6 +154,7 @@ const App = () => (
             <Route path="/content-writer" element={<ProtectedPage><ContentWriter /></ProtectedPage>} />
             <Route path="/site-audit" element={<ProtectedPage><SiteAudit /></ProtectedPage>} />
             <Route path="/backlinks" element={<ProtectedPage><Backlinks /></ProtectedPage>} />
+            <Route path="/roadmap" element={<ProtectedPage><Roadmap /></ProtectedPage>} />
             <Route path="/settings" element={<ProtectedPage><SettingsPage /></ProtectedPage>} />
             <Route path="/admin/members" element={<ProtectedPage><AdminMembers /></ProtectedPage>} />
             <Route path="/admin/feedback" element={<ProtectedPage><AdminFeedback /></ProtectedPage>} />

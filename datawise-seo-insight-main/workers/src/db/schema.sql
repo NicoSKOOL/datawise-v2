@@ -228,10 +228,17 @@ CREATE TABLE IF NOT EXISTS feedback_reports (
   status TEXT DEFAULT 'new' CHECK (status IN ('new', 'in_progress', 'resolved', 'closed')),
   admin_notes TEXT,
   created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
+  updated_at TEXT DEFAULT (datetime('now')),
+  roadmap_status TEXT,
+  roadmap_public_title TEXT,
+  roadmap_public_description TEXT,
+  shipped_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_feedback_reports_user ON feedback_reports(user_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_reports_status ON feedback_reports(status);
+CREATE INDEX IF NOT EXISTS idx_feedback_roadmap_status
+  ON feedback_reports(roadmap_status)
+  WHERE roadmap_status IS NOT NULL;
 
 -- Email drip sequences (nurture campaigns)
 CREATE TABLE IF NOT EXISTS email_sequences (

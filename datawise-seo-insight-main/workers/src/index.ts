@@ -103,6 +103,7 @@ import {
 import {
   handleSubmitFeedback, handleListMyFeedback, handleGetScreenshot,
   handleListAllFeedback, handleUpdateFeedback, handleDeleteFeedback,
+  handleRoadmap,
 } from './routes/feedback';
 import {
   handleListChecklist, handleUpsertChecklist,
@@ -640,6 +641,9 @@ export default {
       }
 
       // --- Feedback ---
+      if (path === '/api/roadmap' && method === 'GET') {
+        return addCors(await handleRoadmap(env));
+      }
       if (path === '/api/feedback' && method === 'POST') {
         return addCors(await handleSubmitFeedback(request, env, user));
       }

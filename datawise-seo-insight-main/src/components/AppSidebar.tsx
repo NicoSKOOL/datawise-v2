@@ -10,6 +10,7 @@ import {
   FileText,
   ClipboardCheck,
   Link2,
+  Map,
   Settings,
   LogOut,
   Shield,
@@ -147,6 +148,11 @@ const mainNavItems: NavItem[] = [
       { label: 'Writer', url: '/content-writer' },
       { label: 'Tools', url: '/content-tools' },
     ],
+  },
+  {
+    title: 'Roadmap',
+    url: '/roadmap',
+    icon: Map,
   },
 ];
 
