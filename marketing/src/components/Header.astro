@@ -17,13 +17,15 @@ const currentPath = Astro.url.pathname;
   <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
     <div class="flex h-16 items-center justify-between">
       <!-- Logo -->
-      <a href="/" class="flex items-center gap-2.5 group">
-        <div class="h-8 w-8 rounded-lg bg-[var(--color-indigo)] flex items-center justify-center">
-          <span class="text-white font-bold text-sm font-[var(--font-headline)]">DW</span>
-        </div>
-        <span class="font-[var(--font-headline)] font-bold text-lg text-[var(--dw-text)]">
-          DataWise
-        </span>
+      <a href="/" class="flex items-center group" aria-label="DataWise SEO home">
+        <img
+          src="/images/logo/datawise-logo.webp"
+          alt="DataWise SEO"
+          width="57"
+          height="32"
+          class="h-8 w-auto"
+          decoding="async"
+        />
       </a>
 
       <!-- Desktop Nav -->
