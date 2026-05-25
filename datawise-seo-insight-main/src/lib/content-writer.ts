@@ -415,6 +415,7 @@ export async function importPlannerKeywordToWriter(args: {
   secondaryKeywords?: string;
   topic?: string;
   notes?: string;
+  language?: string;
 }): Promise<ImportPlannerResult> {
   const keyword = args.keyword.trim();
   const propertyId = args.propertyId?.trim();
@@ -439,6 +440,7 @@ export async function importPlannerKeywordToWriter(args: {
     secondary_keywords: args.secondaryKeywords?.trim() || undefined,
     notes: args.notes?.trim() || undefined,
     title: keyword,
+    content_output_controls: args.language ? { language: args.language } : undefined,
   });
   return { created: true, postId: post.id, workspaceId: workspace.id };
 }

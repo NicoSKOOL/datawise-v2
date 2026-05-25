@@ -45,6 +45,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useProperty } from '@/contexts/PropertyContext';
 import { AddWebsiteDialog } from '@/components/AddWebsiteDialog';
 import { importPlannerKeywordToWriter } from '@/lib/content-writer';
+import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
+import { getOutputLanguagePreference, type OutputLanguageCode } from '@/lib/output-language';
+import { DialogFooter } from '@/components/ui/dialog';
 
 const DEMO_PREFIX = 'demo-';
 const DEMO_CLUSTER_PREFIX = 'demo-cluster-';
@@ -217,6 +220,18 @@ export default function ContentPlanner() {
     sources: new Set(),
   });
   const [editing, setEditing] = useState<PlannerKeyword | null>(null);
+
+  // Pending Backlog→Draft import. When the user drags a card into the Draft
+  // column we stage the keyword here and open a small dialog so they can
+  // pick the output language for the new Content Writer post. Confirming
+  // creates the writer post in the chosen language; cancelling leaves the
+  // planner status change in place but creates no writer post.
+  const [pendingImport, setPendingImport] = useState<{
+    keyword: string;
+    topic: string;
+    notes?: string;
+  } | null>(null);
+  const [importLanguage, setImportLanguage] = useState<OutputLanguageCode>(() => getOutputLanguagePreference());
 
   // Multi-select state for bulk actions. IDs only; rendering filters them out
   // naturally if a keyword is removed or no longer matches active filters.
@@ -528,43 +543,16 @@ export default function ContentPlanner() {
             // Content Writer as an empty post so the user can start writing.
             // Skipped for demo data (in-memory only) and when transitioning
             // sideways (e.g. draft → draft would be a no-op anyway).
+            //
+            // We stage the import and open a tiny dialog so the user can
+            // choose the output language for the new writer post before we
+            // create it. The default is their last-used language.
             if (status === 'draft' && prev && prev.status !== 'draft' && !isDemoId(id)) {
-              importPlannerKeywordToWriter({
-                propertyId: selectedPropertyId,
+              setImportLanguage(getOutputLanguagePreference());
+              setPendingImport({
                 keyword: prev.keyword,
                 topic: prev.keyword,
                 notes: prev.notes || undefined,
-              }).then((res) => {
-                if (res.created) {
-                  toast.success('Added to Content Writer drafts', {
-                    action: {
-                      label: 'Open',
-                      onClick: () => {
-                        window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`;
-                      },
-                    },
-                  });
-                } else if (res.reason === 'duplicate') {
-                  toast.info('Already in Content Writer drafts', {
-                    action: {
-                      label: 'Open',
-                      onClick: () => {
-                        window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`;
-                      },
-                    },
-                  });
-                } else if (res.reason === 'no_property') {
-                  toast.info('Connect a website first to auto-import drafts.', {
-                    action: {
-                      label: 'Connect',
-                      onClick: () => { window.location.href = '/settings#properties'; },
-                    },
-                  });
-                }
-              }).catch(() => {
-                // Don't block the planner update on a writer-side failure.
-                // The user's status change still succeeds; the import retry
-                // would be manual via the New post button.
               });
             }
           }}
@@ -629,6 +617,80 @@ export default function ContentPlanner() {
           createClusterHandler({ name, color }, [editing.id]);
         }}
       />
+
+      {/* Backlog → Draft: pick output language before creating the writer post. */}
+      <Dialog
+        open={!!pendingImport}
+        onOpenChange={(open) => { if (!open) setPendingImport(null); }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send to Content Writer</DialogTitle>
+            <DialogDescription>
+              A new draft will be created for <strong>{pendingImport?.keyword}</strong>. Pick the output language for the writer; you can change it later from the post.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <OutputLanguageSelect
+              value={importLanguage}
+              onValueChange={setImportLanguage}
+              id="planner-import-language"
+              label="Output language"
+              description="Applies to every step: research, outline, draft, review."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingImport(null)}>
+              Skip
+            </Button>
+            <Button
+              onClick={() => {
+                if (!pendingImport) return;
+                const staged = pendingImport;
+                setPendingImport(null);
+                importPlannerKeywordToWriter({
+                  propertyId: selectedPropertyId,
+                  keyword: staged.keyword,
+                  topic: staged.topic,
+                  notes: staged.notes,
+                  language: importLanguage,
+                }).then((res) => {
+                  if (res.created) {
+                    toast.success('Added to Content Writer drafts', {
+                      action: {
+                        label: 'Open',
+                        onClick: () => {
+                          window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`;
+                        },
+                      },
+                    });
+                  } else if (res.reason === 'duplicate') {
+                    toast.info('Already in Content Writer drafts', {
+                      action: {
+                        label: 'Open',
+                        onClick: () => {
+                          window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`;
+                        },
+                      },
+                    });
+                  } else if (res.reason === 'no_property') {
+                    toast.info('Connect a website first to auto-import drafts.', {
+                      action: {
+                        label: 'Connect',
+                        onClick: () => { window.location.href = '/settings#properties'; },
+                      },
+                    });
+                  }
+                }).catch(() => {
+                  // Don't block the planner update on a writer-side failure.
+                });
+              }}
+            >
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
