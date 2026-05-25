@@ -230,6 +230,35 @@ export function getContentOutputInstruction(
   ].join('\n');
 }
 
+// Short closing reminder appended to the USER message (not the system
+// prompt). Models weight user-message instructions more heavily,
+// especially closing instructions, so repeating the language directive
+// here measurably improves adherence vs system-prompt-only.
+export function getOutputLanguageUserReminder(value: unknown): string {
+  const code = normalizeOutputLanguage(value);
+  if (code === 'en') return ''; // English is the model's default; no reminder needed.
+  return `\n\n---\nReminder: write your entire response in ${languageName(code)}. Translate every heading, list item, table cell, and bullet point. Keep markdown structure, URLs, citations, and code identifiers unchanged.`;
+}
+
+// Resolve a code to its human-readable label. Used by the language-retry
+// prompt and any caller that needs to surface the target language to the
+// model.
+export function getLanguageLabel(value: unknown): string {
+  return languageName(normalizeOutputLanguage(value));
+}
+
+// Same for the controls shape (which carries language nested inside).
+export function getControlsLanguageLabel(value: unknown): string {
+  const controls = normalizeContentOutputControls(value);
+  return languageName(controls.language);
+}
+
+// User-message reminder for the full content controls shape.
+export function getContentOutputUserReminder(value: unknown): string {
+  const controls = normalizeContentOutputControls(value);
+  return getOutputLanguageUserReminder(controls.language);
+}
+
 export function getChatOutputLanguageInstruction(value: unknown): string {
   const language = normalizeOutputLanguage(value);
   const target = languageName(language);

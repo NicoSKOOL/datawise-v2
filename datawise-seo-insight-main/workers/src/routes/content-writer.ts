@@ -1,7 +1,16 @@
 import type { Env } from '../index';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 import { validateOpenRouterKey } from '../llm/openrouter-key';
-import { getContentOutputInstruction } from '../llm/output-language';
+import {
+  getContentOutputInstruction,
+  getContentOutputUserReminder,
+  getControlsLanguageLabel,
+} from '../llm/output-language';
+import {
+  detectLanguageFamily,
+  expectedFamily,
+  buildLanguageRetryPrompt,
+} from '../llm/language-detect';
 import {
   DOC_TYPES, DOC_LABELS, INTERVIEW_PROMPTS, FINALIZE_PROMPTS,
   AUTO_DRAFT_DOC_TYPES, KB_AUTO_DRAFT_PROMPTS, WEBSITE_PAGES_DISCOVERY_PROMPT,
@@ -1626,11 +1635,22 @@ export async function handlePostStep(
   const languageInstruction = getContentOutputInstruction(briefControls, {
     preserveJsonShape: step === 'research',
   });
+  const languageReminder = getContentOutputUserReminder(briefControls);
+  const languageLabel = getControlsLanguageLabel(briefControls);
+  const briefControlsObj = briefControls as { language?: string } | undefined;
+  const expectedLangFamily = expectedFamily(briefControlsObj?.language);
   const baseSystemPrompt = buildPostStepSystemPrompt(kb, step, {
     master: masterPrompt.source === 'published' ? masterPrompt.text : undefined,
     step: stepPrompt.source === 'published' ? stepPrompt.text : undefined,
     context: promptContext,
   });
+  const baseUserMessage = buildPostStepUserMessage(
+    effectiveBrief,
+    step,
+    priorContext,
+    userPrompt.source === 'published' ? userPrompt.text : undefined,
+    promptContext,
+  );
   const messages: ChatMessage[] = [
     {
       role: 'system',
@@ -1638,13 +1658,7 @@ export async function handlePostStep(
     },
     {
       role: 'user',
-      content: buildPostStepUserMessage(
-        effectiveBrief,
-        step,
-        priorContext,
-        userPrompt.source === 'published' ? userPrompt.text : undefined,
-        promptContext,
-      ),
+      content: `${baseUserMessage}${languageReminder}`,
     },
   ];
   const aiQuestionContextPromise = step === 'research'
@@ -1669,15 +1683,46 @@ export async function handlePostStep(
       provider.chatComplete(messages, env, stepConfig, maxTokens),
       aiQuestionContextPromise,
     ]);
-    text = res.text;
-    usage = res.usage;
-    citations = res.citations;
+    let activeRes = res;
+    text = activeRes.text;
+    usage = activeRes.usage;
+    citations = activeRes.citations;
     aiQuestionContext = questions;
     console.log(`[content-writer] step=${step} model=${stepConfig.model} elapsedMs=${Date.now() - t0} ok=true post=${postId}`);
+
+    // Post-output language detection (#2). One corrective retry on
+    // family mismatch. Skipped for English target and for very short
+    // outputs (the detector returns 'unknown' below 30 words).
+    if (expectedLangFamily !== 'en') {
+      const detected = detectLanguageFamily(activeRes.text);
+      if (detected !== 'unknown' && detected !== expectedLangFamily) {
+        console.warn(`[content-writer] step=${step} language mismatch: expected=${expectedLangFamily} detected=${detected} post=${postId}`);
+        const retryMessages: ChatMessage[] = [
+          ...messages,
+          { role: 'assistant', content: activeRes.text },
+          { role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) },
+        ];
+        try {
+          const retryRes = await provider.chatComplete(retryMessages, env, stepConfig, maxTokens);
+          activeRes = retryRes;
+          text = retryRes.text;
+          usage = {
+            input_tokens: usage.input_tokens + retryRes.usage.input_tokens,
+            output_tokens: usage.output_tokens + retryRes.usage.output_tokens,
+          };
+          citations = retryRes.citations ?? citations;
+          console.log(`[content-writer] step=${step} language-retry ok post=${postId}`);
+        } catch (retryErr) {
+          // If the retry fails, keep the original output rather than 500.
+          console.warn(`[content-writer] step=${step} language-retry failed, keeping original. err=${String(retryErr)}`);
+        }
+      }
+    }
+
     // finish_reason === 'length' means the model hit max_tokens before
     // finishing. Surface it so the UI can tell the user to re-run or
     // raise the cap, instead of silently persisting a half-finished post.
-    if (res.finishReason === 'length') {
+    if (activeRes.finishReason === 'length') {
       truncated = true;
       console.warn(`[content-writer] step=${step} truncated at max_tokens (${maxTokens}). post=${postId} model=${stepConfig.model}`);
     }

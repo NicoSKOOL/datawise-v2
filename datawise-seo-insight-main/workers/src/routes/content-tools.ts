@@ -1,6 +1,15 @@
 import type { Env } from '../index';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
-import { getContentOutputInstruction } from '../llm/output-language';
+import {
+  getContentOutputInstruction,
+  getContentOutputUserReminder,
+  getControlsLanguageLabel,
+} from '../llm/output-language';
+import {
+  detectLanguageFamily,
+  expectedFamily,
+  buildLanguageRetryPrompt,
+} from '../llm/language-detect';
 
 // ---------------------------------------------------------------------------
 // Prompts (ported from blog-revival-agent/rewriter.py)
@@ -640,14 +649,34 @@ export async function handleAnalyzePost(request: Request, env: Env): Promise<Res
     .replace('{SITE_PAGES}', formatSitePages(body.site_pages || [], body.domain || ''));
 
   const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: true });
+  const languageReminder = getContentOutputUserReminder(body.content_output_controls);
+  const languageLabel = getControlsLanguageLabel(body.content_output_controls);
+  const controls = body.content_output_controls as { language?: string } | undefined;
+  const expectedLangFamily = expectedFamily(controls?.language);
   const messages: ChatMessage[] = [
     { role: 'system', content: languageInstruction },
-    { role: 'user', content: prompt },
+    { role: 'user', content: `${prompt}${languageReminder}` },
   ];
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
-    const result = await provider.chatComplete(messages, env, body.llm_config, 1024);
+    let result = await provider.chatComplete(messages, env, body.llm_config, 1024);
+    let totalIn = result.usage.input_tokens;
+    let totalOut = result.usage.output_tokens;
+
+    // Language detect + corrective retry once (#2). Skipped for English.
+    if (expectedLangFamily !== 'en') {
+      const detected = detectLanguageFamily(result.text);
+      if (detected !== 'unknown' && detected !== expectedLangFamily) {
+        console.warn(`[content-tools/analyze] language mismatch: expected=${expectedLangFamily} detected=${detected}`);
+        messages.push({ role: 'assistant', content: result.text });
+        messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
+        result = await provider.chatComplete(messages, env, body.llm_config, 1024);
+        totalIn += result.usage.input_tokens;
+        totalOut += result.usage.output_tokens;
+      }
+    }
+
     const raw = stripCodeFences(result.text);
 
     let audit;
@@ -665,7 +694,7 @@ export async function handleAnalyzePost(request: Request, env: Env): Promise<Res
       };
     }
 
-    return json({ audit, usage: result.usage });
+    return json({ audit, usage: { input_tokens: totalIn, output_tokens: totalOut } });
   } catch (err) {
     return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
   }
@@ -1200,15 +1229,34 @@ export async function handleGenerateSection(request: Request, env: Env): Promise
     .replace(/{TONE}/g, body.tone || 'professional and helpful');
 
   const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: false });
+  const languageReminder = getContentOutputUserReminder(body.content_output_controls);
+  const languageLabel = getControlsLanguageLabel(body.content_output_controls);
+  const controls = body.content_output_controls as { language?: string } | undefined;
+  const expectedLangFamily = expectedFamily(controls?.language);
   const messages: ChatMessage[] = [
     { role: 'system', content: languageInstruction },
-    { role: 'user', content: prompt },
+    { role: 'user', content: `${prompt}${languageReminder}` },
   ];
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
-    const result = await provider.chatComplete(messages, env, body.llm_config, 2048);
-    return json({ content: result.text.trim(), usage: result.usage });
+    let result = await provider.chatComplete(messages, env, body.llm_config, 2048);
+    let totalIn = result.usage.input_tokens;
+    let totalOut = result.usage.output_tokens;
+
+    if (expectedLangFamily !== 'en') {
+      const detected = detectLanguageFamily(result.text);
+      if (detected !== 'unknown' && detected !== expectedLangFamily) {
+        console.warn(`[content-tools/section] language mismatch: expected=${expectedLangFamily} detected=${detected}`);
+        messages.push({ role: 'assistant', content: result.text });
+        messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
+        result = await provider.chatComplete(messages, env, body.llm_config, 2048);
+        totalIn += result.usage.input_tokens;
+        totalOut += result.usage.output_tokens;
+      }
+    }
+
+    return json({ content: result.text.trim(), usage: { input_tokens: totalIn, output_tokens: totalOut } });
   } catch (err) {
     return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
   }
@@ -1235,15 +1283,34 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
 
   // Rewrite returns prose (markdown), not JSON, so preserveJsonShape: false.
   const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: false });
+  const languageReminder = getContentOutputUserReminder(body.content_output_controls);
+  const languageLabel = getControlsLanguageLabel(body.content_output_controls);
+  const controls = body.content_output_controls as { language?: string } | undefined;
+  const expectedLangFamily = expectedFamily(controls?.language);
   const messages: ChatMessage[] = [
     { role: 'system', content: languageInstruction },
-    { role: 'user', content: prompt },
+    { role: 'user', content: `${prompt}${languageReminder}` },
   ];
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
-    const result = await provider.chatComplete(messages, env, body.llm_config, 4096);
-    return json({ rewritten: result.text.trim(), usage: result.usage });
+    let result = await provider.chatComplete(messages, env, body.llm_config, 4096);
+    let totalIn = result.usage.input_tokens;
+    let totalOut = result.usage.output_tokens;
+
+    if (expectedLangFamily !== 'en') {
+      const detected = detectLanguageFamily(result.text);
+      if (detected !== 'unknown' && detected !== expectedLangFamily) {
+        console.warn(`[content-tools/rewrite] language mismatch: expected=${expectedLangFamily} detected=${detected}`);
+        messages.push({ role: 'assistant', content: result.text });
+        messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
+        result = await provider.chatComplete(messages, env, body.llm_config, 4096);
+        totalIn += result.usage.input_tokens;
+        totalOut += result.usage.output_tokens;
+      }
+    }
+
+    return json({ rewritten: result.text.trim(), usage: { input_tokens: totalIn, output_tokens: totalOut } });
   } catch (err) {
     return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
   }
