@@ -315,6 +315,12 @@ class GeminiProvider implements LLMProvider {
   }
 }
 
+function truncate(s: string, n: number): string {
+  if (!s) return '';
+  const t = s.replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n) + '…' : t;
+}
+
 class OpenRouterProvider implements LLMProvider {
   async chat(messages: ChatMessage[], env: Env, config?: UserLLMConfig): Promise<ReadableStream> {
     const apiKey = config?.api_key || env.OPENROUTER_API_KEY;
@@ -358,7 +364,10 @@ class OpenRouterProvider implements LLMProvider {
         if (response.status === 402 || /insufficient.*credit|credit.*low/i.test(error)) {
           throw new Error('Your OpenRouter account is out of credits. Top up at openrouter.ai/credits and try again.');
         }
-        throw new Error(`OpenRouter error: ${response.status}`);
+        if (response.status === 404) {
+          throw new Error(`OpenRouter could not run model "${model}" for your account (404). Common causes: the model is paid-only and your account has no credits, or your OpenRouter privacy/data-policy settings exclude every provider for this model (Settings → Privacy on openrouter.ai). OpenRouter said: ${truncate(error, 300)}`);
+        }
+        throw new Error(`OpenRouter error: ${response.status}. ${truncate(error, 300)}`);
       }
 
       return transformSSEStream(response.body!);
@@ -409,7 +418,10 @@ class OpenRouterProvider implements LLMProvider {
         if (response.status === 402 || /insufficient.*credit|credit.*low/i.test(error)) {
           throw new Error('Your OpenRouter account is out of credits. Top up at openrouter.ai/credits and try again.');
         }
-        throw new Error(`OpenRouter error: ${response.status}`);
+        if (response.status === 404) {
+          throw new Error(`OpenRouter could not run model "${model}" for your account (404). Common causes: the model is paid-only and your account has no credits, or your OpenRouter privacy/data-policy settings exclude every provider for this model (Settings → Privacy on openrouter.ai). OpenRouter said: ${truncate(error, 300)}`);
+        }
+        throw new Error(`OpenRouter error: ${response.status}. ${truncate(error, 300)}`);
       }
 
       const data = await response.json() as any;
