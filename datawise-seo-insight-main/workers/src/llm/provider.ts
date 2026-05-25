@@ -34,9 +34,17 @@ export interface ChatCompleteResult {
   finishReason?: string;
 }
 
+// Optional per-call hints. `responseFormat: 'json'` asks the provider to
+// constrain output to a JSON object (OpenAI/Anthropic/DeepSeek/Kimi via
+// OpenRouter all honor this). Providers that can't enforce it ignore the
+// hint silently.
+export interface ChatCompleteOptions {
+  responseFormat?: 'json';
+}
+
 export interface LLMProvider {
   chat(messages: ChatMessage[], env: Env, config?: UserLLMConfig): Promise<ReadableStream>;
-  chatComplete(messages: ChatMessage[], env: Env, config?: UserLLMConfig, maxTokens?: number): Promise<ChatCompleteResult>;
+  chatComplete(messages: ChatMessage[], env: Env, config?: UserLLMConfig, maxTokens?: number, options?: ChatCompleteOptions): Promise<ChatCompleteResult>;
 }
 
 // Factory: user config takes priority, then env config
@@ -376,12 +384,15 @@ class OpenRouterProvider implements LLMProvider {
     throw new Error('OpenRouter request failed after retries.');
   }
 
-  async chatComplete(messages: ChatMessage[], env: Env, config?: UserLLMConfig, maxTokens = 4096): Promise<ChatCompleteResult> {
+  async chatComplete(messages: ChatMessage[], env: Env, config?: UserLLMConfig, maxTokens = 4096, options?: ChatCompleteOptions): Promise<ChatCompleteResult> {
     const apiKey = config?.api_key || env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error('No OpenRouter API key configured. Add your key in Settings.');
 
     const model = config?.model || 'anthropic/claude-sonnet-4';
     const reasoning = getOpenRouterReasoningConfig(model);
+    const responseFormat = options?.responseFormat === 'json'
+      ? { response_format: { type: 'json_object' as const } }
+      : {};
     const maxRetries = 3;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -398,6 +409,7 @@ class OpenRouterProvider implements LLMProvider {
           temperature: 0.7,
           max_tokens: maxTokens,
           ...(reasoning ? { reasoning } : {}),
+          ...responseFormat,
         }),
       });
 
