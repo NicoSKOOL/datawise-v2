@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
+import { validateOpenRouterKey } from '../llm/openrouter-key';
 import {
   DOC_TYPES, DOC_LABELS, INTERVIEW_PROMPTS, FINALIZE_PROMPTS,
   AUTO_DRAFT_DOC_TYPES, KB_AUTO_DRAFT_PROMPTS, WEBSITE_PAGES_DISCOVERY_PROMPT,
@@ -1547,6 +1548,11 @@ export async function handlePostStep(
   }
   const keyError = userOpenRouterKeyRequired(env, body.llm_config);
   if (keyError) return keyError;
+  if (body.llm_config?.api_key) {
+    const keyCheck = await validateOpenRouterKey(body.llm_config.api_key, env);
+    if (!keyCheck.ok && keyCheck.reason === 'management') return json({ error: keyCheck.message }, 400);
+    if (!keyCheck.ok && keyCheck.reason === 'invalid')    return json({ error: keyCheck.message }, 401);
+  }
 
   const workspace = await getWorkspaceForUser(env, userId, post.workspace_id);
   if (!workspace) return json({ error: 'workspace not found' }, 404);
@@ -1641,6 +1647,7 @@ export async function handlePostStep(
   let aiQuestionContext: AiQuestionContext | undefined;
   let truncated = false;
   let qualityWarnings: string[] = [];
+  const t0 = Date.now();
   try {
     const [res, questions] = await Promise.all([
       provider.chatComplete(messages, env, stepConfig, maxTokens),
@@ -1650,6 +1657,7 @@ export async function handlePostStep(
     usage = res.usage;
     citations = res.citations;
     aiQuestionContext = questions;
+    console.log(`[content-writer] step=${step} model=${stepConfig.model} elapsedMs=${Date.now() - t0} ok=true post=${postId}`);
     // finish_reason === 'length' means the model hit max_tokens before
     // finishing. Surface it so the UI can tell the user to re-run or
     // raise the cap, instead of silently persisting a half-finished post.
@@ -1659,6 +1667,7 @@ export async function handlePostStep(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'LLM provider error';
+    console.error(`[content-writer] step=${step} model=${stepConfig.model} elapsedMs=${Date.now() - t0} ok=false post=${postId} err=${msg}`);
     return json({ error: msg }, 502);
   }
 

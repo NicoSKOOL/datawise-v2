@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
+import { validateOpenRouterKey } from '../llm/openrouter-key';
 import {
   META_REWRITE_SYSTEM_PROMPT,
   buildUserPrompt,
@@ -109,6 +110,11 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
   }
   if (!body.llm_config?.api_key) {
     return json({ error: 'llm_config.api_key is required' }, 400);
+  }
+  if (body.llm_config.provider === 'openrouter') {
+    const keyCheck = await validateOpenRouterKey(body.llm_config.api_key, env);
+    if (!keyCheck.ok && keyCheck.reason === 'management') return json({ error: keyCheck.message }, 400);
+    if (!keyCheck.ok && keyCheck.reason === 'invalid')    return json({ error: keyCheck.message }, 401);
   }
 
   // 1. Resolve page context: prefer pre-supplied (Site Audit), fetch otherwise.
