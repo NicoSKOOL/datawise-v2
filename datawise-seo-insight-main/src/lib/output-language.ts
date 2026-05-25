@@ -34,46 +34,14 @@ export const OUTPUT_LANGUAGE_STORAGE_KEY = 'datawise_output_language';
 export const CONTENT_OUTPUT_CONTROLS_STORAGE_KEY = 'datawise_content_output_controls_v1';
 
 export const outputLanguageOptions: OutputLanguageOption[] = [
-  {
-    value: 'en',
-    label: 'English',
-    description: 'Generate AI answers and content in English.',
-  },
-  {
-    value: 'es-419',
-    label: 'Spanish (Latin America)',
-    description: 'Use neutral Latin American Spanish.',
-  },
-  {
-    value: 'es-ES',
-    label: 'Spanish (Spain)',
-    description: 'Use Spanish as written for Spain.',
-  },
-  {
-    value: 'fr-FR',
-    label: 'French (France)',
-    description: 'Use professional French for France.',
-  },
-  {
-    value: 'de-DE',
-    label: 'German (Germany)',
-    description: 'Use professional German for Germany.',
-  },
-  {
-    value: 'it-IT',
-    label: 'Italian (Italy)',
-    description: 'Use professional Italian for Italy.',
-  },
-  {
-    value: 'pt-PT',
-    label: 'Portuguese (Portugal)',
-    description: 'Use European Portuguese with Portugal vocabulary and grammar.',
-  },
-  {
-    value: 'pt-BR',
-    label: 'Portuguese (Brazil)',
-    description: 'Use Brazilian Portuguese with Brazil-specific vocabulary and gerund usage.',
-  },
+  { value: 'en',     label: 'English',                description: '' },
+  { value: 'es-ES',  label: 'Spanish (Spain)',        description: '' },
+  { value: 'es-419', label: 'Spanish (Latin America)', description: '' },
+  { value: 'fr-FR',  label: 'French',                 description: '' },
+  { value: 'de-DE',  label: 'German',                 description: '' },
+  { value: 'it-IT',  label: 'Italian',                description: '' },
+  { value: 'pt-PT',  label: 'Portuguese (Portugal)',  description: '' },
+  { value: 'pt-BR',  label: 'Portuguese (Brazil)',    description: '' },
 ];
 
 export const contentOutputRegisterOptions: Array<ContentOutputOption<ContentOutputRegister>> = [

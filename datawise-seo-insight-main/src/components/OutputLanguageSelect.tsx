@@ -41,10 +41,10 @@ export function OutputLanguageSelect({
         <SelectContent>
           {outputLanguageOptions.map((option) => (
             <SelectItem key={option.value} value={option.value}>
-              <div>
-                <span>{option.label}</span>
+              <span>{option.label}</span>
+              {option.description ? (
                 <span className="ml-2 text-xs text-muted-foreground">{option.description}</span>
-              </div>
+              ) : null}
             </SelectItem>
           ))}
         </SelectContent>
