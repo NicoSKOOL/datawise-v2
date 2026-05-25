@@ -51,16 +51,61 @@ const compactFeatures = [
     href: '/features/content-tools',
   },
 ];
+
+// Pill quick-nav: every feature, scrollable on small viewports
+const pillFeatures = [
+  { icon: 'search',         title: 'Keyword Research',     href: '/features/keyword-research' },
+  { icon: 'bar-chart',      title: 'Competitor Analysis',  href: '/features/competitor-analysis' },
+  { icon: 'trending-up',    title: 'Rank Tracking',        href: '/features/rank-tracking' },
+  { icon: 'robot',          title: 'AI Visibility',        href: '/features/ai-visibility' },
+  { icon: 'search',         title: 'Fan-out Queries',     href: '/features/fan-out-queries' },
+  { icon: 'globe',          title: 'Backlinks',            href: '/features/backlinks' },
+  { icon: 'shield',         title: 'Site Audit',           href: '/features/site-audit' },
+  { icon: 'message-circle', title: 'AI SEO Assistant',     href: '/features/seo-assistant' },
+  { icon: 'pen-tool',       title: 'Content Writer',       href: '/features/content-writer' },
+  { icon: 'check-circle',   title: 'Content Tools',        href: '/features/content-tools' },
+];
 ---
 
 <Section id="features" bg="white">
-  <div class="text-center mb-16">
+  <div class="text-center mb-10">
     <h2 class="text-3xl sm:text-4xl font-bold text-[var(--dw-text)] feature-heading">
       Every SEO tool you need, one membership
     </h2>
     <p class="mt-4 text-lg text-[var(--dw-text)]/70 max-w-2xl mx-auto feature-sub">
       The same keyword research, competitor analysis, and rank tracking that agencies pay hundreds for. Included with your AI Ranking membership from $27/mo.
     </p>
+  </div>
+
+  <!-- Pill quick-nav: every feature, scrollable -->
+  <div class="home-pillnav-wrap mb-16">
+    <button
+      type="button"
+      class="home-pillnav-arrow home-pillnav-arrow--left"
+      id="home-pillnav-prev"
+      aria-label="Scroll features left"
+      tabindex="-1"
+    >
+      <Icon name="arrow-right" size={16} />
+    </button>
+    <div class="home-pillnav-fade home-pillnav-fade--left" aria-hidden="true"></div>
+    <div class="home-pillnav-track" id="home-pillnav-track" role="list">
+      {pillFeatures.map((p) => (
+        <a href={p.href} class="home-pillnav-item" role="listitem">
+          <span class="home-pillnav-icon"><Icon name={p.icon} size={16} /></span>
+          <span>{p.title}</span>
+        </a>
+      ))}
+    </div>
+    <div class="home-pillnav-fade home-pillnav-fade--right" aria-hidden="true"></div>
+    <button
+      type="button"
+      class="home-pillnav-arrow home-pillnav-arrow--right"
+      id="home-pillnav-next"
+      aria-label="Scroll features right"
+    >
+      <Icon name="arrow-right" size={16} />
+    </button>
   </div>
 
   <!-- Showcase features: alternating text + screenshot layout -->
@@ -178,9 +223,139 @@ const compactFeatures = [
       el.style.setProperty('--mouse-y', `${e.clientY - rect.top}px`);
     });
   });
+
+  /* ---------- Home pills: horizontal scroll + arrows + edge fades ---------- */
+  const pillWrap = document.querySelector<HTMLElement>('.home-pillnav-wrap');
+  const pillTrack = document.getElementById('home-pillnav-track') as HTMLElement | null;
+  const pillPrev = document.getElementById('home-pillnav-prev') as HTMLButtonElement | null;
+  const pillNext = document.getElementById('home-pillnav-next') as HTMLButtonElement | null;
+
+  if (pillWrap && pillTrack) {
+    const updatePillState = () => {
+      const max = pillTrack.scrollWidth - pillTrack.clientWidth;
+      const left = pillTrack.scrollLeft;
+      const canLeft = left > 4;
+      const canRight = left < max - 4;
+      pillWrap.classList.toggle('can-scroll-left', canLeft);
+      pillWrap.classList.toggle('can-scroll-right', canRight);
+      pillPrev?.setAttribute('aria-disabled', String(!canLeft));
+      pillNext?.setAttribute('aria-disabled', String(!canRight));
+    };
+    const scrollPills = (dir: 1 | -1) => {
+      const step = Math.max(pillTrack.clientWidth * 0.8, 200);
+      pillTrack.scrollBy({ left: dir * step, behavior: 'smooth' });
+    };
+    pillTrack.addEventListener('scroll', updatePillState, { passive: true });
+    window.addEventListener('resize', updatePillState);
+    pillPrev?.addEventListener('click', () => scrollPills(-1));
+    pillNext?.addEventListener('click', () => scrollPills(1));
+    requestAnimationFrame(updatePillState);
+  }
 </script>
 
 <style>
+  /* Home pill quick-nav */
+  .home-pillnav-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    max-width: 80rem;
+    margin: 0 auto;
+    padding: 0;
+  }
+
+  .home-pillnav-track {
+    flex: 1;
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    padding: 0.25rem 0.25rem 0.5rem;
+    scroll-behavior: smooth;
+  }
+  .home-pillnav-track::-webkit-scrollbar { display: none; }
+
+  .home-pillnav-item {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1rem;
+    border-radius: 9999px;
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    color: var(--dw-text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  }
+
+  .home-pillnav-item:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    transform: translateY(-1px);
+  }
+
+  .home-pillnav-icon {
+    display: inline-flex;
+    color: var(--color-primary);
+  }
+
+  .home-pillnav-fade {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3rem;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  .home-pillnav-fade--left {
+    left: 0;
+    background: linear-gradient(to right, var(--dw-surface), color-mix(in srgb, var(--dw-surface) 0%, transparent));
+  }
+  .home-pillnav-fade--right {
+    right: 0;
+    background: linear-gradient(to left, var(--dw-surface), color-mix(in srgb, var(--dw-surface) 0%, transparent));
+  }
+  .home-pillnav-wrap.can-scroll-left .home-pillnav-fade--left { opacity: 1; }
+  .home-pillnav-wrap.can-scroll-right .home-pillnav-fade--right { opacity: 1; }
+
+  .home-pillnav-arrow {
+    position: relative;
+    z-index: 3;
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    border: 1px solid var(--dw-border);
+    background: var(--dw-surface);
+    color: var(--dw-text-secondary);
+    cursor: pointer;
+    transition: opacity 0.25s ease, color 0.2s ease, border-color 0.2s ease;
+    margin: 0 0.5rem;
+    padding: 0;
+  }
+  .home-pillnav-arrow:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+  .home-pillnav-arrow--left :global(svg) { transform: rotate(180deg); }
+  .home-pillnav-arrow[aria-disabled="true"] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  @media (max-width: 640px) {
+    .home-pillnav-arrow { display: none; }
+  }
+
   .suites-grid {
     display: grid;
     grid-template-columns: 1fr;
