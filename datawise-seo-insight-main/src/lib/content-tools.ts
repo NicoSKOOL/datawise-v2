@@ -58,11 +58,18 @@ export async function analyzePost(
   post: { title: string; body_text: string; word_count: number },
   sitePages: SitePage[],
   domain: string,
+  language?: string,
 ): Promise<{ audit: AuditResult; usage: UsageInfo }> {
   const llmConfig = requireLLMConfig();
   return api<{ audit: AuditResult; usage: UsageInfo }>('/api/content-tools/analyze-post', {
     method: 'POST',
-    body: { post, site_pages: sitePages, domain, llm_config: llmConfig },
+    body: {
+      post,
+      site_pages: sitePages,
+      domain,
+      llm_config: llmConfig,
+      content_output_controls: language ? { language } : undefined,
+    },
   });
 }
 
@@ -197,10 +204,18 @@ export async function rewritePost(
   audit: AuditResult,
   sitePages: SitePage[],
   domain: string,
+  language?: string,
 ): Promise<{ rewritten: string; usage: UsageInfo }> {
   const llmConfig = requireLLMConfig();
   return api<{ rewritten: string; usage: UsageInfo }>('/api/content-tools/rewrite-post', {
     method: 'POST',
-    body: { post, audit, site_pages: sitePages, domain, llm_config: llmConfig },
+    body: {
+      post,
+      audit,
+      site_pages: sitePages,
+      domain,
+      llm_config: llmConfig,
+      content_output_controls: language ? { language } : undefined,
+    },
   });
 }

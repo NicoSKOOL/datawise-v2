@@ -1,5 +1,6 @@
 import { api } from './api';
 import { getLLMConfig } from './chat';
+import type { OutputLanguageCode } from './output-language';
 
 export type MetaRewriteIssueType =
   | 'missing_title'
@@ -24,6 +25,7 @@ export interface MetaRewriteRequest {
   issue_type: MetaRewriteIssueType;
   target_keyword?: string;
   context?: MetaRewritePageContext;
+  language?: OutputLanguageCode;
 }
 
 export interface MetaRewriteResponse {

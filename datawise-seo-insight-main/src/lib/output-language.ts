@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE';
+export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -58,6 +58,21 @@ export const outputLanguageOptions: OutputLanguageOption[] = [
     value: 'de-DE',
     label: 'German (Germany)',
     description: 'Use professional German for Germany.',
+  },
+  {
+    value: 'it-IT',
+    label: 'Italian (Italy)',
+    description: 'Use professional Italian for Italy.',
+  },
+  {
+    value: 'pt-PT',
+    label: 'Portuguese (Portugal)',
+    description: 'Use European Portuguese with Portugal vocabulary and grammar.',
+  },
+  {
+    value: 'pt-BR',
+    label: 'Portuguese (Brazil)',
+    description: 'Use Brazilian Portuguese with Brazil-specific vocabulary and gerund usage.',
   },
 ];
 

@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
 import { validateOpenRouterKey } from '../llm/openrouter-key';
+import { getOutputLanguageInstruction, type OutputLanguageCode } from '../llm/output-language';
 import {
   META_REWRITE_SYSTEM_PROMPT,
   buildUserPrompt,
@@ -21,6 +22,7 @@ interface RewriteRequestBody {
   target_keyword?: string;
   context?: PageContext;
   llm_config?: UserLLMConfig;
+  language?: OutputLanguageCode | string;
 }
 
 interface LLMResponseShape {
@@ -198,8 +200,9 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     user_overrode_keyword: userOverrode,
   });
 
+  const languageInstruction = getOutputLanguageInstruction(body.language, { preserveJsonShape: true });
   const messages: ChatMessage[] = [
-    { role: 'system', content: META_REWRITE_SYSTEM_PROMPT },
+    { role: 'system', content: `${META_REWRITE_SYSTEM_PROMPT}\n\n${languageInstruction}` },
     { role: 'user', content: userPrompt },
   ];
 

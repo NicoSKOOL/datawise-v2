@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
+import { getContentOutputInstruction } from '../llm/output-language';
 
 // ---------------------------------------------------------------------------
 // Prompts (ported from blog-revival-agent/rewriter.py)
@@ -626,6 +627,7 @@ export async function handleAnalyzePost(request: Request, env: Env): Promise<Res
     site_pages: Array<{ url: string; slug: string; title: string }>;
     domain: string;
     llm_config: UserLLMConfig;
+    content_output_controls?: unknown;
   };
 
   if (!body.post?.body_text) return json({ error: 'post.body_text is required' }, 400);
@@ -637,7 +639,11 @@ export async function handleAnalyzePost(request: Request, env: Env): Promise<Res
     .replace('{BODY_TEXT}', (body.post.body_text || '').substring(0, 8000))
     .replace('{SITE_PAGES}', formatSitePages(body.site_pages || [], body.domain || ''));
 
-  const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
+  const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: true });
+  const messages: ChatMessage[] = [
+    { role: 'system', content: languageInstruction },
+    { role: 'user', content: prompt },
+  ];
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
@@ -1179,6 +1185,7 @@ export async function handleGenerateSection(request: Request, env: Env): Promise
     tone: string;
     page_url: string;
     llm_config: UserLLMConfig;
+    content_output_controls?: unknown;
   };
 
   if (!body.section_type) return json({ error: 'section_type is required' }, 400);
@@ -1192,7 +1199,11 @@ export async function handleGenerateSection(request: Request, env: Env): Promise
     .replace(/{LOCATION}/g, body.location || 'this area')
     .replace(/{TONE}/g, body.tone || 'professional and helpful');
 
-  const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
+  const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: false });
+  const messages: ChatMessage[] = [
+    { role: 'system', content: languageInstruction },
+    { role: 'user', content: prompt },
+  ];
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
@@ -1210,6 +1221,7 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
     site_pages: Array<{ url: string; slug: string; title: string }>;
     domain: string;
     llm_config: UserLLMConfig;
+    content_output_controls?: unknown;
   };
 
   if (!body.post?.body_text) return json({ error: 'post.body_text is required' }, 400);
@@ -1221,7 +1233,12 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
     .replace('{SITE_PAGES}', formatSitePages(body.site_pages || [], body.domain || ''))
     .replace('{BODY_TEXT}', (body.post.body_text || '').substring(0, 8000));
 
-  const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
+  // Rewrite returns prose (markdown), not JSON, so preserveJsonShape: false.
+  const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: false });
+  const messages: ChatMessage[] = [
+    { role: 'system', content: languageInstruction },
+    { role: 'user', content: prompt },
+  ];
   const provider = getLLMProvider(env, body.llm_config);
 
   try {

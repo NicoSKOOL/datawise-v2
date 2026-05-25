@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE';
+export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -29,7 +29,7 @@ export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
   include_meta: false,
 };
 
-const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'es-419', 'es-ES', 'fr-FR', 'de-DE']);
+const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'es-419', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'pt-BR']);
 const REGISTER_VALUES = new Set<ContentOutputRegister>(['professional', 'conversational', 'informal']);
 const LENGTH_VALUES = new Set<ContentOutputLength>(['standard', 'expanded', 'comprehensive']);
 const SOURCE_POLICY_VALUES = new Set<ContentOutputSourcePolicy>(['credible-non-competitor', 'primary-only', 'broad-reputable']);
@@ -100,6 +100,12 @@ function languageName(code: OutputLanguageCode): string {
       return 'France French';
     case 'de-DE':
       return 'Germany German';
+    case 'it-IT':
+      return 'Italy Italian';
+    case 'pt-PT':
+      return 'European Portuguese (Portugal)';
+    case 'pt-BR':
+      return 'Brazilian Portuguese';
     case 'en':
     default:
       return 'English';
@@ -116,6 +122,12 @@ function languageVariantRule(code: OutputLanguageCode): string {
       return '- Use France French. Default to vous in professional and conversational business contexts. Avoid English-style Title Case; use French capitalization norms for headings and titles.';
     case 'de-DE':
       return '- Use Germany German. Preserve German noun capitalization. In professional register, use the formal Sie/Ihr forms with correct capitalization.';
+    case 'it-IT':
+      return '- Use Italy Italian. Default to Lei in professional and conversational business contexts; use tu only when the register is explicitly informal. Avoid English-style title case in headings; use Italian sentence-case capitalization.';
+    case 'pt-PT':
+      return '- Use European Portuguese (Portugal). Prefer "a" + infinitive over "-ndo" gerund constructions (e.g. "a fazer", not "fazendo"). Use você or formal third-person address in professional registers. Avoid Brazilian-specific vocabulary and Brazilian gerund usage. Apply Portugal spelling conventions where they still differ post-1990 orthographic agreement.';
+    case 'pt-BR':
+      return '- Use Brazilian Portuguese. Use você by default; gerund constructions ("-ndo") are natural and preferred. Avoid Portugal-specific vocabulary and Portugal-specific spellings where they differ from Brazilian usage.';
     case 'en':
     default:
       return '- Use natural English.';

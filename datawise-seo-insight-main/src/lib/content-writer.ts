@@ -261,6 +261,7 @@ export interface PostBrief {
   include_tldr?: boolean;
   include_faq?: boolean;
   capsule_pct?: number;
+  content_output_controls?: { language?: string };
 }
 
 export interface Post {

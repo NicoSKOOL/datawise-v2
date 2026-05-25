@@ -25,6 +25,8 @@ import {
   type ServicePageData, type ServicePageAnalysis,
 } from '@/lib/content-tools';
 import { useDefaults } from '@/hooks/use-defaults';
+import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
+import { getOutputLanguagePreference, type OutputLanguageCode } from '@/lib/output-language';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildServicePageOptimizerReport } from '@/lib/export/adapters/servicePageOptimizer';
 import { buildContentRevivalReport } from '@/lib/export/adapters/contentRevival';
@@ -202,6 +204,7 @@ function ContentRevival() {
   const { defaultDomain } = useDefaults();
   const [domain, setDomain] = useState(defaultDomain);
   const [urlsText, setUrlsText] = useState('');
+  const [outputLanguage, setOutputLanguage] = useState<OutputLanguageCode>(() => getOutputLanguagePreference());
   const [inputMode, setInputMode] = useState<'paste' | 'csv'>('paste');
   const [sitePages, setSitePages] = useState<SitePage[]>([]);
   const [sitemapStatus, setSitemapStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -314,6 +317,7 @@ function ContentRevival() {
           { title: postData.title, body_text: postData.body_text, word_count: postData.word_count },
           sitePages,
           domainStr,
+          outputLanguage,
         );
         currentAudit = auditResult.audit;
         updatePost(i, { audit: currentAudit, usageAudit: auditResult.usage });
@@ -332,6 +336,7 @@ function ContentRevival() {
           currentAudit,
           sitePages,
           domainStr,
+          outputLanguage,
         );
 
         const wordCountAfter = countMarkdownWords(rewriteResult.rewritten);
@@ -471,6 +476,15 @@ function ContentRevival() {
             One URL per line. Tip: export "Crawled, currently not indexed" URLs from GSC Coverage report.
           </p>
         </div>
+
+        <OutputLanguageSelect
+          value={outputLanguage}
+          onValueChange={setOutputLanguage}
+          id="content-tools-language"
+          label="Output language"
+          description="Audit notes and the rewritten post will be produced in this language."
+          disabled={processing}
+        />
 
         <div className="flex gap-2">
           {!processing ? (

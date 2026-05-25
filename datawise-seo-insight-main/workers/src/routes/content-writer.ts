@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 import { validateOpenRouterKey } from '../llm/openrouter-key';
+import { getContentOutputInstruction } from '../llm/output-language';
 import {
   DOC_TYPES, DOC_LABELS, INTERVIEW_PROMPTS, FINALIZE_PROMPTS,
   AUTO_DRAFT_DOC_TYPES, KB_AUTO_DRAFT_PROMPTS, WEBSITE_PAGES_DISCOVERY_PROMPT,
@@ -1445,6 +1446,7 @@ export async function handleCreatePost(
     include_faq?: boolean;
     capsule_pct?: number;
     title?: string;
+    content_output_controls?: unknown;
   };
   if (!body.topic?.trim()) return json({ error: 'topic required' }, 400);
 
@@ -1459,6 +1461,9 @@ export async function handleCreatePost(
     include_tldr: body.include_tldr ?? true,
     include_faq: body.include_faq ?? true,
     capsule_pct: typeof body.capsule_pct === 'number' ? Math.max(0, Math.min(100, Math.round(body.capsule_pct))) : 65,
+    // Multi-language output: persisted with the brief so every step
+    // (research/outline/draft/review) inherits the same target language.
+    content_output_controls: body.content_output_controls ?? undefined,
   });
   await env.DB.prepare(
     `INSERT INTO content_writer_posts (id, workspace_id, user_id, title, topic, target_keyword, status, brief_json)
@@ -1611,14 +1616,25 @@ export async function handlePostStep(
     },
   });
 
+  // Multi-language output: brief carries content_output_controls (set at
+  // post creation time in NewPostDialog). Research returns JSON sources,
+  // outline + draft + review return prose/markdown. Use preserveJsonShape
+  // only for research.
+  const briefControls = (brief && typeof brief === 'object' && 'content_output_controls' in brief)
+    ? (brief as { content_output_controls?: unknown }).content_output_controls
+    : undefined;
+  const languageInstruction = getContentOutputInstruction(briefControls, {
+    preserveJsonShape: step === 'research',
+  });
+  const baseSystemPrompt = buildPostStepSystemPrompt(kb, step, {
+    master: masterPrompt.source === 'published' ? masterPrompt.text : undefined,
+    step: stepPrompt.source === 'published' ? stepPrompt.text : undefined,
+    context: promptContext,
+  });
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: buildPostStepSystemPrompt(kb, step, {
-        master: masterPrompt.source === 'published' ? masterPrompt.text : undefined,
-        step: stepPrompt.source === 'published' ? stepPrompt.text : undefined,
-        context: promptContext,
-      }),
+      content: `${baseSystemPrompt}\n\n${languageInstruction}`,
     },
     {
       role: 'user',

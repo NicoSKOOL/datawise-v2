@@ -37,6 +37,8 @@ import {
   subscribeKBAutoDraftTasks,
 } from '@/lib/kb-auto-draft-task';
 import { markdownToHtml, htmlToMarkdown, copyAsRichText } from '@/lib/markdown';
+import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
+import { getOutputLanguagePreference, type OutputLanguageCode } from '@/lib/output-language';
 import PostEditor from '@/components/content-writer/PostEditor';
 import ModelBadge from '@/components/content-writer/ModelBadge';
 import DraftProgressBar from '@/components/content-writer/DraftProgressBar';
@@ -1185,6 +1187,7 @@ function NewPostDialog({ open, onOpenChange, workspaceId, onCreated }: {
   const [takeaway, setTakeaway] = useState('');
   const [notes, setNotes] = useState('');
   const [includeTables, setIncludeTables] = useState(true);
+  const [language, setLanguage] = useState<OutputLanguageCode>(() => getOutputLanguagePreference());
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -1201,6 +1204,7 @@ function NewPostDialog({ open, onOpenChange, workspaceId, onCreated }: {
         takeaway: takeaway.trim() || undefined,
         notes: notes.trim() || undefined,
         include_tables: includeTables,
+        content_output_controls: { language },
       });
       setTopic(''); setKeyword(''); setSecondary(''); setTakeaway(''); setNotes(''); setIncludeTables(true);
       onOpenChange(false);
@@ -1236,6 +1240,14 @@ function NewPostDialog({ open, onOpenChange, workspaceId, onCreated }: {
             <Label htmlFor="np-take">Main takeaway</Label>
             <Textarea id="np-take" value={takeaway} onChange={(e) => setTakeaway(e.target.value)} rows={2} placeholder="The reader should book an annual service before winter." />
           </div>
+          <OutputLanguageSelect
+            value={language}
+            onValueChange={setLanguage}
+            id="np-language"
+            label="Output language"
+            description="Applies to every step: research, outline, draft, and review."
+            disabled={busy}
+          />
           <div className="space-y-1.5">
             <Label htmlFor="np-notes">Inline notes (optional)</Label>
             <Textarea id="np-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="A story, a stat, a customer question that comes up a lot..." />
