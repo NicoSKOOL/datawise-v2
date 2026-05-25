@@ -71,19 +71,54 @@ function stripCodeFences(text: string): string {
   return t.trim();
 }
 
+// Some models occasionally produce near-JSON: JS-style // line comments,
+// /* block */ comments, trailing commas before } or ]. JSON.parse rejects
+// all of these. Strip them as a fallback before retrying parse.
+function relaxJsonSyntax(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')          // /* block comments */
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, '$1')    // // line comments (not URLs)
+    .replace(/,\s*([}\]])/g, '$1');             // trailing commas
+}
+
+// Some models wrap the answer: {"result": {...}}, {"data": {...}},
+// {"response": {...}}. Unwrap one level if the wrapper has exactly one
+// object-valued key and the inner object has the fields we need.
+function unwrapNestedObject(obj: unknown): unknown {
+  if (!obj || typeof obj !== 'object') return obj;
+  const o = obj as Record<string, unknown>;
+  if (typeof o.title === 'string' || typeof o.description === 'string') return o;
+  for (const key of ['result', 'data', 'response', 'output']) {
+    const inner = o[key];
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+      const innerObj = inner as Record<string, unknown>;
+      if (typeof innerObj.title === 'string' || typeof innerObj.description === 'string') {
+        return innerObj;
+      }
+    }
+  }
+  return obj;
+}
+
 function tryExtractJson(raw: string): LLMResponseShape | null {
   const cleaned = stripCodeFences(raw);
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    // Fall back: find the first {...} block.
-    const start = cleaned.indexOf('{');
-    const end = cleaned.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { /* noop */ }
-    }
-    return null;
+  const attempts: string[] = [cleaned];
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start >= 0 && end > start) attempts.push(cleaned.slice(start, end + 1));
+  attempts.push(relaxJsonSyntax(cleaned));
+  if (start >= 0 && end > start) attempts.push(relaxJsonSyntax(cleaned.slice(start, end + 1)));
+
+  for (const candidate of attempts) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const unwrapped = unwrapNestedObject(parsed);
+      if (unwrapped && typeof unwrapped === 'object') {
+        return unwrapped as LLMResponseShape;
+      }
+    } catch { /* try next */ }
   }
+  return null;
 }
 
 interface LengthCheck { ok: boolean; problems: string[] }
@@ -185,7 +220,7 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     attempt++;
     let result;
     try {
-      result = await provider.chatComplete(messages, env, body.llm_config, 600);
+      result = await provider.chatComplete(messages, env, body.llm_config, 1200, { responseFormat: 'json' });
     } catch (err) {
       return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 502);
     }
@@ -193,7 +228,19 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     totalOutput += result.usage.output_tokens;
 
     parsed = tryExtractJson(result.text);
-    if (!parsed || typeof parsed.title !== 'string' || typeof parsed.description !== 'string') {
+    const validShape = !!(parsed && typeof parsed.title === 'string' && typeof parsed.description === 'string');
+    console.log(`[meta-rewrite] attempt=${attempt} model=${body.llm_config?.model || 'default'} finish=${result.finishReason || 'unknown'} parsedOk=${validShape} outputTokens=${result.usage.output_tokens}`);
+
+    if (!validShape || !parsed) {
+      // Truncation is a different failure than a malformed reply — surface it
+      // distinctly so the user knows to retry rather than thinking the LLM
+      // misbehaved.
+      if (result.finishReason === 'length' && attempt >= 2) {
+        return json({
+          error: 'The model output was cut off before it finished writing the JSON. Try again, or pick a model with a higher token budget in Settings.',
+          raw: result.text.slice(0, 500),
+        }, 502);
+      }
       // Single re-ask with stricter wording, then bail.
       if (attempt >= 2) {
         return json({ error: 'LLM did not return valid JSON', raw: result.text.slice(0, 500) }, 502);
