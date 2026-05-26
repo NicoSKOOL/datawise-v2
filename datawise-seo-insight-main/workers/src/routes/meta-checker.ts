@@ -8,7 +8,7 @@ const json = (data: unknown, status = 200) =>
   });
 
 const UA =
-  'Mozilla/5.0 (compatible; DataWiseBot/1.0; +https://datawiseseo.com)';
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const MAX_URLS = 100;
 const FETCH_TIMEOUT_MS = 10_000;
 const CONCURRENCY = 10;
