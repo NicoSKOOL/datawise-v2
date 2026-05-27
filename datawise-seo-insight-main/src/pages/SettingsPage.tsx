@@ -132,6 +132,11 @@ export default function SettingsPage() {
       setLlmApiKey('');
       setLlmModel(DEFAULT_OPENROUTER_MODEL);
       setLlmSaved(false);
+      // Wipe the stale record so other call sites (e.g. SEO Assistant chat)
+      // don't silently keep using a key tagged with a legacy provider while
+      // the user thinks they have nothing saved. They must re-enter an
+      // OpenRouter inference key here, which saveLLMConfig writes correctly.
+      clearLLMConfig();
       return;
     }
     if (config?.provider === 'openrouter' && config.api_key) {
