@@ -76,22 +76,35 @@ export async function handleGSCCallback(request: Request, env: Env): Promise<Res
     expires_in: number;
   };
 
+  // Google omits refresh_token on re-auth when the user has previously
+  // consented and the prior grant is still active. Storing an empty string
+  // here orphans the connection: the access token expires in ~1 hour, then
+  // refreshGSCToken() sees a falsy refresh_token and returns null forever
+  // (this stranded john@captivatewebsites, bug f83f0ecd). Force the user
+  // back through the consent screen with a clear error instead.
+  if (!tokens.refresh_token) {
+    console.error('GSC callback: Google returned no refresh_token for user', userId);
+    return Response.redirect(`${env.FRONTEND_URL}/settings?gsc_error=no_refresh_token`, 302);
+  }
+
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
-  // Store tokens in D1 (upsert)
+  // Store tokens in D1 (upsert). Clear any previous refresh_failed_at flag
+  // since a successful re-auth resets the "needs reconnect" state.
   await env.DB.prepare(`
-    INSERT INTO gsc_connections (id, user_id, access_token_encrypted, refresh_token_encrypted, token_expires_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO gsc_connections (id, user_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, refresh_failed_at)
+    VALUES (?, ?, ?, ?, ?, NULL)
     ON CONFLICT(user_id) DO UPDATE SET
       access_token_encrypted = excluded.access_token_encrypted,
       refresh_token_encrypted = excluded.refresh_token_encrypted,
       token_expires_at = excluded.token_expires_at,
+      refresh_failed_at = NULL,
       connected_at = datetime('now')
   `).bind(
     crypto.randomUUID().replace(/-/g, ''),
     userId,
     tokens.access_token, // TODO: encrypt with ENCRYPTION_KEY
-    tokens.refresh_token || '',
+    tokens.refresh_token,
     expiresAt
   ).run();
 
@@ -116,7 +129,10 @@ export async function refreshGSCToken(env: Env, userId: string): Promise<string 
 
   // Refresh the token
   const refreshToken = conn.refresh_token_encrypted as string;
-  if (!refreshToken) return null;
+  if (!refreshToken) {
+    await markRefreshFailed(env, userId);
+    return null;
+  }
 
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -130,18 +146,35 @@ export async function refreshGSCToken(env: Env, userId: string): Promise<string 
   });
 
   if (!tokenResponse.ok) {
-    console.error('GSC token refresh failed');
+    const body = await tokenResponse.text().catch(() => '');
+    console.error('GSC token refresh failed for user', userId, tokenResponse.status, body.slice(0, 200));
+    await markRefreshFailed(env, userId);
     return null;
   }
 
   const tokens = await tokenResponse.json() as { access_token: string; expires_in: number };
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
+  // Successful refresh clears any prior failure flag.
   await env.DB.prepare(
-    'UPDATE gsc_connections SET access_token_encrypted = ?, token_expires_at = ? WHERE user_id = ?'
+    'UPDATE gsc_connections SET access_token_encrypted = ?, token_expires_at = ?, refresh_failed_at = NULL WHERE user_id = ?'
   ).bind(tokens.access_token, expiresAt, userId).run();
 
   return tokens.access_token;
+}
+
+// Stamp refresh_failed_at so the SPA can show a persistent "Reconnect Google"
+// banner instead of silently returning empty syncs. Best-effort: a failed
+// write here must not throw, because the caller already returned null and
+// the user-facing UX path doesn't change either way.
+async function markRefreshFailed(env: Env, userId: string): Promise<void> {
+  try {
+    await env.DB.prepare(
+      "UPDATE gsc_connections SET refresh_failed_at = COALESCE(refresh_failed_at, datetime('now')) WHERE user_id = ?"
+    ).bind(userId).run();
+  } catch (err) {
+    console.error('markRefreshFailed write failed for user', userId, err);
+  }
 }
 
 // Fetch user's GSC properties and store in D1
@@ -170,19 +203,34 @@ async function syncProperties(env: Env, userId: string, accessToken: string): Pr
   return sites.length;
 }
 
-// GET /gsc/properties - List user's connected GSC properties
+// GET /gsc/properties - List user's connected GSC properties.
+//
+// Returns three boolean states the SPA cares about:
+//  - connected: there is a gsc_connections row at all
+//  - needs_reconnect: a refresh-token failure was recorded since the last
+//    successful refresh (set by refreshGSCToken on failure, cleared on
+//    success or fresh OAuth)
+//  - has_orphan_properties: gsc_properties rows exist for a kind != 'manual'
+//    even though there is no connection row (john's f83f0ecd state). The SPA
+//    surfaces this as "Google connection lost — Reconnect" with a one-click
+//    cleanup option.
 export async function handleGSCProperties(env: Env, userId: string): Promise<Response> {
   const properties = await env.DB.prepare(
     'SELECT id, site_url, kind, permission_level, last_synced_at, color, is_enabled FROM gsc_properties WHERE user_id = ?'
   ).bind(userId).all();
 
   const connection = await env.DB.prepare(
-    'SELECT connected_at FROM gsc_connections WHERE user_id = ?'
+    'SELECT connected_at, refresh_failed_at FROM gsc_connections WHERE user_id = ?'
   ).bind(userId).first();
+
+  const propertyRows = properties.results || [];
+  const hasOrphanProperties = !connection && propertyRows.some(p => p.kind !== 'manual');
 
   return new Response(JSON.stringify({
     connected: !!connection,
-    properties: properties.results || [],
+    needs_reconnect: !!(connection?.refresh_failed_at) || hasOrphanProperties,
+    has_orphan_properties: hasOrphanProperties,
+    properties: propertyRows,
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 
@@ -190,7 +238,10 @@ export async function handleGSCProperties(env: Env, userId: string): Promise<Res
 export async function handleGSCPropertiesRefresh(env: Env, userId: string): Promise<Response> {
   const accessToken = await refreshGSCToken(env, userId);
   if (!accessToken) {
-    return new Response(JSON.stringify({ error: 'GSC not connected or token expired. Please reconnect.' }), {
+    return new Response(JSON.stringify({
+      error: 'GSC not connected or token expired. Please reconnect.',
+      code: 'gsc_reauth_required',
+    }), {
       status: 403,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -241,16 +292,32 @@ export async function handleGSCPropertyUpdate(request: Request, env: Env, userId
   });
 }
 
-// GET /gsc/disconnect - Remove GSC connection
+// POST /gsc/disconnect - Remove GSC connection.
+//
+// Idempotent on purpose: must succeed whether the user has a healthy
+// connection, an orphan state (properties but no connection row, e.g. john's
+// f83f0ecd state), or nothing at all. The 3 DELETEs run atomically via
+// env.DB.batch so partial-state orphaning (the original source of f83f0ecd)
+// cannot recur.
 export async function handleGSCDisconnect(env: Env, userId: string): Promise<Response> {
-  await env.DB.prepare(
-    `DELETE FROM gsc_search_data
-     WHERE property_id IN (
-       SELECT id FROM gsc_properties WHERE user_id = ? AND kind != 'manual'
-     )`
-  ).bind(userId).run();
-  await env.DB.prepare('DELETE FROM gsc_connections WHERE user_id = ?').bind(userId).run();
-  await env.DB.prepare("DELETE FROM gsc_properties WHERE user_id = ? AND kind != 'manual'").bind(userId).run();
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `DELETE FROM gsc_search_data
+         WHERE property_id IN (
+           SELECT id FROM gsc_properties WHERE user_id = ? AND kind != 'manual'
+         )`
+      ).bind(userId),
+      env.DB.prepare('DELETE FROM gsc_connections WHERE user_id = ?').bind(userId),
+      env.DB.prepare("DELETE FROM gsc_properties WHERE user_id = ? AND kind != 'manual'").bind(userId),
+    ]);
+  } catch (err) {
+    console.error('handleGSCDisconnect batch failed for user', userId, err);
+    return new Response(
+      JSON.stringify({ error: 'Disconnect failed. Please try again, or contact support.' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
 
   return new Response(JSON.stringify({ success: true }), {
     headers: { 'Content-Type': 'application/json' },

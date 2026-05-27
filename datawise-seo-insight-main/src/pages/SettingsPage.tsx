@@ -40,7 +40,10 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const { removeProperty } = useProperty();
   const [connected, setConnected] = useState(false);
+  const [needsReconnect, setNeedsReconnect] = useState(false);
+  const [hasOrphanProperties, setHasOrphanProperties] = useState(false);
   const [properties, setProperties] = useState<GSCProperty[]>([]);
+  const [cleaningOrphan, setCleaningOrphan] = useState(false);
   const [bwtConnected, setBwtConnected] = useState(false);
   const [bwtProperties, setBwtProperties] = useState<GSCProperty[]>([]);
   const [bwtLoading, setBwtLoading] = useState(true);
@@ -226,7 +229,15 @@ export default function SettingsPage() {
       window.history.replaceState({}, '', '/settings');
     }
     if (params.get('gsc_error')) {
-      toast({ variant: 'destructive', title: 'GSC Connection Failed', description: `Error: ${params.get('gsc_error')}` });
+      const code = params.get('gsc_error');
+      // The no_refresh_token case happens when Google omits the refresh token
+      // on re-auth (the prior grant is still active). Storing an empty string
+      // here is what stranded john (bug f83f0ecd), so we now bail to the
+      // consent screen and tell the user exactly how to recover.
+      const description = code === 'no_refresh_token'
+        ? 'Google did not return a refresh token. Open https://myaccount.google.com/permissions, remove DataWise, then click Connect Google again.'
+        : `Error: ${code}`;
+      toast({ variant: 'destructive', title: 'GSC Connection Failed', description });
       window.history.replaceState({}, '', '/settings');
     }
     if (params.get('bwt_connected') === 'true') {
@@ -275,6 +286,8 @@ export default function SettingsPage() {
     try {
       const data = await getGSCProperties();
       setConnected(data.connected);
+      setNeedsReconnect(!!data.needs_reconnect);
+      setHasOrphanProperties(!!data.has_orphan_properties);
       setProperties(data.properties || []);
     } catch {
       // Not connected
@@ -341,10 +354,33 @@ export default function SettingsPage() {
     try {
       await disconnectGSC();
       setConnected(false);
+      setNeedsReconnect(false);
+      setHasOrphanProperties(false);
       setProperties((prev) => prev.filter((p) => p.kind === 'manual'));
       toast({ title: 'Disconnected', description: 'Google Search Console disconnected.' });
     } catch {
       toast({ variant: 'destructive', title: 'Error', description: 'Failed to disconnect' });
+    }
+  };
+
+  // Orphan state = gsc_properties rows remain but the gsc_connections row is
+  // gone (caused by a partial disconnect before atomic batch was added).
+  // The fix is the same DELETE the disconnect endpoint runs; calling it on
+  // orphan state is a no-op for connection/data but cleans the properties so
+  // a fresh OAuth starts clean.
+  const handleCleanupOrphan = async () => {
+    setCleaningOrphan(true);
+    try {
+      await disconnectGSC();
+      setConnected(false);
+      setNeedsReconnect(false);
+      setHasOrphanProperties(false);
+      setProperties((prev) => prev.filter((p) => p.kind === 'manual'));
+      toast({ title: 'Cleaned up', description: 'Orphaned Google properties removed. You can now reconnect.' });
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Cleanup failed. Please try again.' });
+    } finally {
+      setCleaningOrphan(false);
     }
   };
 
@@ -558,6 +594,35 @@ export default function SettingsPage() {
       {/* Google Search Console */}
       <div className="rounded-xl border bg-card p-6 space-y-4">
         <h2 className="text-lg font-semibold">Google Search Console</h2>
+
+        {/* Reconnect / orphan banner. Surfaces the silent token-failure state
+            (bug f83f0ecd) instead of letting the dashboard look broken. */}
+        {!loading && needsReconnect && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-700 dark:bg-amber-950/40">
+            <p className="font-medium text-amber-900 dark:text-amber-200">
+              {hasOrphanProperties
+                ? 'Your Google connection was lost.'
+                : 'Your Google connection has expired.'}
+            </p>
+            <p className="mt-1 text-amber-800 dark:text-amber-300">
+              {hasOrphanProperties
+                ? 'Sync stopped working because Google revoked your refresh token. Clean up the orphaned property list, then reconnect to restore syncs.'
+                : 'Reconnect Google Search Console to resume syncing data.'}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" onClick={handleConnect} className="gap-2">
+                <Link2 className="h-3 w-3" />
+                Reconnect Google
+              </Button>
+              {hasOrphanProperties && (
+                <Button size="sm" variant="outline" onClick={handleCleanupOrphan} disabled={cleaningOrphan}>
+                  {cleaningOrphan ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                  <span className="ml-1.5">{cleaningOrphan ? 'Cleaning up...' : 'Clean up orphaned properties'}</span>
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 text-muted-foreground">
