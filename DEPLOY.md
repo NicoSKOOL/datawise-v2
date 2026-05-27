@@ -109,6 +109,7 @@ Named recovery tags (use `git checkout <tag>` to restore source state):
 - `prod-2026-05-21-1435` — after worker+SPA: typed `DataForSeoQuotaError` + 503 friendly message for `provider_quota_exhausted` (Bob's rank-tracking 402).
 - `prod-2026-05-21-1504` — after worker-only perf pass: caching on keywords/competitors/rank-tracking/local-seo DFS calls, cron `*/2 → */5`, KV short-circuit on DFS 402. Worker version `012530e8`.
 - `prod-2026-05-21-1552` — Brand Tracker per-platform split (fixes imregabri's `e0c73d59` concurrency bug); AI Visibility tabs trimmed to AI Search Tracker + Brand Tracker (removed duplicate People Also Ask + orphan On-Page SEO). Merge commit `96205a4`, PR #16. SPA-only; rollback via `git revert 96205a4 && git push origin production`.
+- `prod-2026-05-27-1228` — OpenRouter preflight follow-ups: worker returns 400 (not 401) when key is invalid so SPA's auth interceptor stops force-logging users out (bug `7b7e46d1`); SPA `getLLMConfig()` tolerates legacy stored provider when api_key starts with `sk-or-`, SettingsPage auto-purges stale legacy config (bug `663ce49c`). Merge commit `5950c57`, PR #25. Worker version `fa2c7495`. Rollback both: `git revert 5950c57 && git push origin production` AND `wrangler rollback --message "openrouter preflight regression" 012530e8`.
 
 ## Rollback (Worker, `datawise-api`)
 
@@ -129,7 +130,8 @@ Last known-good worker versions:
 
 - `e9ef6067` — 2026-05-17 baseline before the May 2026 changes.
 - `316dc206` — added `DataForSeoQuotaError` typed 503 (2026-05-21).
-- `012530e8` — current; caching + cron + quota short-circuit (2026-05-21).
+- `012530e8` — caching + cron + quota short-circuit (2026-05-21).
+- `fa2c7495` — current; OpenRouter preflight returns 400 (not 401) on invalid key, stops SPA forced logout (2026-05-27, PR #25).
 
 If a rollback reintroduces an old bug, also `git revert` the corresponding commit on `production` so the source matches the live worker. Otherwise the next deploy via CI re-ships the bad change.
 
