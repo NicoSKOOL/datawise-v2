@@ -2050,7 +2050,45 @@ function PostComposerView({ postId }: { postId: string }) {
         });
       }
     } catch (err) {
-      toast({ title: `${cap(step)} failed`, description: (err as Error).message, variant: 'destructive' });
+      const errMsg = (err as Error)?.message || '';
+      const isNetworkDrop =
+        err instanceof TypeError ||
+        /failed to fetch|networkerror|load failed|network request failed/i.test(errMsg);
+
+      // The outline/draft worker calls can run for 60-120s when the model is
+      // slow. Intermediaries (Cloudflare edge, corporate proxies, dropped
+      // wifi) sometimes close the long-lived connection while the worker
+      // keeps running and persists the result. When that happens the
+      // browser sees a TypeError ("Failed to fetch") even though the step
+      // succeeded server-side. Refetch the post and recover silently if the
+      // output is already there (bug 0ac02a93).
+      if (isNetworkDrop && (step === 'outline' || step === 'draft' || step === 'research')) {
+        try {
+          await new Promise((r) => setTimeout(r, 8000));
+          const fresh = await getPost(post.id);
+          const persisted =
+            (step === 'research' && !!fresh.post.sources_json) ||
+            (step === 'outline' && !!fresh.post.outline_json) ||
+            (step === 'draft' && (!!fresh.post.body_md || !!fresh.post.body_html));
+          if (persisted) {
+            setPost(fresh.post);
+            setActiveTab(STEP_TO_TAB[step]);
+            toast({
+              title: `${cap(step)} complete`,
+              description: 'The connection dropped while the model was running, but your output was saved.',
+            });
+            return;
+          }
+        } catch { /* fall through to the friendlier error below */ }
+        toast({
+          title: `${cap(step)} timed out`,
+          description: `The connection to the server dropped before ${step === 'research' ? 'research' : step === 'outline' ? 'the outline' : 'the draft'} finished. This usually clears up on a retry; click ${cap(step)} again.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({ title: `${cap(step)} failed`, description: errMsg, variant: 'destructive' });
     } finally {
       setBusyStep(null);
     }
