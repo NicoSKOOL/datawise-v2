@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,12 +12,12 @@ import { DataTable } from "@/components/DataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 
 export default function CompetitorsDomain() {
-  const [domain, setDomain] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
+  const [domain, setDomain] = usePersistentState<string>("competitor:competitors:domain", "");
+  const [location, setLocation] = usePersistentState<string>("competitor:competitors:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("competitor:competitors:language", "en");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [results, setResults] = usePersistentState<any[]>("competitor:competitors:results", []);
+  const [metrics, setMetrics] = usePersistentState<any>("competitor:competitors:metrics", null);
   const { toast } = useToast();
 
   const handleAnalyze = async () => {

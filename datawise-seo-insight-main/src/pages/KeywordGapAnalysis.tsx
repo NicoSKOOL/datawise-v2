@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -29,12 +30,12 @@ interface ProcessedKeywordData extends KeywordData {
 }
 
 const KeywordGapAnalysis = () => {
-  const [myDomain, setMyDomain] = useState("");
-  const [competitorDomain, setCompetitorDomain] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
+  const [myDomain, setMyDomain] = usePersistentState<string>("competitor:gap:myDomain", "");
+  const [competitorDomain, setCompetitorDomain] = usePersistentState<string>("competitor:gap:competitorDomain", "");
+  const [location, setLocation] = usePersistentState<string>("competitor:gap:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("competitor:gap:language", "en");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = usePersistentState<any>("competitor:gap:results", null);
   const [activeTab, setActiveTab] = useState("gaps");
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'matrix'>('cards');
 
