@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -366,11 +367,11 @@ function SingleDomainSummary({ result }: { result: DomainResult }) {
 
 // --- Main Page ---
 export default function DomainRankOverview() {
-  const [domains, setDomains] = useState([""]);
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
+  const [domains, setDomains] = usePersistentState<string[]>("competitor:domain-rank:domains", [""]);
+  const [location, setLocation] = usePersistentState<string>("competitor:domain-rank:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("competitor:domain-rank:language", "en");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<DomainResult[]>([]);
+  const [results, setResults] = usePersistentState<DomainResult[]>("competitor:domain-rank:results", []);
   const { toast } = useToast();
 
   const addDomain = () => {

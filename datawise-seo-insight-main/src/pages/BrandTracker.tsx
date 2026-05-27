@@ -174,7 +174,18 @@ function AnswersTable({
     const terms = splitFilterTerms(search);
 
     if (terms.length > 0) {
-      result = result.filter((r) => matchesAllTerms(r.question, terms));
+      // Filter across question + answer + source titles/domains so a
+      // multi-word query finds matches when one word is in the question and
+      // another in the answer body. Question-only matching returned empty
+      // results too often (bug 2119ccb9).
+      result = result.filter((r) => {
+        const haystack = [
+          r.question || '',
+          r.answer || '',
+          ...(r.sources || []).flatMap((s) => [s.title || '', s.domain || '', s.snippet || '']),
+        ].join(' \n ');
+        return matchesAllTerms(haystack, terms);
+      });
     }
 
     if (platformFilter !== 'all') {
@@ -225,10 +236,10 @@ function AnswersTable({
           {enabled && !isLoading && rows.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-2">
               <Input
-                placeholder="Filter questions..."
+                placeholder="Filter (matches question, answer, sources)..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-8 text-sm max-w-[260px]"
+                className="h-8 text-sm max-w-[320px]"
               />
               <Select value={platformFilter} onValueChange={setPlatformFilter}>
                 <SelectTrigger className="h-8 text-sm w-[160px]">

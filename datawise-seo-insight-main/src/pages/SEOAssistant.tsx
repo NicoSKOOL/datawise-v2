@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MessageSquare, Send, Plus, Link2, HelpCircle, Trash2, Pencil, Check, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -10,7 +9,7 @@ import SparklesIcon from '@/components/icons/sparkles-icon';
 import type { AnimatedIconHandle } from '@/components/icons/types';
 import { useSearchParams } from 'react-router-dom';
 import { sendMessage, getConversations, getConversation, deleteConversation, renameConversation, type Conversation, type ChatMessageData } from '@/lib/chat';
-import { getGSCProperties, type GSCProperty } from '@/lib/gsc';
+import { useProperty } from '@/contexts/PropertyContext';
 import { useToast } from '@/hooks/use-toast';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildChatConversationReport } from '@/lib/export/adapters/chatConversation';
@@ -27,9 +26,11 @@ export default function SEOAssistant() {
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [properties, setProperties] = useState<GSCProperty[]>([]);
-  const [selectedProperty, setSelectedProperty] = useState<string>('');
-  const [connected, setConnected] = useState(false);
+  // Drive the chat's GSC property from the global PropertyContext so the
+  // sidebar property selector and the chat agree on context. Two independent
+  // selectors caused user confusion when one was set to domain A and the
+  // chat ran with domain B (bug 89b32130).
+  const { properties, selectedPropertyId: selectedProperty, connected } = useProperty();
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -89,22 +90,10 @@ export default function SEOAssistant() {
     document.body.style.userSelect = 'none';
   }, []);
 
-  // Load conversations and GSC properties
+  // Load conversations (properties come from PropertyContext above).
   useEffect(() => {
     getConversations()
       .then((data) => setConversations(data.conversations || []))
-      .catch(() => {});
-
-    getGSCProperties()
-      .then((data) => {
-        setConnected(data.connected);
-        const enabledProps = (data.properties || []).filter((p) => p.is_enabled !== 0);
-        setProperties(enabledProps);
-        const syncedProps = enabledProps.filter((p) => p.last_synced_at);
-        if (syncedProps.length > 0) {
-          setSelectedProperty(syncedProps[0].id);
-        }
-      })
       .catch(() => {});
   }, []);
 
@@ -264,63 +253,31 @@ export default function SEOAssistant() {
           </Button>
         </div>
 
-        {/* Property Selector */}
-        {properties.length > 0 && (
-          <div className="p-3 border-b">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Property</span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <HelpCircle className="h-3 w-3 text-muted-foreground/60 cursor-help" />
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-[200px] text-xs">
-                  Only synced properties can be selected. Go to Settings to sync your GSC data.
-                </TooltipContent>
-              </Tooltip>
+        {/* Active property indicator (read-only). The actual selector lives
+             in the global sidebar so there is exactly one source of truth. */}
+        {properties.length > 0 && selectedProperty && (() => {
+          const prop = properties.find((p) => p.id === selectedProperty);
+          if (!prop) return null;
+          return (
+            <div className="p-3 border-b">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Property</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground/60 cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-[220px] text-xs">
+                    The chat uses the property selected in the left sidebar. Change it there to switch domains.
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="flex items-center gap-2 text-xs px-2 py-1.5 rounded-md bg-muted/50 truncate">
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: prop.color || '#6366f1' }} />
+                <span className="truncate">{prop.site_url.replace(/^(sc-domain:|https?:\/\/)/, '')}</span>
+              </div>
             </div>
-            <Select value={selectedProperty} onValueChange={setSelectedProperty}>
-              <SelectTrigger className="text-xs h-8">
-                <div className="flex items-center gap-2 truncate">
-                  {selectedProperty && (() => {
-                    const prop = properties.find((p) => p.id === selectedProperty);
-                    return prop ? (
-                      <>
-                        <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: prop.color || '#6366f1' }} />
-                        <span className="truncate">{prop.site_url.replace(/^(sc-domain:|https?:\/\/)/, '')}</span>
-                      </>
-                    ) : <span>Select property</span>;
-                  })()}
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {properties.map((p) => {
-                  const isSynced = !!p.last_synced_at;
-                  return (
-                    <SelectItem
-                      key={p.id}
-                      value={p.id}
-                      disabled={!isSynced}
-                      className={`text-xs ${!isSynced ? 'opacity-50' : ''}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: isSynced ? (p.color || '#6366f1') : '#a1a1aa' }}
-                        />
-                        <span className={!isSynced ? 'text-muted-foreground' : ''}>
-                          {p.site_url.replace(/^(sc-domain:|https?:\/\/)/, '')}
-                        </span>
-                        {!isSynced && (
-                          <span className="text-[10px] text-muted-foreground ml-auto">Not synced</span>
-                        )}
-                      </div>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
+          );
+        })()}
 
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-1">
