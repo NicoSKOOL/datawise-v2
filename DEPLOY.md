@@ -1,0 +1,186 @@
+# DEPLOY.md — Production deploy rules for DataWise
+
+**READ THIS BEFORE ANY DEPLOY. Especially Claude/Codex/AI agents.**
+
+## The one rule that matters
+
+> The `production` branch is the live site. Every change goes through a PR into `production`, gets merged, and is deployed using **only** `npm run deploy:pages:production` from a clean checkout of `production`. Never run raw `wrangler pages deploy` against this project.
+
+Why: `npm run deploy:pages:production` runs the guard in `datawise-seo-insight-main/scripts/deploy-pages-production.mjs`, which refuses to deploy if the built bundle is missing critical features (Content Writer, AI Visibility, Brand Tracker, People Also Ask, Fan-out Queries, Content Planner, Content Tools, the indexation chart, the keyword metric badges, etc.) or if the current branch is not `production`. Raw `wrangler pages deploy` bypasses every one of those checks and will ship broken builds.
+
+## Branch model
+
+- **`production`** = trunk. What's live at `datawiseseo.com`.
+- **`main`** = legacy, stale. Do not use.
+- **Feature branches**: any name, branched off `production`, merged back into `production` via PR.
+
+## Workflow for every change (including small fixes)
+
+Promotion order is mandatory:
+
+1. Build/test locally.
+2. Deploy and verify a Cloudflare Pages preview/staging URL.
+3. Deploy production last.
+
+Never use `datawiseseo.com` as the first test target. If there is no preview/staging URL for the change, stop and create one before production deploy.
+
+```sh
+# 1. Sync with live
+cd "/Users/nicolasgorrono/Desktop/DataWise V2"
+git fetch origin
+git checkout production
+git pull origin production
+
+# 2. Branch
+git checkout -b fix/short-description    # or feat/short-description
+
+# 3. Edit + test locally
+cd datawise-seo-insight-main
+npm run dev   # frontend on :8080
+
+# 4. Commit + push
+git add <specific files, no `git add .`>
+git commit -m "fix: …"
+git push -u origin fix/short-description
+
+# 5. Open PR on GitHub: base = production, compare = fix/...
+#    Review the diff carefully. If files you didn't change are in the diff, STOP.
+
+# 6. Deploy/verify preview or staging.
+#    Use the PR/feature preview URL or a staging Pages deployment.
+#    Verify the actual user flows touched by the change before merge.
+
+# 7. Merge PR (squash or merge — either is fine)
+
+# 8. Deploy production last
+git checkout production
+git pull origin production
+cd datawise-seo-insight-main
+npm run deploy:pages:production
+# This script:
+#   - asserts current branch == production
+#   - builds with the production VITE_API_URL
+#   - greps the built bundle for required feature markers
+#   - aborts if anything critical is missing
+#   - only then uploads via wrangler
+
+# 9. Tag the deploy
+cd "/Users/nicolasgorrono/Desktop/DataWise V2"
+TS=$(date -u +%Y-%m-%d-%H%M)
+git tag -a "prod-$TS" -m "deploy"
+git push origin --tags
+```
+
+## Worker (API) deploys
+
+The Worker is a separate codebase in `datawise-seo-insight-main/workers/`. Worker deploys are independent of the SPA:
+
+```sh
+cd datawise-seo-insight-main/workers
+npm run deploy     # → wrangler deploy → datawise-api (no env flag)
+```
+
+DO NOT use `npm run deploy:production` for the worker — see `~/.claude/projects/-Users-nicolasgorrono-Desktop-DataWise-V2/memory/reference_deployment.md` for the naming trap (creates an orphan `datawise-api-production` worker).
+
+## Rollback (Pages)
+
+If a deploy goes wrong, rollback via Cloudflare API (wrangler CLI does not support Pages rollback):
+
+```sh
+# 1. List recent deployments to pick the one to restore
+cd datawise-seo-insight-main
+CLOUDFLARE_ACCOUNT_ID=510d0ac03a3a8f5ebeac39be4926ed77 \
+  npx wrangler pages deployment list --project-name=datawise | head -10
+
+# 2. Rollback to that deployment id
+DEPLOYMENT_ID=<paste-id-here>
+CF_TOKEN=$(grep -E "^oauth_token|^api_token" ~/Library/Preferences/.wrangler/config/default.toml | head -1 | cut -d'"' -f2)
+curl -X POST \
+  "https://api.cloudflare.com/client/v4/accounts/510d0ac03a3a8f5ebeac39be4926ed77/pages/projects/datawise/deployments/$DEPLOYMENT_ID/rollback" \
+  -H "Authorization: Bearer $CF_TOKEN" \
+  -H "Content-Type: application/json"
+```
+
+Then verify by curling `https://datawiseseo.com/` and checking the `assets/index-XXXX.js` filename matches the deployment you rolled back to.
+
+Named recovery tags (use `git checkout <tag>` to restore source state):
+
+- `prod-2026-05-13-2327-live` — last known-good live state before the 2026-05-14 incident.
+- `prod-2026-05-21-1435` — after worker+SPA: typed `DataForSeoQuotaError` + 503 friendly message for `provider_quota_exhausted` (Bob's rank-tracking 402).
+- `prod-2026-05-21-1504` — after worker-only perf pass: caching on keywords/competitors/rank-tracking/local-seo DFS calls, cron `*/2 → */5`, KV short-circuit on DFS 402. Worker version `012530e8`.
+- `prod-2026-05-21-1552` — Brand Tracker per-platform split (fixes imregabri's e0c73d59 concurrency bug); AI Visibility tabs trimmed to AI Search Tracker + Brand Tracker (removed duplicate People Also Ask + orphan On-Page SEO). Merge commit `96205a4`, PR #16.
+- `prod-2026-05-27-1737` — Bug batch 4 (SPA-only, no worker change). Competitor Analysis tabs now persist state via usePersistentState (fixes 6e758797). SEO Assistant chat now reads property from PropertyContext, in-page selector is now a read-only indicator (fixes 89b32130). Brand Tracker filter widened to match question + answer + source titles/domains/snippets (fixes 2119ccb9). Merge commit `1e0ef5d`, PR #29. Rollback: `git checkout prod-2026-05-21-1552 -- datawise-seo-insight-main` then push to production.
+
+## Rollback (Worker, `datawise-api`)
+
+The Worker is independent of Pages. To roll back:
+
+```sh
+# 1. List versions (most recent first)
+cd datawise-seo-insight-main/workers
+CLOUDFLARE_ACCOUNT_ID=510d0ac03a3a8f5ebeac39be4926ed77 \
+  npx wrangler deployments list | head -30
+
+# 2. Roll back to a prior version id
+CLOUDFLARE_ACCOUNT_ID=510d0ac03a3a8f5ebeac39be4926ed77 \
+  npx wrangler rollback --message "rollback reason" <version-id>
+```
+
+Last known-good worker versions:
+
+- `e9ef6067` — 2026-05-17 baseline before the May 2026 changes.
+- `316dc206` — added `DataForSeoQuotaError` typed 503 (2026-05-21).
+- `012530e8` — current; caching + cron + quota short-circuit (2026-05-21).
+
+If a rollback reintroduces an old bug, also `git revert` the corresponding commit on `production` so the source matches the live worker. Otherwise the next deploy via CI re-ships the bad change.
+
+## Roll back today's specific changes individually
+
+If the caching layer specifically misbehaves (stale data complaints, KV cost spike), the smallest reversal is:
+
+```sh
+git revert 4a51176   # perf(workers): cache + cron + quota short-circuit
+git push origin production
+# CI rebuilds SPA (no-op), then run the worker deploy manually:
+cd datawise-seo-insight-main/workers && npm run deploy
+```
+
+If the typed quota error layer misbehaves:
+
+```sh
+git revert 2d6cebb   # fix(rank-tracking): provider_quota_exhausted 503
+git push origin production
+cd datawise-seo-insight-main/workers && npm run deploy
+```
+
+If the marketing CL0 handler misbehaves:
+
+```sh
+git revert fbd10c2   # fix(marketing): ship Resend CL0 handler
+git push origin production
+# Then rebuild + redeploy datawise-marketing manually:
+cd marketing && npm run build && npx wrangler pages deploy ./dist \
+  --project-name=datawise-marketing --branch=main
+```
+
+## What NOT to do
+
+- ❌ `wrangler pages deploy dist --project-name=datawise ...` from any branch. Use the npm script.
+- ❌ Deploy from a feature branch.
+- ❌ Deploy with a dirty working tree (`git status` must be clean).
+- ❌ Deploy from `main` (it's stale).
+- ❌ Deploy production before verifying a preview/staging URL.
+- ❌ Use the live app as the first place to test a change.
+- ❌ Skip the PR step "just for a one-liner". The PR diff is the only place you'll catch deleted files.
+- ❌ Use `git add .` or `git add -A`. Only add the files you intended to change.
+
+## What an AI agent (Claude/Codex) must do before deploying
+
+1. Run `git rev-parse --abbrev-ref HEAD` → must be `production`.
+2. Run `git status --porcelain` → must be empty.
+3. Run `git fetch origin && git rev-list HEAD..origin/production --count` → must be 0.
+4. Confirm with the user in plain English: "I'm about to deploy commit `<short-sha>` (`<commit-message>`) to production via `npm run deploy:pages:production`. Proceed?"
+5. Only after explicit user "yes" — run `npm run deploy:pages:production`.
+6. After success, tag the deploy as above.
+
+If any of steps 1-3 fail, stop and tell the user. Do not attempt to fix the state automatically.
