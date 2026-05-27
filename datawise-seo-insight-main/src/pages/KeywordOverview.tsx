@@ -11,14 +11,15 @@ import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetr
 import { formatKeywordMetricValue } from "@/lib/keyword-metrics";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordOverview } from "@/lib/dataforseo";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 
 export default function KeywordOverview() {
-  const [keyword, setKeyword] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
+  const [keyword, setKeyword] = usePersistentState<string>("keyword-overview:keyword", "");
+  const [location, setLocation] = usePersistentState<string>("keyword-overview:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("keyword-overview:language", "en");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [results, setResults] = usePersistentState<any[]>("keyword-overview:results", []);
+  const [metrics, setMetrics] = usePersistentState<any>("keyword-overview:metrics", null);
   const { toast } = useToast();
 
   const handleAnalyze = async () => {

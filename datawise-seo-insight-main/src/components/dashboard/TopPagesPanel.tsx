@@ -49,15 +49,22 @@ export default function TopPagesPanel({ pages }: TopPagesPanelProps) {
               <tbody>
                 {rows.map((p) => (
                   <tr key={p.page} className="border-t border-border/60">
-                    <td className="py-2.5 pr-3 max-w-[300px]">
+                    {/* min-w-0 + block-level flex + truncate child is the
+                        canonical Tailwind pattern for clipping long URLs
+                        inside a flex container. The prior inline-flex
+                        anchor wouldn't respect the column max-width, so
+                        long URLs overlapped the Clicks/Impr/Pos cells
+                        (bugs bac2d0601e3eb50b0fb966e7ec199e54 and
+                        dc9af2b28d3b32aea37bbc31fd34540c). */}
+                    <td className="py-2.5 pr-3 max-w-[300px] min-w-0">
                       <a
                         href={p.page}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 hover:text-primary"
+                        className="flex items-center gap-1 min-w-0 hover:text-primary"
                         title={p.page}
                       >
-                        <span className="truncate">{p.page.replace(/^https?:\/\//, '')}</span>
+                        <span className="truncate min-w-0 flex-1">{p.page.replace(/^https?:\/\//, '')}</span>
                         <ExternalLink className="h-3 w-3 shrink-0" />
                       </a>
                     </td>

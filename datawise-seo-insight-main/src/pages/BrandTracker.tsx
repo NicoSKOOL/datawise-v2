@@ -30,6 +30,7 @@ import { StatItem } from '@/components/llm-mentions/StatItem';
 import { MentionsTrendChart } from '@/components/llm-mentions/MentionsTrendChart';
 import { CompetitorCompare } from '@/components/llm-mentions/CompetitorCompare';
 import { useDefaults } from '@/hooks/use-defaults';
+import { usePersistentState } from '@/hooks/use-persistent-state';
 import { matchesAllTerms, splitFilterTerms } from '@/lib/result-filter';
 
 type Platform = 'google' | 'chat_gpt';
@@ -361,10 +362,15 @@ function AnswersTable({
 export default function BrandTracker() {
   const { defaultDomain } = useDefaults();
   const { toast } = useToast();
-  const [inputDomain, setInputDomain] = useState(defaultDomain || '');
-  const [activeDomain, setActiveDomain] = useState('');
-  const [googleActive, setGoogleActive] = useState(true);
-  const [chatgptActive, setChatgptActive] = useState(false);
+  // activeDomain + platform toggles persist so returning to Brand Tracker
+  // restores the last analyzed domain (bug 252b2580 — "ran a few of these
+  // features, then when I returned all of the data has gone"). React Query
+  // refetches automatically when the queryKey rehydrates with a non-empty
+  // activeDomain.
+  const [activeDomain, setActiveDomain] = usePersistentState<string>('brand-tracker:active-domain', '');
+  const [inputDomain, setInputDomain] = useState(activeDomain || defaultDomain || '');
+  const [googleActive, setGoogleActive] = usePersistentState<boolean>('brand-tracker:google-active', true);
+  const [chatgptActive, setChatgptActive] = usePersistentState<boolean>('brand-tracker:chatgpt-active', false);
 
   // Per-platform pagination state. Initial 100 rows come from each search
   // query; subsequent pages append into the matching extras array.
