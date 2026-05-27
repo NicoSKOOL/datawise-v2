@@ -1465,10 +1465,10 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages.length, sending]);
 
-  async function send() {
-    const message = input.trim();
+  async function send(overrideMessage?: string) {
+    const message = (overrideMessage ?? input).trim();
     if (!message || sending) return;
-    setInput('');
+    if (overrideMessage === undefined) setInput('');
     setSending(true);
     const optimistic: InterviewMessage = { role: 'user', content: message, created_at: new Date().toISOString() };
     setMessages((m) => [...m, optimistic]);
@@ -1480,7 +1480,7 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
       toast({ title: 'Send failed', description: (err as Error).message, variant: 'destructive' });
       // roll back optimistic message
       setMessages((m) => m.slice(0, -1));
-      setInput(message);
+      if (overrideMessage === undefined) setInput(message);
     } finally {
       setSending(false);
     }
@@ -1572,9 +1572,19 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
             {loading ? (
               <div className="flex items-center justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
             ) : messages.length === 0 ? (
+              // Empty-state needs an explicit Start button. The hint text
+              // alone ("Say 'let\'s begin'") left users staring at a chat
+              // box that suggested questions would appear but never did
+              // (bug 44aba545 — "I can't see a way to kick off the
+              // questions"). The button sends the same kickoff message
+              // so the AI takes the first turn.
               <Card>
-                <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  {emptyInterviewMessage}
+                <CardContent className="space-y-4 py-8 text-center">
+                  <p className="text-sm text-muted-foreground">{emptyInterviewMessage}</p>
+                  <Button onClick={() => send("Let's begin")} disabled={sending} className="gap-2">
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    Start interview
+                  </Button>
                 </CardContent>
               </Card>
             ) : (
@@ -1638,7 +1648,7 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
                 className="resize-none"
                 disabled={sending}
               />
-              <Button onClick={send} disabled={sending || !input.trim()}>Send</Button>
+              <Button onClick={() => send()} disabled={sending || !input.trim()}>Send</Button>
             </div>
           </div>
         </div>

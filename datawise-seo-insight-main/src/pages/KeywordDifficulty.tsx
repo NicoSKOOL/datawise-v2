@@ -7,11 +7,12 @@ import { BarChart3 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { fetchKeywordDifficulty } from "@/lib/dataforseo";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 
 export default function KeywordDifficulty() {
-  const [keywords, setKeywords] = useState("");
+  const [keywords, setKeywords] = usePersistentState<string>("keyword-difficulty:keywords", "");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = usePersistentState<any[]>("keyword-difficulty:results", []);
   const { toast } = useToast();
 
   const handleAnalyze = async () => {
