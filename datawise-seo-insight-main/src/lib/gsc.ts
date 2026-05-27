@@ -102,8 +102,22 @@ export interface IndexationData {
   indexed_pct: number;
 }
 
+export interface GSCPropertiesResponse {
+  connected: boolean;
+  // True when the user needs to reconnect Google: either the refresh token
+  // failed (refresh_failed_at is set) or there are orphan properties left
+  // over from a partial disconnect. The Settings page renders a persistent
+  // "Reconnect Google" banner when this is true.
+  needs_reconnect?: boolean;
+  // True when gsc_properties rows exist for a kind != 'manual' but the
+  // gsc_connections row is gone (john's f83f0ecd state). The Settings page
+  // offers a one-click "Clean up orphaned properties" action in this case.
+  has_orphan_properties?: boolean;
+  properties: GSCProperty[];
+}
+
 export async function getGSCProperties() {
-  return api<{ connected: boolean; properties: GSCProperty[] }>('/gsc/properties');
+  return api<GSCPropertiesResponse>('/gsc/properties');
 }
 
 export async function refreshGSCProperties() {

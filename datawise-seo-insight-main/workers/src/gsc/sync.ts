@@ -62,7 +62,13 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   // Get fresh access token
   const accessToken = await refreshGSCToken(env, userId);
   if (!accessToken) {
-    return new Response(JSON.stringify({ error: 'GSC not connected or token expired. Please reconnect.' }), { status: 403 });
+    // Distinct code lets the SPA show a "Reconnect Google" CTA instead of a
+    // generic "Failed to fetch GSC data" toast (bug f83f0ecd was opaque
+    // because the user saw the generic message and didn't know to reconnect).
+    return new Response(JSON.stringify({
+      error: 'GSC not connected or token expired. Please reconnect.',
+      code: 'gsc_reauth_required',
+    }), { status: 403 });
   }
 
   const siteUrl = property.site_url as string;
