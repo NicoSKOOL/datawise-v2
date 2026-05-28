@@ -112,9 +112,29 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
 
   console.log('Chat: property_id =', property_id, '| system prompt length =', fullSystemPrompt.length, '| history msgs =', (history.results || []).length);
 
-  // Get LLM response as a stream (BYOK: user provides their own API key)
+  // Get LLM response as a stream (BYOK: user provides their own API key).
+  // The provider throws a descriptive error (e.g. "OpenRouter rejected your
+  // API key (401)…", "out of credits (402)…", "could not run model (404)…")
+  // BEFORE any bytes are streamed. Without this catch, that throw bubbles to
+  // the top-level handler in index.ts and is flattened into a useless generic
+  // "internal_error", so the user never learns the real cause (bug report
+  // 7f9f8147: SEO Assistant "Internal Error message"). Catch it here and
+  // return the real message as JSON. The frontend (SEOAssistant.tsx) already
+  // renders `error` verbatim in a toast.
   const provider = getLLMProvider(env, llm_config);
-  const stream = await provider.chat(messages, env, llm_config);
+  let stream: ReadableStream;
+  try {
+    stream = await provider.chat(messages, env, llm_config);
+  } catch (err) {
+    const message = err instanceof Error
+      ? err.message
+      : 'The AI provider could not complete this request. Try again, or check your API key and credits in Settings.';
+    console.error('Chat: provider.chat failed:', message);
+    return new Response(JSON.stringify({ error: message }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   // Tee the stream: one for the response, one for saving to DB
   const [responseStream, saveStream] = stream.tee();

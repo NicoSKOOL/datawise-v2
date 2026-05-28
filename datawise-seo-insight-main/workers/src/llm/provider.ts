@@ -373,7 +373,7 @@ class OpenRouterProvider implements LLMProvider {
           throw new Error('Your OpenRouter account is out of credits. Top up at openrouter.ai/credits and try again.');
         }
         if (response.status === 404) {
-          throw new Error(`OpenRouter could not run model "${model}" for your account (404). Common causes: the model is paid-only and your account has no credits, or your OpenRouter privacy/data-policy settings exclude every provider for this model (Settings → Privacy on openrouter.ai). OpenRouter said: ${truncate(error, 300)}`);
+          throw new Error(`OpenRouter could not run model "${model}" for your account (404). Common causes: the model is paid-only and your account has no credits, or your OpenRouter privacy/data-policy settings exclude every provider for this model (Settings → Privacy on openrouter.ai). Try switching to a lower-cost model like DeepSeek V4 Flash in Settings, or top up at openrouter.ai/credits. OpenRouter said: ${truncate(error, 300)}`);
         }
         throw new Error(`OpenRouter error: ${response.status}. ${truncate(error, 300)}`);
       }
@@ -431,7 +431,7 @@ class OpenRouterProvider implements LLMProvider {
           throw new Error('Your OpenRouter account is out of credits. Top up at openrouter.ai/credits and try again.');
         }
         if (response.status === 404) {
-          throw new Error(`OpenRouter could not run model "${model}" for your account (404). Common causes: the model is paid-only and your account has no credits, or your OpenRouter privacy/data-policy settings exclude every provider for this model (Settings → Privacy on openrouter.ai). OpenRouter said: ${truncate(error, 300)}`);
+          throw new Error(`OpenRouter could not run model "${model}" for your account (404). Common causes: the model is paid-only and your account has no credits, or your OpenRouter privacy/data-policy settings exclude every provider for this model (Settings → Privacy on openrouter.ai). Try switching to a lower-cost model like DeepSeek V4 Flash in Settings, or top up at openrouter.ai/credits. OpenRouter said: ${truncate(error, 300)}`);
         }
         throw new Error(`OpenRouter error: ${response.status}. ${truncate(error, 300)}`);
       }
