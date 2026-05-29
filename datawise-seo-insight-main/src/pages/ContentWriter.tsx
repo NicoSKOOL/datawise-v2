@@ -2238,7 +2238,8 @@ function PostComposerView({ postId }: { postId: string }) {
           </Card>
 
           <div className="space-y-2">
-            <div className="space-y-1 pb-1">
+            <div className="space-y-1.5 pb-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Language</p>
               <OutputLanguageSelect
                 value={language}
                 onValueChange={handleLanguageChange}
@@ -2248,7 +2249,6 @@ function PostComposerView({ postId }: { postId: string }) {
                 triggerClassName="h-9 w-full text-sm"
                 disabled={!!busyStep}
               />
-              <p className="text-[11px] text-muted-foreground">Output language: applies to research, outline, draft &amp; review.</p>
             </div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Pipeline</p>
             {(() => {
