@@ -136,3 +136,28 @@
     font-family: 'Manrope', system-ui, sans-serif;
   }
 }
+
+/* Content Writer pipeline: guide the user to the next step. The "next"
+   step button gets a breathing neon outline in the brand green; on hover
+   the outline brightens and holds steady so the click target is obvious. */
+@keyframes cw-glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.55), 0 0 6px 0 hsl(var(--primary) / 0.30); }
+  50%      { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.90), 0 0 14px 2px hsl(var(--primary) / 0.55); }
+}
+
+.cw-glow-next {
+  border-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary));
+  animation: cw-glow-pulse 2s ease-in-out infinite;
+}
+
+.cw-glow-next:hover {
+  border-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary));
+  box-shadow: 0 0 0 1.5px hsl(var(--primary)), 0 0 18px 3px hsl(var(--primary) / 0.70);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-glow-next { animation: none; box-shadow: 0 0 0 1px hsl(var(--primary) / 0.8), 0 0 8px 0 hsl(var(--primary) / 0.4); }
+}
