@@ -477,16 +477,7 @@ function ContentRevival() {
           </p>
         </div>
 
-        <OutputLanguageSelect
-          value={outputLanguage}
-          onValueChange={setOutputLanguage}
-          id="content-tools-language"
-          label="Output language"
-          description="Audit notes and the rewritten post will be produced in this language."
-          disabled={processing}
-        />
-
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {!processing ? (
             <Button onClick={handleRun} disabled={!urlsText.trim()}>
               <Play className="h-4 w-4 mr-1.5" />
@@ -498,7 +489,19 @@ function ContentRevival() {
               Stop
             </Button>
           )}
+          <OutputLanguageSelect
+            value={outputLanguage}
+            onValueChange={setOutputLanguage}
+            id="content-tools-language"
+            hideLabel
+            ariaLabel="Output language"
+            triggerClassName="h-10 w-[210px]"
+            disabled={processing}
+          />
         </div>
+        <p className="text-xs text-muted-foreground">
+          Audit notes and the rewritten post are produced in the selected output language.
+        </p>
       </div>
 
       {posts.length > 0 && (

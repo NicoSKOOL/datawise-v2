@@ -5,6 +5,7 @@ import {
   getContentOutputInstruction,
   getContentOutputUserReminder,
   getControlsLanguageLabel,
+  normalizeOutputLanguage,
 } from '../llm/output-language';
 import {
   detectLanguageFamily,
@@ -1508,6 +1509,7 @@ export async function handleUpdatePost(
   const body = await request.json() as Partial<{
     title: string; body_html: string; body_md: string; status: PostRow['status'];
     sources_json: string; outline_json: string;
+    content_output_controls: { language?: string };
   }>;
   const bodyHtml = typeof body.body_html === 'string'
     ? repairWriterOutputIfNeeded(body.body_html).text
@@ -1515,6 +1517,26 @@ export async function handleUpdatePost(
   const bodyMd = typeof body.body_md === 'string'
     ? repairWriterOutputIfNeeded(body.body_md).text
     : body.body_md;
+
+  // Output language is stored inside the brief (content_output_controls) so
+  // every step (research/outline/draft/review) inherits it. When the writer
+  // changes the language at the Research step we merge it into the existing
+  // brief rather than overwriting other brief fields.
+  let briefJson: string | null = null;
+  const nextLanguage = body.content_output_controls?.language;
+  if (typeof nextLanguage === 'string') {
+    let brief: unknown = {};
+    if (post.brief_json) {
+      try { brief = JSON.parse(post.brief_json); } catch { brief = {}; }
+    }
+    const briefObj = (brief && typeof brief === 'object') ? brief as Record<string, unknown> : {};
+    const existing = (briefObj.content_output_controls && typeof briefObj.content_output_controls === 'object')
+      ? briefObj.content_output_controls as Record<string, unknown>
+      : {};
+    briefObj.content_output_controls = { ...existing, language: normalizeOutputLanguage(nextLanguage) };
+    briefJson = JSON.stringify(briefObj);
+  }
+
   await env.DB.prepare(
     `UPDATE content_writer_posts
      SET title = COALESCE(?, title),
@@ -1523,6 +1545,7 @@ export async function handleUpdatePost(
          status = COALESCE(?, status),
          sources_json = COALESCE(?, sources_json),
          outline_json = COALESCE(?, outline_json),
+         brief_json = COALESCE(?, brief_json),
          updated_at = datetime('now')
      WHERE id = ?`
   ).bind(
@@ -1532,6 +1555,7 @@ export async function handleUpdatePost(
     body.status ?? null,
     body.sources_json ?? null,
     body.outline_json ?? null,
+    briefJson,
     postId,
   ).run();
   return json({ success: true });

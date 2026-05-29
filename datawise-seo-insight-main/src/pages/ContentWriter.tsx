@@ -21,7 +21,7 @@ import { useProperty } from '@/contexts/PropertyContext';
 import {
   listWorkspaces, createWorkspace, getWorkspace, deleteWorkspace,
   getKBDoc, updateKBDoc, sendInterviewMessage, finalizeKBDoc, discoverWebsitePages,
-  createPost, getPost, updatePost, deletePost, runPostStep,
+  createPost, getPost, updatePost, updatePostLanguage, deletePost, runPostStep,
   DOC_TYPES, DOC_LABELS, DOC_DESCRIPTIONS,
   POST_STATUS_ORDER, POST_STATUS_LABEL, POST_STATUS_PILL,
   resolveWorkspaceForProperty,
@@ -38,7 +38,7 @@ import {
 } from '@/lib/kb-auto-draft-task';
 import { markdownToHtml, htmlToMarkdown, copyAsRichText } from '@/lib/markdown';
 import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
-import { getOutputLanguagePreference, type OutputLanguageCode } from '@/lib/output-language';
+import { getOutputLanguagePreference, normalizeOutputLanguage, type OutputLanguageCode } from '@/lib/output-language';
 import PostEditor from '@/components/content-writer/PostEditor';
 import ModelBadge from '@/components/content-writer/ModelBadge';
 import DraftProgressBar from '@/components/content-writer/DraftProgressBar';
@@ -1971,6 +1971,9 @@ function PostComposerView({ postId }: { postId: string }) {
   // (defaultTab below). After that, controlled by clicks + step completion.
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [liveMd, setLiveMd] = useState<string>('');
+  // Output language for this post. Stored in the brief server-side and read
+  // by every step; the writer sets it here (Research step) before running.
+  const [language, setLanguage] = useState<OutputLanguageCode>('en');
   const lastSentRef = useRef<{ html: string; md: string }>({ html: '', md: '' });
 
   async function load() {
@@ -1985,6 +1988,24 @@ function PostComposerView({ postId }: { postId: string }) {
     }
   }
   useEffect(() => { load(); }, [postId]);
+  // Sync the language control from the loaded post's brief.
+  useEffect(() => {
+    if (!post) return;
+    try {
+      const b = post.brief_json ? JSON.parse(post.brief_json) : {};
+      setLanguage(normalizeOutputLanguage(b?.content_output_controls?.language));
+    } catch { /* keep current */ }
+  }, [post]);
+
+  const handleLanguageChange = async (next: OutputLanguageCode) => {
+    setLanguage(next); // optimistic
+    try {
+      await updatePostLanguage(postId, next);
+      await load();
+    } catch (err) {
+      toast({ title: 'Could not update output language', description: (err as Error).message, variant: 'destructive' });
+    }
+  };
   // When the user navigates to a different post, drop any tab they had
   // selected on the previous one so the new post falls back to its
   // computed defaultTab (editor if drafted, outline if outlined, etc.).
@@ -2218,6 +2239,18 @@ function PostComposerView({ postId }: { postId: string }) {
 
           <div className="space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Pipeline</p>
+            <div className="space-y-1 pb-1">
+              <OutputLanguageSelect
+                value={language}
+                onValueChange={handleLanguageChange}
+                id={`post-language-${post.id}`}
+                hideLabel
+                ariaLabel="Output language"
+                triggerClassName="h-9 w-full text-sm"
+                disabled={!!busyStep}
+              />
+              <p className="text-[11px] text-muted-foreground">Output language: applies to research, outline, draft &amp; review.</p>
+            </div>
             {(() => {
               // Compute which step is the "next available" action so we can
               // glow it. The glow advances down the pipeline as the user
