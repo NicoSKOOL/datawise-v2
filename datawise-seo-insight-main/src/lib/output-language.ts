@@ -34,7 +34,6 @@ export const OUTPUT_LANGUAGE_STORAGE_KEY = 'datawise_output_language';
 export const CONTENT_OUTPUT_CONTROLS_STORAGE_KEY = 'datawise_content_output_controls_v1';
 
 export const outputLanguageOptions: OutputLanguageOption[] = [
-  { value: 'en',     label: 'English',                description: '' },
   { value: 'en-US',  label: 'English (US)',           description: '' },
   { value: 'en-GB',  label: 'English (UK)',           description: '' },
   { value: 'es-ES',  label: 'Spanish (Spain)',        description: '' },
@@ -103,7 +102,7 @@ export const contentOutputSourcePolicyOptions: Array<ContentOutputOption<Content
 ];
 
 export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
-  language: 'en',
+  language: 'en-US',
   register: 'professional',
   length: 'expanded',
   source_policy: 'credible-non-competitor',
@@ -142,16 +141,17 @@ export function isOutputLanguageCode(value: unknown): value is OutputLanguageCod
 }
 
 export function normalizeOutputLanguage(value: unknown): OutputLanguageCode {
-  return isOutputLanguageCode(value) ? value : 'en';
+  if (value === 'en') return 'en-US'; // legacy generic English maps to the US default
+  return isOutputLanguageCode(value) ? value : 'en-US';
 }
 
 export function normalizeContentOutputControls(
   value: unknown,
-  fallbackLanguage: OutputLanguageCode = 'en',
+  fallbackLanguage: OutputLanguageCode = 'en-US',
 ): ContentOutputControls {
   const defaults: ContentOutputControls = {
     ...DEFAULT_CONTENT_OUTPUT_CONTROLS,
-    language: fallbackLanguage,
+    language: normalizeOutputLanguage(fallbackLanguage),
   };
 
   if (typeof value === 'string') {
@@ -187,7 +187,7 @@ export function normalizeContentOutputControls(
 }
 
 export function getOutputLanguagePreference(): OutputLanguageCode {
-  if (typeof window === 'undefined') return 'en';
+  if (typeof window === 'undefined') return 'en-US';
   return normalizeOutputLanguage(window.localStorage.getItem(OUTPUT_LANGUAGE_STORAGE_KEY));
 }
 

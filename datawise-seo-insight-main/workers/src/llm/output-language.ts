@@ -19,7 +19,7 @@ export interface ContentOutputControls {
 }
 
 export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
-  language: 'en',
+  language: 'en-US',
   register: 'professional',
   length: 'expanded',
   source_policy: 'credible-non-competitor',
@@ -43,9 +43,10 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 export function normalizeOutputLanguage(value: unknown): OutputLanguageCode {
+  if (value === 'en') return 'en-US'; // legacy generic English maps to the US default
   return typeof value === 'string' && OUTPUT_LANGUAGE_CODES.has(value as OutputLanguageCode)
     ? value as OutputLanguageCode
-    : 'en';
+    : 'en-US';
 }
 
 export function normalizeContentOutputControls(
