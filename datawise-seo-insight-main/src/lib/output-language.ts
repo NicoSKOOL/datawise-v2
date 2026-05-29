@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR';
+export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -42,6 +42,8 @@ export const outputLanguageOptions: OutputLanguageOption[] = [
   { value: 'it-IT',  label: 'Italian',                description: '' },
   { value: 'pt-PT',  label: 'Portuguese (Portugal)',  description: '' },
   { value: 'pt-BR',  label: 'Portuguese (Brazil)',    description: '' },
+  { value: 'nl-NL',  label: 'Dutch',                  description: '' },
+  { value: 'ja-JP',  label: 'Japanese',               description: '' },
 ];
 
 export const contentOutputRegisterOptions: Array<ContentOutputOption<ContentOutputRegister>> = [

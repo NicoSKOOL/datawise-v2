@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR';
+export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -29,7 +29,7 @@ export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
   include_meta: false,
 };
 
-const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'es-419', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'pt-BR']);
+const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'es-419', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'pt-BR', 'nl-NL', 'ja-JP']);
 const REGISTER_VALUES = new Set<ContentOutputRegister>(['professional', 'conversational', 'informal']);
 const LENGTH_VALUES = new Set<ContentOutputLength>(['standard', 'expanded', 'comprehensive']);
 const SOURCE_POLICY_VALUES = new Set<ContentOutputSourcePolicy>(['credible-non-competitor', 'primary-only', 'broad-reputable']);
@@ -106,6 +106,10 @@ function languageName(code: OutputLanguageCode): string {
       return 'European Portuguese (Portugal)';
     case 'pt-BR':
       return 'Brazilian Portuguese';
+    case 'nl-NL':
+      return 'Netherlands Dutch';
+    case 'ja-JP':
+      return 'Japanese';
     case 'en':
     default:
       return 'English';
@@ -128,6 +132,10 @@ function languageVariantRule(code: OutputLanguageCode): string {
       return '- Use European Portuguese (Portugal). Prefer "a" + infinitive over "-ndo" gerund constructions (e.g. "a fazer", not "fazendo"). Use você or formal third-person address in professional registers. Avoid Brazilian-specific vocabulary and Brazilian gerund usage. Apply Portugal spelling conventions where they still differ post-1990 orthographic agreement.';
     case 'pt-BR':
       return '- Use Brazilian Portuguese. Use você by default; gerund constructions ("-ndo") are natural and preferred. Avoid Portugal-specific vocabulary and Portugal-specific spellings where they differ from Brazilian usage.';
+    case 'nl-NL':
+      return '- Use standard Netherlands Dutch (Algemeen Nederlands), not Flemish/Belgian Dutch. Default to the formal "u" in professional and conversational business registers; use "je/jij" only when the register is explicitly informal. Use Dutch sentence-case capitalization for headings, not English-style Title Case. Avoid unnecessary English loanwords where a natural Dutch term exists.';
+    case 'ja-JP':
+      return '- Use standard Japanese (標準語). Default to the polite です/ます form in professional and conversational registers; use the plain form (だ/である) only when the register is explicitly informal. Do not insert spaces between Japanese words. Use full-width Japanese punctuation (。、「」) rather than Latin punctuation in Japanese prose. Keep Latin-script brand names, URLs, code identifiers, and schema.org property names unchanged.';
     case 'en':
     default:
       return '- Use natural English.';

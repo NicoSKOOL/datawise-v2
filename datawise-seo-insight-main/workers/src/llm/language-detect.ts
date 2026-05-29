@@ -1,31 +1,61 @@
-// Lightweight server-side language detector for the 6 language families
-// the app supports (en, es, fr, de, it, pt). Uses stopword frequency —
-// no external dependency, ~1ms per call, deterministic, works in Workers.
+// Lightweight server-side language detector for the languages the app
+// supports. Latin-script families (en, es, fr, de, it, pt, nl) use
+// stopword frequency; Japanese (ja) is detected by script. No external
+// dependency, ~1ms per call, deterministic, works in Workers.
 //
 // We only detect FAMILY (es covers both es-ES and es-419; pt covers
 // pt-PT and pt-BR), not variant. The variant guidance is enforced
 // upstream by the prompt instruction; this check is the safety net for
 // the case where the model ignores the prompt and ships English (or
 // the wrong family entirely).
+//
+// Note on Dutch: nl shares some closed-class words with de/en, so short
+// Dutch text can fall through to 'unknown'. That is the safe failure
+// mode — 'unknown' means "trust the upstream prompt", so we never fire a
+// false-positive correction. Distinctive Dutch words (het, een, van,
+// niet, zijn, voor) keep real Dutch prose well-separated from German.
 
 import type { OutputLanguageCode } from './output-language';
 
-export type LanguageFamily = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'unknown';
+export type LanguageFamily = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'nl' | 'ja' | 'unknown';
+
+// Families detected via Latin-script stopwords (ja is excluded — it is
+// detected by script before the stopword path runs).
+type StopwordFamily = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'nl';
 
 // Curated stopwords. Each list is roughly the 12-15 most distinctive
 // closed-class words in that language. Picked to minimize collisions
 // (e.g. "la" appears in es/fr/it — kept in all three so the count is
 // fair; "der/die/das" is German-only so it weights strongly).
-const STOPWORDS: Record<Exclude<LanguageFamily, 'unknown'>, string[]> = {
+const STOPWORDS: Record<StopwordFamily, string[]> = {
   en: ['the', 'and', 'of', 'to', 'is', 'in', 'for', 'with', 'on', 'that', 'this', 'are', 'be', 'as', 'or'],
   es: ['el', 'la', 'los', 'las', 'que', 'de', 'es', 'un', 'una', 'para', 'con', 'por', 'pero', 'como', 'más'],
   fr: ['le', 'la', 'les', 'que', 'est', 'des', 'un', 'une', 'pour', 'avec', 'sur', 'dans', 'pas', 'plus', 'mais'],
   de: ['der', 'die', 'das', 'und', 'ist', 'ein', 'eine', 'mit', 'für', 'auf', 'von', 'sich', 'nicht', 'auch', 'sind'],
   it: ['il', 'la', 'i', 'le', 'di', 'che', 'un', 'una', 'per', 'con', 'sono', 'non', 'come', 'più', 'sul'],
   pt: ['o', 'a', 'os', 'as', 'de', 'que', 'um', 'uma', 'para', 'com', 'por', 'mas', 'como', 'não', 'são'],
+  nl: ['de', 'het', 'een', 'en', 'van', 'is', 'op', 'voor', 'met', 'dat', 'die', 'niet', 'te', 'zijn', 'aan'],
 };
 
-const FAMILIES = Object.keys(STOPWORDS) as Array<Exclude<LanguageFamily, 'unknown'>>;
+const FAMILIES = Object.keys(STOPWORDS) as StopwordFamily[];
+
+// Japanese prose reliably contains hiragana and/or katakana; kanji alone
+// overlaps Chinese, which we do not support. We require kana to be
+// present and the combined Japanese-script share to clear a threshold.
+// Runs BEFORE extractWords(), which strips non-Latin characters and
+// would otherwise erase the signal entirely.
+function isJapanese(text: string): boolean {
+  const cleaned = text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/https?:\/\/\S+/g, ' ');
+  const meaningful = cleaned.replace(/\s+/g, '');
+  if (meaningful.length < 20) return false; // too short to be reliable
+  const jp = meaningful.match(/[぀-ゟ゠-ヿ一-鿿]/g);
+  const kana = meaningful.match(/[぀-ゟ゠-ヿ]/g);
+  if (!jp || !kana) return false;
+  return jp.length / meaningful.length >= 0.2;
+}
 
 // Strip markdown / code / URLs / numbers to focus on prose words.
 function extractWords(text: string): string[] {
@@ -49,10 +79,13 @@ function extractWords(text: string): string[] {
 // no family clearly wins. The 'unknown' result is treated as "trust the
 // upstream prompt" by callers — we don't retry on uncertain detection.
 export function detectLanguageFamily(text: string): LanguageFamily {
+  if (isJapanese(text)) return 'ja';
+
   const words = extractWords(text);
   if (words.length < 30) return 'unknown'; // too short to be reliable
 
-  const scores: Record<string, number> = { en: 0, es: 0, fr: 0, de: 0, it: 0, pt: 0 };
+  const scores: Record<string, number> = {};
+  for (const family of FAMILIES) scores[family] = 0;
   for (const w of words) {
     for (const family of FAMILIES) {
       if (STOPWORDS[family].includes(w)) scores[family]++;
@@ -81,6 +114,8 @@ export function expectedFamily(code: OutputLanguageCode | string | undefined): L
   if (code.startsWith('de')) return 'de';
   if (code.startsWith('it')) return 'it';
   if (code.startsWith('pt')) return 'pt';
+  if (code.startsWith('nl')) return 'nl';
+  if (code.startsWith('ja')) return 'ja';
   return 'en';
 }
 
@@ -91,6 +126,8 @@ const FAMILY_NAME: Record<Exclude<LanguageFamily, 'unknown'>, string> = {
   de: 'German',
   it: 'Italian',
   pt: 'Portuguese',
+  nl: 'Dutch',
+  ja: 'Japanese',
 };
 
 // Build the corrective user prompt for the retry-on-wrong-language case.
