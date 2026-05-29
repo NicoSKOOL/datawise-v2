@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
+export type OutputLanguageCode = 'en' | 'en-US' | 'en-GB' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -29,7 +29,7 @@ export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
   include_meta: false,
 };
 
-const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'es-419', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'pt-BR', 'nl-NL', 'ja-JP']);
+const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'en-US', 'en-GB', 'es-419', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'pt-BR', 'nl-NL', 'ja-JP']);
 const REGISTER_VALUES = new Set<ContentOutputRegister>(['professional', 'conversational', 'informal']);
 const LENGTH_VALUES = new Set<ContentOutputLength>(['standard', 'expanded', 'comprehensive']);
 const SOURCE_POLICY_VALUES = new Set<ContentOutputSourcePolicy>(['credible-non-competitor', 'primary-only', 'broad-reputable']);
@@ -92,6 +92,10 @@ export function normalizeContentOutputControls(
 
 function languageName(code: OutputLanguageCode): string {
   switch (code) {
+    case 'en-US':
+      return 'US English';
+    case 'en-GB':
+      return 'British English';
     case 'es-419':
       return 'neutral Latin American Spanish';
     case 'es-ES':
@@ -118,6 +122,10 @@ function languageName(code: OutputLanguageCode): string {
 
 function languageVariantRule(code: OutputLanguageCode): string {
   switch (code) {
+    case 'en-US':
+      return '- Use American English. Use US spelling (color, optimize, center, traveling), US vocabulary, and US date/number formats (MM/DD/YYYY, period decimal separator). Avoid British spellings (-our, -ise, -re).';
+    case 'en-GB':
+      return '- Use British English. Use UK spelling (colour, optimise/organise, centre, travelling), UK vocabulary, and UK date formats (DD/MM/YYYY). Avoid American spellings (-or, -ize where -ise is conventional, -er).';
     case 'es-419':
       return '- Use neutral Latin American Spanish. Avoid Spain-specific vocabulary, phrasing, and vosotros forms. Use ustedes for plural address. Avoid voseo unless a future country-specific control explicitly asks for it.';
     case 'es-ES':

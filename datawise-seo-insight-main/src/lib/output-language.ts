@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
+export type OutputLanguageCode = 'en' | 'en-US' | 'en-GB' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -35,6 +35,8 @@ export const CONTENT_OUTPUT_CONTROLS_STORAGE_KEY = 'datawise_content_output_cont
 
 export const outputLanguageOptions: OutputLanguageOption[] = [
   { value: 'en',     label: 'English',                description: '' },
+  { value: 'en-US',  label: 'English (US)',           description: '' },
+  { value: 'en-GB',  label: 'English (UK)',           description: '' },
   { value: 'es-ES',  label: 'Spanish (Spain)',        description: '' },
   { value: 'es-419', label: 'Spanish (Latin America)', description: '' },
   { value: 'fr-FR',  label: 'French',                 description: '' },
