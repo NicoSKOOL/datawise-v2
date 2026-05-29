@@ -2238,7 +2238,6 @@ function PostComposerView({ postId }: { postId: string }) {
           </Card>
 
           <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Pipeline</p>
             <div className="space-y-1 pb-1">
               <OutputLanguageSelect
                 value={language}
@@ -2251,6 +2250,7 @@ function PostComposerView({ postId }: { postId: string }) {
               />
               <p className="text-[11px] text-muted-foreground">Output language: applies to research, outline, draft &amp; review.</p>
             </div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Pipeline</p>
             {(() => {
               // Compute which step is the "next available" action so we can
               // glow it. The glow advances down the pipeline as the user
