@@ -44,17 +44,21 @@ function extractTitle(html: string): string | null {
 
 function extractMetaDescription(html: string): string | null {
   // Match <meta ...> where name|property="description" (any order of attrs).
-  // Case-insensitive, single or double quoted.
+  // Case-insensitive. Use a backreference so the closing quote matches the
+  // OPENING quote — otherwise a double-quoted value containing an apostrophe
+  // (e.g. content="Extend your roof's life…") gets truncated at the first
+  // apostrophe (bug reported by kendrick.mayer 2026-05-27: Meta Checker
+  // reading "Extend your roof" as 16 chars when the real description is 158).
   const tagRegex = /<meta\b[^>]*>/gi;
   let tagMatch: RegExpExecArray | null;
   while ((tagMatch = tagRegex.exec(html)) !== null) {
     const tag = tagMatch[0];
-    const nameMatch = tag.match(/\b(?:name|property)\s*=\s*["']([^"']+)["']/i);
+    const nameMatch = tag.match(/\b(?:name|property)\s*=\s*(["'])([^"']+)\1/i);
     if (!nameMatch) continue;
-    if (nameMatch[1].toLowerCase() !== 'description') continue;
-    const contentMatch = tag.match(/\bcontent\s*=\s*["']([\s\S]*?)["']/i);
+    if (nameMatch[2].toLowerCase() !== 'description') continue;
+    const contentMatch = tag.match(/\bcontent\s*=\s*(["'])([\s\S]*?)\1/i);
     if (!contentMatch) continue;
-    const value = decodeHtml(contentMatch[1].replace(/\s+/g, ' ').trim());
+    const value = decodeHtml(contentMatch[2].replace(/\s+/g, ' ').trim());
     if (value) return value;
   }
   return null;
@@ -79,15 +83,16 @@ function extractH2s(html: string, max = 6): string[] {
 }
 
 function extractMetaKeywords(html: string): string | null {
+  // Backreference matches the SAME opening quote — see extractMetaDescription.
   const tagRegex = /<meta\b[^>]*>/gi;
   let tagMatch: RegExpExecArray | null;
   while ((tagMatch = tagRegex.exec(html)) !== null) {
     const tag = tagMatch[0];
-    const nameMatch = tag.match(/\bname\s*=\s*["']([^"']+)["']/i);
-    if (!nameMatch || nameMatch[1].toLowerCase() !== 'keywords') continue;
-    const contentMatch = tag.match(/\bcontent\s*=\s*["']([\s\S]*?)["']/i);
+    const nameMatch = tag.match(/\bname\s*=\s*(["'])([^"']+)\1/i);
+    if (!nameMatch || nameMatch[2].toLowerCase() !== 'keywords') continue;
+    const contentMatch = tag.match(/\bcontent\s*=\s*(["'])([\s\S]*?)\1/i);
     if (!contentMatch) continue;
-    const value = decodeHtml(contentMatch[1].replace(/\s+/g, ' ').trim());
+    const value = decodeHtml(contentMatch[2].replace(/\s+/g, ' ').trim());
     if (value) return value;
   }
   return null;

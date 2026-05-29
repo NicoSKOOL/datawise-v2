@@ -43,7 +43,15 @@ export function getStoredLLMConfig(): StoredLLMConfig | null {
 
 export function getLLMConfig(): LLMConfig | null {
   const parsed = getStoredLLMConfig();
-  if (!parsed || parsed.provider !== 'openrouter' || !parsed.api_key) return null;
+  if (!parsed || !parsed.api_key) return null;
+  // Tolerate legacy stored provider (openai|claude|gemini) when the saved
+  // api_key is clearly an OpenRouter inference key. Users migrated from the
+  // multi-provider era still have those records, and a strict provider check
+  // surfaced as "API key required" in the SEO Assistant even though the key
+  // they saved is valid (bug 663ce49c).
+  const looksLikeOpenRouter =
+    parsed.provider === 'openrouter' || /^sk-or-/i.test(parsed.api_key);
+  if (!looksLikeOpenRouter) return null;
   return {
     provider: 'openrouter',
     api_key: parsed.api_key,

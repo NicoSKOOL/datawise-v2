@@ -161,7 +161,10 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
   if (body.llm_config.provider === 'openrouter') {
     const keyCheck = await validateOpenRouterKey(body.llm_config.api_key, env);
     if (!keyCheck.ok && keyCheck.reason === 'management') return json({ error: keyCheck.message }, 400);
-    if (!keyCheck.ok && keyCheck.reason === 'invalid')    return json({ error: keyCheck.message }, 401);
+    // NOTE: must NOT be 401. The SPA's api.ts treats every non-/auth 401 as
+    // session-expired and force-logs the user out (bug 7b7e46d1). A bad
+    // OpenRouter key is a user-input error, not an auth-session error.
+    if (!keyCheck.ok && keyCheck.reason === 'invalid')    return json({ error: keyCheck.message }, 400);
   }
 
   // 1. Resolve page context: prefer pre-supplied (Site Audit), fetch otherwise.

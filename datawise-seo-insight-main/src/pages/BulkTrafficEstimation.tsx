@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,12 +12,12 @@ import { DataTable } from "@/components/DataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 
 export default function BulkTrafficEstimation() {
-  const [targets, setTargets] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
+  const [targets, setTargets] = usePersistentState<string>("competitor:traffic:targets", "");
+  const [location, setLocation] = usePersistentState<string>("competitor:traffic:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("competitor:traffic:language", "en");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
-  const [metrics, setMetrics] = useState<any>(null);
+  const [results, setResults] = usePersistentState<any[]>("competitor:traffic:results", []);
+  const [metrics, setMetrics] = usePersistentState<any>("competitor:traffic:metrics", null);
   const { toast } = useToast();
 
   const handleAnalyze = async () => {

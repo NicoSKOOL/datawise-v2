@@ -1477,10 +1477,10 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages.length, sending]);
 
-  async function send() {
-    const message = input.trim();
+  async function send(overrideMessage?: string) {
+    const message = (overrideMessage ?? input).trim();
     if (!message || sending) return;
-    setInput('');
+    if (overrideMessage === undefined) setInput('');
     setSending(true);
     const optimistic: InterviewMessage = { role: 'user', content: message, created_at: new Date().toISOString() };
     setMessages((m) => [...m, optimistic]);
@@ -1492,7 +1492,7 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
       toast({ title: 'Send failed', description: (err as Error).message, variant: 'destructive' });
       // roll back optimistic message
       setMessages((m) => m.slice(0, -1));
-      setInput(message);
+      if (overrideMessage === undefined) setInput(message);
     } finally {
       setSending(false);
     }
@@ -1584,9 +1584,19 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
             {loading ? (
               <div className="flex items-center justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
             ) : messages.length === 0 ? (
+              // Empty-state needs an explicit Start button. The hint text
+              // alone ("Say 'let\'s begin'") left users staring at a chat
+              // box that suggested questions would appear but never did
+              // (bug 44aba545 — "I can't see a way to kick off the
+              // questions"). The button sends the same kickoff message
+              // so the AI takes the first turn.
               <Card>
-                <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  {emptyInterviewMessage}
+                <CardContent className="space-y-4 py-8 text-center">
+                  <p className="text-sm text-muted-foreground">{emptyInterviewMessage}</p>
+                  <Button onClick={() => send("Let's begin")} disabled={sending} className="gap-2">
+                    {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    Start interview
+                  </Button>
                 </CardContent>
               </Card>
             ) : (
@@ -1650,7 +1660,7 @@ function ManualInterviewView({ workspaceId, docType }: { workspaceId: string; do
                 className="resize-none"
                 disabled={sending}
               />
-              <Button onClick={send} disabled={sending || !input.trim()}>Send</Button>
+              <Button onClick={() => send()} disabled={sending || !input.trim()}>Send</Button>
             </div>
           </div>
         </div>
@@ -2052,7 +2062,45 @@ function PostComposerView({ postId }: { postId: string }) {
         });
       }
     } catch (err) {
-      toast({ title: `${cap(step)} failed`, description: (err as Error).message, variant: 'destructive' });
+      const errMsg = (err as Error)?.message || '';
+      const isNetworkDrop =
+        err instanceof TypeError ||
+        /failed to fetch|networkerror|load failed|network request failed/i.test(errMsg);
+
+      // The outline/draft worker calls can run for 60-120s when the model is
+      // slow. Intermediaries (Cloudflare edge, corporate proxies, dropped
+      // wifi) sometimes close the long-lived connection while the worker
+      // keeps running and persists the result. When that happens the
+      // browser sees a TypeError ("Failed to fetch") even though the step
+      // succeeded server-side. Refetch the post and recover silently if the
+      // output is already there (bug 0ac02a93).
+      if (isNetworkDrop && (step === 'outline' || step === 'draft' || step === 'research')) {
+        try {
+          await new Promise((r) => setTimeout(r, 8000));
+          const fresh = await getPost(post.id);
+          const persisted =
+            (step === 'research' && !!fresh.post.sources_json) ||
+            (step === 'outline' && !!fresh.post.outline_json) ||
+            (step === 'draft' && (!!fresh.post.body_md || !!fresh.post.body_html));
+          if (persisted) {
+            setPost(fresh.post);
+            setActiveTab(STEP_TO_TAB[step]);
+            toast({
+              title: `${cap(step)} complete`,
+              description: 'The connection dropped while the model was running, but your output was saved.',
+            });
+            return;
+          }
+        } catch { /* fall through to the friendlier error below */ }
+        toast({
+          title: `${cap(step)} timed out`,
+          description: `The connection to the server dropped before ${step === 'research' ? 'research' : step === 'outline' ? 'the outline' : 'the draft'} finished. This usually clears up on a retry; click ${cap(step)} again.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({ title: `${cap(step)} failed`, description: errMsg, variant: 'destructive' });
     } finally {
       setBusyStep(null);
     }

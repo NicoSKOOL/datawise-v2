@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,14 +12,14 @@ import { DataTable } from "@/components/DataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 
 export default function RankedKeywords() {
-  const [domain, setDomain] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
-  const [limit, setLimit] = useState("100");
+  const [domain, setDomain] = usePersistentState<string>("competitor:ranked-keywords:domain", "");
+  const [location, setLocation] = usePersistentState<string>("competitor:ranked-keywords:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("competitor:ranked-keywords:language", "en");
+  const [limit, setLimit] = usePersistentState<string>("competitor:ranked-keywords:limit", "100");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
-  const [metrics, setMetrics] = useState<any>(null);
-  const [totalAvailable, setTotalAvailable] = useState<number>(0);
+  const [results, setResults] = usePersistentState<any[]>("competitor:ranked-keywords:results", []);
+  const [metrics, setMetrics] = usePersistentState<any>("competitor:ranked-keywords:metrics", null);
+  const [totalAvailable, setTotalAvailable] = usePersistentState<number>("competitor:ranked-keywords:total", 0);
   const { toast } = useToast();
 
   const limitOptions = [

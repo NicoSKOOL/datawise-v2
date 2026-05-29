@@ -9,14 +9,15 @@ import { useToast } from "@/components/ui/use-toast";
 import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordIdeas } from "@/lib/dataforseo";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 
 export default function KeywordIdeas() {
-  const [keyword, setKeyword] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
-  const [limit, setLimit] = useState(50);
+  const [keyword, setKeyword] = usePersistentState<string>("keyword-ideas:keyword", "");
+  const [location, setLocation] = usePersistentState<string>("keyword-ideas:location", "2840");
+  const [language, setLanguage] = usePersistentState<string>("keyword-ideas:language", "en");
+  const [limit, setLimit] = usePersistentState<number>("keyword-ideas:limit", 50);
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = usePersistentState<any[]>("keyword-ideas:results", []);
   const { toast } = useToast();
 
   const limitOptions = [
