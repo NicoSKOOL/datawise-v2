@@ -2,6 +2,17 @@ import type { Env } from '../index';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
 import { validateOpenRouterKey } from '../llm/openrouter-key';
 import {
+  getOutputLanguageInstruction,
+  getOutputLanguageUserReminder,
+  getLanguageLabel,
+  type OutputLanguageCode,
+} from '../llm/output-language';
+import {
+  detectLanguageFamily,
+  expectedFamily,
+  buildLanguageRetryPrompt,
+} from '../llm/language-detect';
+import {
   META_REWRITE_SYSTEM_PROMPT,
   buildUserPrompt,
   buildLengthRetryPrompt,
@@ -21,6 +32,7 @@ interface RewriteRequestBody {
   target_keyword?: string;
   context?: PageContext;
   llm_config?: UserLLMConfig;
+  language?: OutputLanguageCode | string;
 }
 
 interface LLMResponseShape {
@@ -201,9 +213,17 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     user_overrode_keyword: userOverrode,
   });
 
+  // Multi-language enforcement: system-prompt instruction + a closing
+  // reminder appended to the user message (#1), plus post-output language
+  // detection with one corrective retry (#2). Both have measurable effect
+  // on adherence vs system-prompt-only.
+  const languageInstruction = getOutputLanguageInstruction(body.language, { preserveJsonShape: true });
+  const languageReminder = getOutputLanguageUserReminder(body.language);
+  const languageLabel = getLanguageLabel(body.language);
+  const expectedLangFamily = expectedFamily(body.language);
   const messages: ChatMessage[] = [
-    { role: 'system', content: META_REWRITE_SYSTEM_PROMPT },
-    { role: 'user', content: userPrompt },
+    { role: 'system', content: `${META_REWRITE_SYSTEM_PROMPT}\n\n${languageInstruction}` },
+    { role: 'user', content: `${userPrompt}${languageReminder}` },
   ];
 
   const provider = getLLMProvider(env, body.llm_config);
@@ -262,6 +282,20 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
       ? (parsed.target_keyword as string).trim()
       : targetKeyword;
     reasoning = typeof parsed.reasoning === 'string' ? (parsed.reasoning as string).trim() : '';
+
+    // Post-output language check (#2). Meta tags are usually too short for
+    // the detector to call with confidence — returns 'unknown' below 30
+    // words — so this fires mainly when the model writes a verbose reasoning
+    // field in the wrong language. Skipped for English target.
+    if (expectedLangFamily !== 'en' && attempt < 3) {
+      const detected = detectLanguageFamily(`${title} ${description} ${reasoning}`);
+      if (detected !== 'unknown' && detected !== expectedLangFamily) {
+        console.warn(`[meta-rewrite] language mismatch: expected=${expectedLangFamily} detected=${detected} attempt=${attempt}`);
+        messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+        messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
+        continue;
+      }
+    }
 
     const check = checkLengths(title, description);
     if (check.ok) break;

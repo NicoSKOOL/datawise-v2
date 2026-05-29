@@ -14,6 +14,12 @@ interface OutputLanguageSelectProps {
   description?: string;
   disabled?: boolean;
   className?: string;
+  /** Render the bare Select with no stacked label/description (for inline rows). */
+  hideLabel?: boolean;
+  /** Accessible name used when hideLabel is set. Falls back to label. */
+  ariaLabel?: string;
+  /** Extra classes for the trigger, e.g. a fixed width to match an adjacent button. */
+  triggerClassName?: string;
 }
 
 export function OutputLanguageSelect({
@@ -24,6 +30,9 @@ export function OutputLanguageSelect({
   description,
   disabled,
   className = '',
+  hideLabel = false,
+  ariaLabel,
+  triggerClassName = '',
 }: OutputLanguageSelectProps) {
   const handleChange = (nextValue: string) => {
     const next = nextValue as OutputLanguageCode;
@@ -31,24 +40,32 @@ export function OutputLanguageSelect({
     onValueChange(next);
   };
 
+  const select = (
+    <Select value={value} onValueChange={handleChange} disabled={disabled}>
+      <SelectTrigger id={id} aria-label={hideLabel ? (ariaLabel ?? label) : undefined} className={triggerClassName}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {outputLanguageOptions.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            <span>{option.label}</span>
+            {option.description ? (
+              <span className="ml-2 text-xs text-muted-foreground">{option.description}</span>
+            ) : null}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  if (hideLabel) {
+    return className ? <div className={className}>{select}</div> : select;
+  }
+
   return (
     <div className={`space-y-2 ${className}`}>
       <Label htmlFor={id}>{label}</Label>
-      <Select value={value} onValueChange={handleChange} disabled={disabled}>
-        <SelectTrigger id={id}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {outputLanguageOptions.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              <div>
-                <span>{option.label}</span>
-                <span className="ml-2 text-xs text-muted-foreground">{option.description}</span>
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {select}
       {description && (
         <p className="text-xs text-muted-foreground">{description}</p>
       )}

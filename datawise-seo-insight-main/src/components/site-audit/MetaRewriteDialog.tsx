@@ -14,6 +14,8 @@ import {
   type MetaRewritePageContext,
   type MetaRewriteResponse,
 } from '@/lib/meta-rewrite';
+import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
+import { getOutputLanguagePreference, type OutputLanguageCode } from '@/lib/output-language';
 import { OutOfCreditsError } from '@/lib/api';
 import { TITLE_MIN, TITLE_MAX, META_MIN, META_MAX } from '@/lib/meta-checker';
 import { createTask } from '@/lib/site-audit';
@@ -63,6 +65,7 @@ export function MetaRewriteDialog(props: MetaRewriteDialogProps) {
   const { selectedPropertyId } = useProperty();
 
   const [keyword, setKeyword] = useState(initialKeyword);
+  const [language, setLanguage] = useState<OutputLanguageCode>(() => getOutputLanguagePreference());
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<MetaRewriteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +95,7 @@ export function MetaRewriteDialog(props: MetaRewriteDialogProps) {
         issue_type: issueType,
         target_keyword: keyword.trim() || undefined,
         context,
+        language,
       });
       setResult(res);
       // If we inferred the keyword server-side, surface it in the input.
@@ -204,6 +208,15 @@ export function MetaRewriteDialog(props: MetaRewriteDialogProps) {
               </div>
             </div>
           </div>
+
+          {/* Language picker */}
+          <OutputLanguageSelect
+            value={language}
+            onValueChange={setLanguage}
+            id="meta-rewrite-language"
+            label="Output language"
+            disabled={loading}
+          />
 
           {/* Keyword input */}
           <div className="space-y-1.5">

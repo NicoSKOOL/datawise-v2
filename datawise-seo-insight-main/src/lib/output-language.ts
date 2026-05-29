@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE';
+export type OutputLanguageCode = 'en' | 'en-US' | 'en-GB' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -34,31 +34,17 @@ export const OUTPUT_LANGUAGE_STORAGE_KEY = 'datawise_output_language';
 export const CONTENT_OUTPUT_CONTROLS_STORAGE_KEY = 'datawise_content_output_controls_v1';
 
 export const outputLanguageOptions: OutputLanguageOption[] = [
-  {
-    value: 'en',
-    label: 'English',
-    description: 'Generate AI answers and content in English.',
-  },
-  {
-    value: 'es-419',
-    label: 'Spanish (Latin America)',
-    description: 'Use neutral Latin American Spanish.',
-  },
-  {
-    value: 'es-ES',
-    label: 'Spanish (Spain)',
-    description: 'Use Spanish as written for Spain.',
-  },
-  {
-    value: 'fr-FR',
-    label: 'French (France)',
-    description: 'Use professional French for France.',
-  },
-  {
-    value: 'de-DE',
-    label: 'German (Germany)',
-    description: 'Use professional German for Germany.',
-  },
+  { value: 'en-US',  label: 'English (US)',           description: '' },
+  { value: 'en-GB',  label: 'English (UK)',           description: '' },
+  { value: 'es-ES',  label: 'Spanish (Spain)',        description: '' },
+  { value: 'es-419', label: 'Spanish (Latin America)', description: '' },
+  { value: 'fr-FR',  label: 'French',                 description: '' },
+  { value: 'de-DE',  label: 'German',                 description: '' },
+  { value: 'it-IT',  label: 'Italian',                description: '' },
+  { value: 'pt-PT',  label: 'Portuguese (Portugal)',  description: '' },
+  { value: 'pt-BR',  label: 'Portuguese (Brazil)',    description: '' },
+  { value: 'nl-NL',  label: 'Dutch',                  description: '' },
+  { value: 'ja-JP',  label: 'Japanese',               description: '' },
 ];
 
 export const contentOutputRegisterOptions: Array<ContentOutputOption<ContentOutputRegister>> = [
@@ -116,7 +102,7 @@ export const contentOutputSourcePolicyOptions: Array<ContentOutputOption<Content
 ];
 
 export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
-  language: 'en',
+  language: 'en-US',
   register: 'professional',
   length: 'expanded',
   source_policy: 'credible-non-competitor',
@@ -155,16 +141,17 @@ export function isOutputLanguageCode(value: unknown): value is OutputLanguageCod
 }
 
 export function normalizeOutputLanguage(value: unknown): OutputLanguageCode {
-  return isOutputLanguageCode(value) ? value : 'en';
+  if (value === 'en') return 'en-US'; // legacy generic English maps to the US default
+  return isOutputLanguageCode(value) ? value : 'en-US';
 }
 
 export function normalizeContentOutputControls(
   value: unknown,
-  fallbackLanguage: OutputLanguageCode = 'en',
+  fallbackLanguage: OutputLanguageCode = 'en-US',
 ): ContentOutputControls {
   const defaults: ContentOutputControls = {
     ...DEFAULT_CONTENT_OUTPUT_CONTROLS,
-    language: fallbackLanguage,
+    language: normalizeOutputLanguage(fallbackLanguage),
   };
 
   if (typeof value === 'string') {
@@ -200,7 +187,7 @@ export function normalizeContentOutputControls(
 }
 
 export function getOutputLanguagePreference(): OutputLanguageCode {
-  if (typeof window === 'undefined') return 'en';
+  if (typeof window === 'undefined') return 'en-US';
   return normalizeOutputLanguage(window.localStorage.getItem(OUTPUT_LANGUAGE_STORAGE_KEY));
 }
 

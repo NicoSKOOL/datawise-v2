@@ -45,6 +45,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useProperty } from '@/contexts/PropertyContext';
 import { AddWebsiteDialog } from '@/components/AddWebsiteDialog';
 import { importPlannerKeywordToWriter } from '@/lib/content-writer';
+import { getOutputLanguagePreference } from '@/lib/output-language';
 
 const DEMO_PREFIX = 'demo-';
 const DEMO_CLUSTER_PREFIX = 'demo-cluster-';
@@ -217,6 +218,45 @@ export default function ContentPlanner() {
     sources: new Set(),
   });
   const [editing, setEditing] = useState<PlannerKeyword | null>(null);
+
+  // Backlog → Draft: when a keyword enters the Draft column we create the
+  // Content Writer post immediately, using the saved default output
+  // language. No modal: the language is chosen/confirmed inside the writer
+  // at the Research step before any generation runs.
+  const sendKeywordToWriter = (staged: { keyword: string; topic: string; notes?: string }) => {
+    importPlannerKeywordToWriter({
+      propertyId: selectedPropertyId,
+      keyword: staged.keyword,
+      topic: staged.topic,
+      notes: staged.notes,
+      language: getOutputLanguagePreference(),
+    }).then((res) => {
+      if (res.created) {
+        toast.success('Added to Content Writer drafts', {
+          action: {
+            label: 'Open',
+            onClick: () => { window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`; },
+          },
+        });
+      } else if (res.reason === 'duplicate') {
+        toast.info('Already in Content Writer drafts', {
+          action: {
+            label: 'Open',
+            onClick: () => { window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`; },
+          },
+        });
+      } else if (res.reason === 'no_property') {
+        toast.info('Connect a website first to auto-import drafts.', {
+          action: {
+            label: 'Connect',
+            onClick: () => { window.location.href = '/settings#properties'; },
+          },
+        });
+      }
+    }).catch(() => {
+      // Don't block the planner update on a writer-side failure.
+    });
+  };
 
   // Multi-select state for bulk actions. IDs only; rendering filters them out
   // naturally if a keyword is removed or no longer matches active filters.
@@ -529,42 +569,10 @@ export default function ContentPlanner() {
             // Skipped for demo data (in-memory only) and when transitioning
             // sideways (e.g. draft → draft would be a no-op anyway).
             if (status === 'draft' && prev && prev.status !== 'draft' && !isDemoId(id)) {
-              importPlannerKeywordToWriter({
-                propertyId: selectedPropertyId,
+              sendKeywordToWriter({
                 keyword: prev.keyword,
                 topic: prev.keyword,
                 notes: prev.notes || undefined,
-              }).then((res) => {
-                if (res.created) {
-                  toast.success('Added to Content Writer drafts', {
-                    action: {
-                      label: 'Open',
-                      onClick: () => {
-                        window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`;
-                      },
-                    },
-                  });
-                } else if (res.reason === 'duplicate') {
-                  toast.info('Already in Content Writer drafts', {
-                    action: {
-                      label: 'Open',
-                      onClick: () => {
-                        window.location.href = `/content-writer?view=post&post=${res.postId}&workspace=${res.workspaceId}`;
-                      },
-                    },
-                  });
-                } else if (res.reason === 'no_property') {
-                  toast.info('Connect a website first to auto-import drafts.', {
-                    action: {
-                      label: 'Connect',
-                      onClick: () => { window.location.href = '/settings#properties'; },
-                    },
-                  });
-                }
-              }).catch(() => {
-                // Don't block the planner update on a writer-side failure.
-                // The user's status change still succeeds; the import retry
-                // would be manual via the New post button.
               });
             }
           }}

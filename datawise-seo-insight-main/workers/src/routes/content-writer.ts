@@ -2,6 +2,17 @@ import type { Env } from '../index';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 import { validateOpenRouterKey } from '../llm/openrouter-key';
 import {
+  getContentOutputInstruction,
+  getContentOutputUserReminder,
+  getControlsLanguageLabel,
+  normalizeOutputLanguage,
+} from '../llm/output-language';
+import {
+  detectLanguageFamily,
+  expectedFamily,
+  buildLanguageRetryPrompt,
+} from '../llm/language-detect';
+import {
   DOC_TYPES, DOC_LABELS, INTERVIEW_PROMPTS, FINALIZE_PROMPTS,
   AUTO_DRAFT_DOC_TYPES, KB_AUTO_DRAFT_PROMPTS, WEBSITE_PAGES_DISCOVERY_PROMPT,
   buildPostStepSystemPrompt, buildPostStepUserMessage, withScrapedPagesContext,
@@ -1445,6 +1456,7 @@ export async function handleCreatePost(
     include_faq?: boolean;
     capsule_pct?: number;
     title?: string;
+    content_output_controls?: unknown;
   };
   if (!body.topic?.trim()) return json({ error: 'topic required' }, 400);
 
@@ -1459,6 +1471,9 @@ export async function handleCreatePost(
     include_tldr: body.include_tldr ?? true,
     include_faq: body.include_faq ?? true,
     capsule_pct: typeof body.capsule_pct === 'number' ? Math.max(0, Math.min(100, Math.round(body.capsule_pct))) : 65,
+    // Multi-language output: persisted with the brief so every step
+    // (research/outline/draft/review) inherits the same target language.
+    content_output_controls: body.content_output_controls ?? undefined,
   });
   await env.DB.prepare(
     `INSERT INTO content_writer_posts (id, workspace_id, user_id, title, topic, target_keyword, status, brief_json)
@@ -1494,6 +1509,7 @@ export async function handleUpdatePost(
   const body = await request.json() as Partial<{
     title: string; body_html: string; body_md: string; status: PostRow['status'];
     sources_json: string; outline_json: string;
+    content_output_controls: { language?: string };
   }>;
   const bodyHtml = typeof body.body_html === 'string'
     ? repairWriterOutputIfNeeded(body.body_html).text
@@ -1501,6 +1517,26 @@ export async function handleUpdatePost(
   const bodyMd = typeof body.body_md === 'string'
     ? repairWriterOutputIfNeeded(body.body_md).text
     : body.body_md;
+
+  // Output language is stored inside the brief (content_output_controls) so
+  // every step (research/outline/draft/review) inherits it. When the writer
+  // changes the language at the Research step we merge it into the existing
+  // brief rather than overwriting other brief fields.
+  let briefJson: string | null = null;
+  const nextLanguage = body.content_output_controls?.language;
+  if (typeof nextLanguage === 'string') {
+    let brief: unknown = {};
+    if (post.brief_json) {
+      try { brief = JSON.parse(post.brief_json); } catch { brief = {}; }
+    }
+    const briefObj = (brief && typeof brief === 'object') ? brief as Record<string, unknown> : {};
+    const existing = (briefObj.content_output_controls && typeof briefObj.content_output_controls === 'object')
+      ? briefObj.content_output_controls as Record<string, unknown>
+      : {};
+    briefObj.content_output_controls = { ...existing, language: normalizeOutputLanguage(nextLanguage) };
+    briefJson = JSON.stringify(briefObj);
+  }
+
   await env.DB.prepare(
     `UPDATE content_writer_posts
      SET title = COALESCE(?, title),
@@ -1509,6 +1545,7 @@ export async function handleUpdatePost(
          status = COALESCE(?, status),
          sources_json = COALESCE(?, sources_json),
          outline_json = COALESCE(?, outline_json),
+         brief_json = COALESCE(?, brief_json),
          updated_at = datetime('now')
      WHERE id = ?`
   ).bind(
@@ -1518,6 +1555,7 @@ export async function handleUpdatePost(
     body.status ?? null,
     body.sources_json ?? null,
     body.outline_json ?? null,
+    briefJson,
     postId,
   ).run();
   return json({ success: true });
@@ -1614,24 +1652,40 @@ export async function handlePostStep(
     },
   });
 
+  // Multi-language output: brief carries content_output_controls (set at
+  // post creation time in NewPostDialog). Research returns JSON sources,
+  // outline + draft + review return prose/markdown. Use preserveJsonShape
+  // only for research.
+  const briefControls = (brief && typeof brief === 'object' && 'content_output_controls' in brief)
+    ? (brief as { content_output_controls?: unknown }).content_output_controls
+    : undefined;
+  const languageInstruction = getContentOutputInstruction(briefControls, {
+    preserveJsonShape: step === 'research',
+  });
+  const languageReminder = getContentOutputUserReminder(briefControls);
+  const languageLabel = getControlsLanguageLabel(briefControls);
+  const briefControlsObj = briefControls as { language?: string } | undefined;
+  const expectedLangFamily = expectedFamily(briefControlsObj?.language);
+  const baseSystemPrompt = buildPostStepSystemPrompt(kb, step, {
+    master: masterPrompt.source === 'published' ? masterPrompt.text : undefined,
+    step: stepPrompt.source === 'published' ? stepPrompt.text : undefined,
+    context: promptContext,
+  });
+  const baseUserMessage = buildPostStepUserMessage(
+    effectiveBrief,
+    step,
+    priorContext,
+    userPrompt.source === 'published' ? userPrompt.text : undefined,
+    promptContext,
+  );
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: buildPostStepSystemPrompt(kb, step, {
-        master: masterPrompt.source === 'published' ? masterPrompt.text : undefined,
-        step: stepPrompt.source === 'published' ? stepPrompt.text : undefined,
-        context: promptContext,
-      }),
+      content: `${baseSystemPrompt}\n\n${languageInstruction}`,
     },
     {
       role: 'user',
-      content: buildPostStepUserMessage(
-        effectiveBrief,
-        step,
-        priorContext,
-        userPrompt.source === 'published' ? userPrompt.text : undefined,
-        promptContext,
-      ),
+      content: `${baseUserMessage}${languageReminder}`,
     },
   ];
   const aiQuestionContextPromise = step === 'research'
@@ -1656,15 +1710,46 @@ export async function handlePostStep(
       provider.chatComplete(messages, env, stepConfig, maxTokens),
       aiQuestionContextPromise,
     ]);
-    text = res.text;
-    usage = res.usage;
-    citations = res.citations;
+    let activeRes = res;
+    text = activeRes.text;
+    usage = activeRes.usage;
+    citations = activeRes.citations;
     aiQuestionContext = questions;
     console.log(`[content-writer] step=${step} model=${stepConfig.model} elapsedMs=${Date.now() - t0} ok=true post=${postId}`);
+
+    // Post-output language detection (#2). One corrective retry on
+    // family mismatch. Skipped for English target and for very short
+    // outputs (the detector returns 'unknown' below 30 words).
+    if (expectedLangFamily !== 'en') {
+      const detected = detectLanguageFamily(activeRes.text);
+      if (detected !== 'unknown' && detected !== expectedLangFamily) {
+        console.warn(`[content-writer] step=${step} language mismatch: expected=${expectedLangFamily} detected=${detected} post=${postId}`);
+        const retryMessages: ChatMessage[] = [
+          ...messages,
+          { role: 'assistant', content: activeRes.text },
+          { role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) },
+        ];
+        try {
+          const retryRes = await provider.chatComplete(retryMessages, env, stepConfig, maxTokens);
+          activeRes = retryRes;
+          text = retryRes.text;
+          usage = {
+            input_tokens: usage.input_tokens + retryRes.usage.input_tokens,
+            output_tokens: usage.output_tokens + retryRes.usage.output_tokens,
+          };
+          citations = retryRes.citations ?? citations;
+          console.log(`[content-writer] step=${step} language-retry ok post=${postId}`);
+        } catch (retryErr) {
+          // If the retry fails, keep the original output rather than 500.
+          console.warn(`[content-writer] step=${step} language-retry failed, keeping original. err=${String(retryErr)}`);
+        }
+      }
+    }
+
     // finish_reason === 'length' means the model hit max_tokens before
     // finishing. Surface it so the UI can tell the user to re-run or
     // raise the cap, instead of silently persisting a half-finished post.
-    if (res.finishReason === 'length') {
+    if (activeRes.finishReason === 'length') {
       truncated = true;
       console.warn(`[content-writer] step=${step} truncated at max_tokens (${maxTokens}). post=${postId} model=${stepConfig.model}`);
     }

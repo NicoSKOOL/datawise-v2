@@ -1,4 +1,4 @@
-export type OutputLanguageCode = 'en' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE';
+export type OutputLanguageCode = 'en' | 'en-US' | 'en-GB' | 'es-419' | 'es-ES' | 'fr-FR' | 'de-DE' | 'it-IT' | 'pt-PT' | 'pt-BR' | 'nl-NL' | 'ja-JP';
 
 export type ContentOutputRegister = 'professional' | 'conversational' | 'informal';
 export type ContentOutputLength = 'standard' | 'expanded' | 'comprehensive';
@@ -19,7 +19,7 @@ export interface ContentOutputControls {
 }
 
 export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
-  language: 'en',
+  language: 'en-US',
   register: 'professional',
   length: 'expanded',
   source_policy: 'credible-non-competitor',
@@ -29,7 +29,7 @@ export const DEFAULT_CONTENT_OUTPUT_CONTROLS: ContentOutputControls = {
   include_meta: false,
 };
 
-const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'es-419', 'es-ES', 'fr-FR', 'de-DE']);
+const OUTPUT_LANGUAGE_CODES = new Set<OutputLanguageCode>(['en', 'en-US', 'en-GB', 'es-419', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'pt-BR', 'nl-NL', 'ja-JP']);
 const REGISTER_VALUES = new Set<ContentOutputRegister>(['professional', 'conversational', 'informal']);
 const LENGTH_VALUES = new Set<ContentOutputLength>(['standard', 'expanded', 'comprehensive']);
 const SOURCE_POLICY_VALUES = new Set<ContentOutputSourcePolicy>(['credible-non-competitor', 'primary-only', 'broad-reputable']);
@@ -43,9 +43,10 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 export function normalizeOutputLanguage(value: unknown): OutputLanguageCode {
+  if (value === 'en') return 'en-US'; // legacy generic English maps to the US default
   return typeof value === 'string' && OUTPUT_LANGUAGE_CODES.has(value as OutputLanguageCode)
     ? value as OutputLanguageCode
-    : 'en';
+    : 'en-US';
 }
 
 export function normalizeContentOutputControls(
@@ -92,6 +93,10 @@ export function normalizeContentOutputControls(
 
 function languageName(code: OutputLanguageCode): string {
   switch (code) {
+    case 'en-US':
+      return 'US English';
+    case 'en-GB':
+      return 'British English';
     case 'es-419':
       return 'neutral Latin American Spanish';
     case 'es-ES':
@@ -100,6 +105,16 @@ function languageName(code: OutputLanguageCode): string {
       return 'France French';
     case 'de-DE':
       return 'Germany German';
+    case 'it-IT':
+      return 'Italy Italian';
+    case 'pt-PT':
+      return 'European Portuguese (Portugal)';
+    case 'pt-BR':
+      return 'Brazilian Portuguese';
+    case 'nl-NL':
+      return 'Netherlands Dutch';
+    case 'ja-JP':
+      return 'Japanese';
     case 'en':
     default:
       return 'English';
@@ -108,6 +123,10 @@ function languageName(code: OutputLanguageCode): string {
 
 function languageVariantRule(code: OutputLanguageCode): string {
   switch (code) {
+    case 'en-US':
+      return '- Use American English. Use US spelling (color, optimize, center, traveling), US vocabulary, and US date/number formats (MM/DD/YYYY, period decimal separator). Avoid British spellings (-our, -ise, -re).';
+    case 'en-GB':
+      return '- Use British English. Use UK spelling (colour, optimise/organise, centre, travelling), UK vocabulary, and UK date formats (DD/MM/YYYY). Avoid American spellings (-or, -ize where -ise is conventional, -er).';
     case 'es-419':
       return '- Use neutral Latin American Spanish. Avoid Spain-specific vocabulary, phrasing, and vosotros forms. Use ustedes for plural address. Avoid voseo unless a future country-specific control explicitly asks for it.';
     case 'es-ES':
@@ -116,6 +135,16 @@ function languageVariantRule(code: OutputLanguageCode): string {
       return '- Use France French. Default to vous in professional and conversational business contexts. Avoid English-style Title Case; use French capitalization norms for headings and titles.';
     case 'de-DE':
       return '- Use Germany German. Preserve German noun capitalization. In professional register, use the formal Sie/Ihr forms with correct capitalization.';
+    case 'it-IT':
+      return '- Use Italy Italian. Default to Lei in professional and conversational business contexts; use tu only when the register is explicitly informal. Avoid English-style title case in headings; use Italian sentence-case capitalization.';
+    case 'pt-PT':
+      return '- Use European Portuguese (Portugal). Prefer "a" + infinitive over "-ndo" gerund constructions (e.g. "a fazer", not "fazendo"). Use você or formal third-person address in professional registers. Avoid Brazilian-specific vocabulary and Brazilian gerund usage. Apply Portugal spelling conventions where they still differ post-1990 orthographic agreement.';
+    case 'pt-BR':
+      return '- Use Brazilian Portuguese. Use você by default; gerund constructions ("-ndo") are natural and preferred. Avoid Portugal-specific vocabulary and Portugal-specific spellings where they differ from Brazilian usage.';
+    case 'nl-NL':
+      return '- Use standard Netherlands Dutch (Algemeen Nederlands), not Flemish/Belgian Dutch. Default to the formal "u" in professional and conversational business registers; use "je/jij" only when the register is explicitly informal. Use Dutch sentence-case capitalization for headings, not English-style Title Case. Avoid unnecessary English loanwords where a natural Dutch term exists.';
+    case 'ja-JP':
+      return '- Use standard Japanese (標準語). Default to the polite です/ます form in professional and conversational registers; use the plain form (だ/である) only when the register is explicitly informal. Do not insert spaces between Japanese words. Use full-width Japanese punctuation (。、「」) rather than Latin punctuation in Japanese prose. Keep Latin-script brand names, URLs, code identifiers, and schema.org property names unchanged.';
     case 'en':
     default:
       return '- Use natural English.';
@@ -216,6 +245,35 @@ export function getContentOutputInstruction(
     '- SEO locale note: es-419 is only an internal content-generation locale. Do not output es-419 as an hreflang value; future hreflang should use concrete country tags.',
     shapeRule,
   ].join('\n');
+}
+
+// Short closing reminder appended to the USER message (not the system
+// prompt). Models weight user-message instructions more heavily,
+// especially closing instructions, so repeating the language directive
+// here measurably improves adherence vs system-prompt-only.
+export function getOutputLanguageUserReminder(value: unknown): string {
+  const code = normalizeOutputLanguage(value);
+  if (code === 'en') return ''; // English is the model's default; no reminder needed.
+  return `\n\n---\nReminder: write your entire response in ${languageName(code)}. Translate every heading, list item, table cell, and bullet point. Keep markdown structure, URLs, citations, and code identifiers unchanged.`;
+}
+
+// Resolve a code to its human-readable label. Used by the language-retry
+// prompt and any caller that needs to surface the target language to the
+// model.
+export function getLanguageLabel(value: unknown): string {
+  return languageName(normalizeOutputLanguage(value));
+}
+
+// Same for the controls shape (which carries language nested inside).
+export function getControlsLanguageLabel(value: unknown): string {
+  const controls = normalizeContentOutputControls(value);
+  return languageName(controls.language);
+}
+
+// User-message reminder for the full content controls shape.
+export function getContentOutputUserReminder(value: unknown): string {
+  const controls = normalizeContentOutputControls(value);
+  return getOutputLanguageUserReminder(controls.language);
 }
 
 export function getChatOutputLanguageInstruction(value: unknown): string {

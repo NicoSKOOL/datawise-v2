@@ -25,6 +25,8 @@ import {
   type ServicePageData, type ServicePageAnalysis,
 } from '@/lib/content-tools';
 import { useDefaults } from '@/hooks/use-defaults';
+import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
+import { getOutputLanguagePreference, type OutputLanguageCode } from '@/lib/output-language';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildServicePageOptimizerReport } from '@/lib/export/adapters/servicePageOptimizer';
 import { buildContentRevivalReport } from '@/lib/export/adapters/contentRevival';
@@ -202,6 +204,7 @@ function ContentRevival() {
   const { defaultDomain } = useDefaults();
   const [domain, setDomain] = useState(defaultDomain);
   const [urlsText, setUrlsText] = useState('');
+  const [outputLanguage, setOutputLanguage] = useState<OutputLanguageCode>(() => getOutputLanguagePreference());
   const [inputMode, setInputMode] = useState<'paste' | 'csv'>('paste');
   const [sitePages, setSitePages] = useState<SitePage[]>([]);
   const [sitemapStatus, setSitemapStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
@@ -314,6 +317,7 @@ function ContentRevival() {
           { title: postData.title, body_text: postData.body_text, word_count: postData.word_count },
           sitePages,
           domainStr,
+          outputLanguage,
         );
         currentAudit = auditResult.audit;
         updatePost(i, { audit: currentAudit, usageAudit: auditResult.usage });
@@ -332,6 +336,7 @@ function ContentRevival() {
           currentAudit,
           sitePages,
           domainStr,
+          outputLanguage,
         );
 
         const wordCountAfter = countMarkdownWords(rewriteResult.rewritten);
@@ -472,7 +477,7 @@ function ContentRevival() {
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {!processing ? (
             <Button onClick={handleRun} disabled={!urlsText.trim()}>
               <Play className="h-4 w-4 mr-1.5" />
@@ -484,7 +489,19 @@ function ContentRevival() {
               Stop
             </Button>
           )}
+          <OutputLanguageSelect
+            value={outputLanguage}
+            onValueChange={setOutputLanguage}
+            id="content-tools-language"
+            hideLabel
+            ariaLabel="Output language"
+            triggerClassName="h-10 w-[210px]"
+            disabled={processing}
+          />
         </div>
+        <p className="text-xs text-muted-foreground">
+          Audit notes and the rewritten post are produced in the selected output language.
+        </p>
       </div>
 
       {posts.length > 0 && (

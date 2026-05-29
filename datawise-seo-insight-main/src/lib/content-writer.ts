@@ -1,6 +1,7 @@
 import { api } from './api';
 import { getLLMConfig, type LLMConfig } from './chat';
 import { DEFAULT_OPENROUTER_MODEL, SEARCH_MODEL_ID, isApprovedOpenRouterModel } from './ai-models';
+import type { OutputLanguageCode } from './output-language';
 
 export { modelDisplayName } from './ai-models';
 
@@ -261,6 +262,7 @@ export interface PostBrief {
   include_tldr?: boolean;
   include_faq?: boolean;
   capsule_pct?: number;
+  content_output_controls?: { language?: string };
 }
 
 export interface Post {
@@ -365,8 +367,14 @@ export async function getPost(postId: string) {
   return api<{ post: Post }>(`${BASE}/posts/${postId}`);
 }
 
-export async function updatePost(postId: string, body: Partial<{ title: string; body_html: string; body_md: string; status: PostStatus; sources_json: string; outline_json: string }>) {
+export async function updatePost(postId: string, body: Partial<{ title: string; body_html: string; body_md: string; status: PostStatus; sources_json: string; outline_json: string; content_output_controls: { language: OutputLanguageCode } }>) {
   return api<{ success: true }>(`${BASE}/posts/${postId}`, { method: 'PUT', body });
+}
+
+// Convenience: update only the post's output language (merged into the
+// brief server-side; applies to every subsequent step).
+export async function updatePostLanguage(postId: string, language: OutputLanguageCode) {
+  return updatePost(postId, { content_output_controls: { language } });
 }
 
 export async function deletePost(postId: string) {
@@ -414,6 +422,7 @@ export async function importPlannerKeywordToWriter(args: {
   secondaryKeywords?: string;
   topic?: string;
   notes?: string;
+  language?: string;
 }): Promise<ImportPlannerResult> {
   const keyword = args.keyword.trim();
   const propertyId = args.propertyId?.trim();
@@ -438,6 +447,7 @@ export async function importPlannerKeywordToWriter(args: {
     secondary_keywords: args.secondaryKeywords?.trim() || undefined,
     notes: args.notes?.trim() || undefined,
     title: keyword,
+    content_output_controls: args.language ? { language: args.language } : undefined,
   });
   return { created: true, postId: post.id, workspaceId: workspace.id };
 }

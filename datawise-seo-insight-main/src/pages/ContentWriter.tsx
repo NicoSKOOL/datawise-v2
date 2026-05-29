@@ -21,7 +21,7 @@ import { useProperty } from '@/contexts/PropertyContext';
 import {
   listWorkspaces, createWorkspace, getWorkspace, deleteWorkspace,
   getKBDoc, updateKBDoc, sendInterviewMessage, finalizeKBDoc, discoverWebsitePages,
-  createPost, getPost, updatePost, deletePost, runPostStep,
+  createPost, getPost, updatePost, updatePostLanguage, deletePost, runPostStep,
   DOC_TYPES, DOC_LABELS, DOC_DESCRIPTIONS,
   POST_STATUS_ORDER, POST_STATUS_LABEL, POST_STATUS_PILL,
   resolveWorkspaceForProperty,
@@ -37,6 +37,8 @@ import {
   subscribeKBAutoDraftTasks,
 } from '@/lib/kb-auto-draft-task';
 import { markdownToHtml, htmlToMarkdown, copyAsRichText } from '@/lib/markdown';
+import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
+import { getOutputLanguagePreference, normalizeOutputLanguage, type OutputLanguageCode } from '@/lib/output-language';
 import PostEditor from '@/components/content-writer/PostEditor';
 import ModelBadge from '@/components/content-writer/ModelBadge';
 import DraftProgressBar from '@/components/content-writer/DraftProgressBar';
@@ -1185,6 +1187,7 @@ function NewPostDialog({ open, onOpenChange, workspaceId, onCreated }: {
   const [takeaway, setTakeaway] = useState('');
   const [notes, setNotes] = useState('');
   const [includeTables, setIncludeTables] = useState(true);
+  const [language, setLanguage] = useState<OutputLanguageCode>(() => getOutputLanguagePreference());
   const [busy, setBusy] = useState(false);
 
   async function submit() {
@@ -1201,6 +1204,7 @@ function NewPostDialog({ open, onOpenChange, workspaceId, onCreated }: {
         takeaway: takeaway.trim() || undefined,
         notes: notes.trim() || undefined,
         include_tables: includeTables,
+        content_output_controls: { language },
       });
       setTopic(''); setKeyword(''); setSecondary(''); setTakeaway(''); setNotes(''); setIncludeTables(true);
       onOpenChange(false);
@@ -1236,6 +1240,14 @@ function NewPostDialog({ open, onOpenChange, workspaceId, onCreated }: {
             <Label htmlFor="np-take">Main takeaway</Label>
             <Textarea id="np-take" value={takeaway} onChange={(e) => setTakeaway(e.target.value)} rows={2} placeholder="The reader should book an annual service before winter." />
           </div>
+          <OutputLanguageSelect
+            value={language}
+            onValueChange={setLanguage}
+            id="np-language"
+            label="Output language"
+            description="Applies to every step: research, outline, draft, and review."
+            disabled={busy}
+          />
           <div className="space-y-1.5">
             <Label htmlFor="np-notes">Inline notes (optional)</Label>
             <Textarea id="np-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="A story, a stat, a customer question that comes up a lot..." />
@@ -1959,6 +1971,9 @@ function PostComposerView({ postId }: { postId: string }) {
   // (defaultTab below). After that, controlled by clicks + step completion.
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [liveMd, setLiveMd] = useState<string>('');
+  // Output language for this post. Stored in the brief server-side and read
+  // by every step; the writer sets it here (Research step) before running.
+  const [language, setLanguage] = useState<OutputLanguageCode>('en');
   const lastSentRef = useRef<{ html: string; md: string }>({ html: '', md: '' });
 
   async function load() {
@@ -1973,6 +1988,24 @@ function PostComposerView({ postId }: { postId: string }) {
     }
   }
   useEffect(() => { load(); }, [postId]);
+  // Sync the language control from the loaded post's brief.
+  useEffect(() => {
+    if (!post) return;
+    try {
+      const b = post.brief_json ? JSON.parse(post.brief_json) : {};
+      setLanguage(normalizeOutputLanguage(b?.content_output_controls?.language));
+    } catch { /* keep current */ }
+  }, [post]);
+
+  const handleLanguageChange = async (next: OutputLanguageCode) => {
+    setLanguage(next); // optimistic
+    try {
+      await updatePostLanguage(postId, next);
+      await load();
+    } catch (err) {
+      toast({ title: 'Could not update output language', description: (err as Error).message, variant: 'destructive' });
+    }
+  };
   // When the user navigates to a different post, drop any tab they had
   // selected on the previous one so the new post falls back to its
   // computed defaultTab (editor if drafted, outline if outlined, etc.).
@@ -2205,6 +2238,18 @@ function PostComposerView({ postId }: { postId: string }) {
           </Card>
 
           <div className="space-y-2">
+            <div className="space-y-1.5 pb-1">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Language</p>
+              <OutputLanguageSelect
+                value={language}
+                onValueChange={handleLanguageChange}
+                id={`post-language-${post.id}`}
+                hideLabel
+                ariaLabel="Output language"
+                triggerClassName="h-9 w-full text-sm"
+                disabled={!!busyStep}
+              />
+            </div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Pipeline</p>
             {(() => {
               // Compute which step is the "next available" action so we can
