@@ -1,6 +1,7 @@
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { FeedbackBubble } from '@/components/FeedbackBubble';
+import { AnnouncementDialog } from '@/components/AnnouncementDialog';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -19,6 +20,7 @@ export function Layout({ children }: LayoutProps) {
         </main>
       </div>
       <FeedbackBubble />
+      <AnnouncementDialog />
     </SidebarProvider>
   );
 }
