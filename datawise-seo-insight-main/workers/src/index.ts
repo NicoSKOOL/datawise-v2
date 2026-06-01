@@ -975,16 +975,24 @@ export default {
 // Processes in small concurrent batches to stay within Worker CPU limits.
 async function runDailyGSCSync(env: Env): Promise<void> {
   const startedAt = Date.now();
+  // Only re-sync a property if it has not been refreshed in the last few days.
+  // Google Search Console data itself lags ~2-3 days, so a daily rewrite of the
+  // full 90-day window produced no fresher data while dominating D1 write cost.
+  // last_synced_at is set only on a SUCCESSFUL sync, so token-expired properties
+  // (which write nothing) stay eligible and are retried each day at ~zero cost.
+  // The manual "Sync" button bypasses this and force-refreshes on demand.
+  const STALE_AFTER = "-3 days";
   const props = await env.DB.prepare(
     `SELECT p.id, p.user_id
        FROM gsc_properties p
       WHERE p.is_enabled = 1
+        AND (p.last_synced_at IS NULL OR p.last_synced_at < datetime('now', ?))
         AND EXISTS (
           SELECT 1 FROM sessions s
            WHERE s.user_id = p.user_id
              AND s.expires_at > datetime('now')
         )`
-  ).all<{ id: string; user_id: string }>();
+  ).bind(STALE_AFTER).all<{ id: string; user_id: string }>();
 
   const rows = props.results || [];
   let synced = 0, skipped = 0, failed = 0;
@@ -1008,7 +1016,7 @@ async function runDailyGSCSync(env: Env): Promise<void> {
   }
 
   console.log(
-    `GSC daily sync done (active-user scope): ${synced} synced, ${skipped} skipped (token), ` +
-    `${failed} failed, ${rows.length} active properties, ${Date.now() - startedAt}ms`
+    `GSC daily sync done (active + due-for-refresh scope): ${synced} synced, ${skipped} skipped (token), ` +
+    `${failed} failed, ${rows.length} due properties, ${Date.now() - startedAt}ms`
   );
 }
