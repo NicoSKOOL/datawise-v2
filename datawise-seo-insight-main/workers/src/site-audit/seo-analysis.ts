@@ -607,20 +607,29 @@ function computeImages(
   const lighthouse_alt_score =
     typeof altAudit?.score === 'number' ? altAudit.score : null;
 
-  const missing_alt_samples: { src: string }[] = [];
-  const altItems: any[] = Array.isArray(altAudit?.details?.items) ? altAudit.details.items : [];
-  for (const it of altItems.slice(0, 12)) {
-    const snippet = it?.node?.snippet || it?.node?.selector || it?.url || '';
-    if (typeof snippet === 'string' && snippet) {
-      missing_alt_samples.push({ src: snippet.slice(0, 300) });
-    }
-  }
+  // Cap how many sample URLs we surface. Generous enough to list every image
+  // on a normal page (users asked for the full list, not just the first 5),
+  // bounded so a pathological page can't bloat the stored audit JSON.
+  const MAX_ALT_SAMPLES = 200;
 
+  const missing_alt_samples: { src: string }[] = [];
   const pmImages = pageMeta?.images || [];
   const pmMissingAlt = pmImages.filter((img) => !img.alt || img.alt.trim() === '');
-  if (missing_alt_samples.length === 0 && pmMissingAlt.length > 0) {
-    for (const img of pmMissingAlt.slice(0, 12)) {
+
+  // Prefer the parsed-HTML image list: it gives real, clickable src URLs.
+  // The Lighthouse image-alt audit only exposes HTML snippets/selectors, which
+  // aren't links, so we fall back to it only when the parser found nothing.
+  if (pmMissingAlt.length > 0) {
+    for (const img of pmMissingAlt.slice(0, MAX_ALT_SAMPLES)) {
       missing_alt_samples.push({ src: img.src });
+    }
+  } else {
+    const altItems: any[] = Array.isArray(altAudit?.details?.items) ? altAudit.details.items : [];
+    for (const it of altItems.slice(0, MAX_ALT_SAMPLES)) {
+      const snippet = it?.node?.snippet || it?.node?.selector || it?.url || '';
+      if (typeof snippet === 'string' && snippet) {
+        missing_alt_samples.push({ src: snippet.slice(0, 300) });
+      }
     }
   }
 
@@ -685,7 +694,9 @@ function computeImages(
       : totalSavings;
 
   const total = pmImages.length;
-  const missing_alt = missing_alt_samples.length;
+  // True count, independent of the sample cap, so the badge stays accurate even
+  // when a page has more missing-alt images than we list URLs for.
+  const missing_alt = pmMissingAlt.length > 0 ? pmMissingAlt.length : missing_alt_samples.length;
 
   return {
     total,
