@@ -964,14 +964,26 @@ export default {
   },
 };
 
-// Daily GSC re-sync over every enabled property. Skips properties whose
-// refresh token can no longer mint an access token (user must reconnect);
-// skipping does not delete the property — they may reconnect later.
+// Daily GSC re-sync over enabled properties whose owner has logged in within
+// the 30-day session lifetime (a currently-valid session). Properties owned by
+// dormant users are skipped: their data is NOT deleted, and the next daily run
+// picks them up automatically once they log in again. This avoids rewriting
+// 90-day Search Console data that nobody is currently looking at, which is the
+// dominant driver of D1 "rows written" cost.
+// Skips properties whose refresh token can no longer mint an access token
+// (user must reconnect); skipping does not delete the property.
 // Processes in small concurrent batches to stay within Worker CPU limits.
 async function runDailyGSCSync(env: Env): Promise<void> {
   const startedAt = Date.now();
   const props = await env.DB.prepare(
-    'SELECT id, user_id FROM gsc_properties WHERE is_enabled = 1'
+    `SELECT p.id, p.user_id
+       FROM gsc_properties p
+      WHERE p.is_enabled = 1
+        AND EXISTS (
+          SELECT 1 FROM sessions s
+           WHERE s.user_id = p.user_id
+             AND s.expires_at > datetime('now')
+        )`
   ).all<{ id: string; user_id: string }>();
 
   const rows = props.results || [];
@@ -996,7 +1008,7 @@ async function runDailyGSCSync(env: Env): Promise<void> {
   }
 
   console.log(
-    `GSC daily sync done: ${synced} synced, ${skipped} skipped (token), ${failed} failed, ` +
-    `${rows.length} total, ${Date.now() - startedAt}ms`
+    `GSC daily sync done (active-user scope): ${synced} synced, ${skipped} skipped (token), ` +
+    `${failed} failed, ${rows.length} active properties, ${Date.now() - startedAt}ms`
   );
 }
