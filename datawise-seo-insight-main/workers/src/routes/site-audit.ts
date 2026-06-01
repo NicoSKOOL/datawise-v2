@@ -13,7 +13,9 @@ import {
   analyzeOnPage,
   buildStructuredSEO,
   pickHomepage,
+  extractSchemaTypes,
 } from '../site-audit/on-page-analyzer';
+import { fetchAndParseHtml } from '../site-audit/html-parser';
 import type { AnalyzeResult } from '../site-audit/analyzer';
 import {
   collectPerformanceProbeSamples,
@@ -453,6 +455,65 @@ async function processAuditRow(env: Env, audit: any): Promise<any> {
     `[site-audit] pulled data for ${audit.id} in ${Date.now() - t0}ms: ${pages.length} pages, ${resources.length} resources, microdata=${!!microdata}, perf_samples=${performanceSummary.successful_sample_count}/${PERFORMANCE_PROBE_COUNT}`
   );
 
+  // Direct-fetch fallback: DataForSEO's datacenter crawler can be served a
+  // thin/cloaked page (bot protection, JS-only render) and still "complete"
+  // the crawl, leaving homepage.meta empty and microdata schema-less. When
+  // that happens, re-read the raw HTML directly with a browser User-Agent and
+  // backfill only the signals the crawler missed. fetchAndParseHtml is a plain
+  // fetch + HTMLRewriter parse (no LLM), so the Site Audit critical path stays
+  // DataForSEO-first and only augments on a thin result.
+  let recoveredMicrodata = microdata;
+  if (homepage) {
+    const meta: any = homepage.meta || (homepage.meta = {} as any);
+    const checks: any = homepage.checks || (homepage.checks = {} as any);
+    const crawlTitle = (meta.title || '').trim();
+    const crawlDesc = (meta.description || '').trim();
+    const crawlHasSchema =
+      checks.has_micromarkup === true || extractSchemaTypes(microdata).length > 0;
+
+    if (!crawlTitle || !crawlDesc || !crawlHasSchema) {
+      const parsed = await fetchAndParseHtml(homepageUrl).catch((err) => {
+        console.warn(`[site-audit] direct-fetch fallback failed for ${homepageUrl}:`, err);
+        return null;
+      });
+      if (parsed) {
+        const recoveredTitle = !crawlTitle && !!parsed.title;
+        const recoveredDesc = !crawlDesc && !!parsed.meta_description;
+        const recoveredSchema = !crawlHasSchema && parsed.schema_types.length > 0;
+
+        if (recoveredTitle) {
+          meta.title = parsed.title;
+          meta.title_length = parsed.title.length;
+        }
+        if (recoveredDesc) {
+          meta.description = parsed.meta_description;
+          meta.description_length = parsed.meta_description.length;
+        }
+        if (parsed.h1.length && !(meta.htags?.h1?.length)) {
+          meta.htags = { ...(meta.htags || {}), h1: parsed.h1, h2: parsed.h2, h3: parsed.h3 };
+        }
+        if (recoveredSchema) {
+          checks.has_micromarkup = true;
+          // Shape the recovered types like a DFS microdata response so
+          // extractSchemaTypes() reads them (see on-page-analyzer.ts).
+          recoveredMicrodata = {
+            ...((microdata as any) || {}),
+            items: [
+              ...(((microdata as any)?.items) || []),
+              ...parsed.schema_types.map((t) => ({ inspection_info: { types: [t] } })),
+            ],
+          } as any;
+        }
+
+        if (recoveredTitle || recoveredDesc || recoveredSchema) {
+          console.log(
+            `[site-audit] direct-fetch fallback recovered for ${audit.id}: title=${recoveredTitle}, description=${recoveredDesc}, schema=${recoveredSchema}`
+          );
+        }
+      }
+    }
+  }
+
   // Run the analyzer.
   let result: AnalyzeResult;
   let seoAnalysis: any;
@@ -461,11 +522,11 @@ async function processAuditRow(env: Env, audit: any): Promise<any> {
       summary,
       pages,
       resources,
-      microdata,
+      recoveredMicrodata,
       audit.start_url,
       performanceSummary
     );
-    seoAnalysis = buildStructuredSEO(summary, homepage, resources, microdata, performanceSummary);
+    seoAnalysis = buildStructuredSEO(summary, homepage, resources, recoveredMicrodata, performanceSummary);
   } catch (err: any) {
     console.error(`[site-audit] analyzer crashed for ${audit.id}:`, err);
     const diagnostics: CrawlDiagnostics = {
