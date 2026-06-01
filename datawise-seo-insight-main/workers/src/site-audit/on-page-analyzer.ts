@@ -705,8 +705,11 @@ export function buildStructuredSEO(
   const missingAlt = imageResources.filter(
     (r) => !r.meta?.alternative_text || r.meta.alternative_text.trim() === ''
   );
+  // List every missing-alt image (real URLs), not just the first few — users
+  // asked for the full list. Bounded so a pathological page can't bloat the
+  // stored audit JSON. Mirrors MAX_ALT_SAMPLES in seo-analysis.ts.
   const missingAltSamples = missingAlt
-    .slice(0, 10)
+    .slice(0, 200)
     .map((r) => ({ src: r.url }));
   const formatMap = new Map<string, number>();
   for (const r of imageResources) {

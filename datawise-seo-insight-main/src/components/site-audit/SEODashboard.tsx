@@ -793,6 +793,7 @@ export function HeadingsCard({
 // ============ IMAGES CARD ============
 
 export function ImagesCard({ images }: { images: ImagesAnalysis }) {
+  const [copiedAlt, setCopiedAlt] = useState(false);
   const webpSavingsBytes = images?.webp_savings_bytes ?? 0;
   const webpSavingsItems = Array.isArray(images?.webp_savings_items)
     ? images.webp_savings_items
@@ -931,12 +932,62 @@ export function ImagesCard({ images }: { images: ImagesAnalysis }) {
               Alt text is required for accessibility and feeds Google Images. Add a short description of what each image shows.
             </p>
             {missingAltSamples.length > 0 && (
-              <div className="mt-2 space-y-1 font-mono text-[10px] text-red-900">
-                {missingAltSamples.slice(0, 5).map((item, i) => (
-                  <div key={i} className="truncate break-all">
-                    {item.src}
-                  </div>
-                ))}
+              <div className="mt-2">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-[11px] font-medium text-red-800">
+                    {missingAltSamples.length === missingAlt
+                      ? `All ${missingAltSamples.length} image${missingAltSamples.length === 1 ? '' : 's'}`
+                      : `Showing ${missingAltSamples.length} of ${missingAlt}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(
+                          missingAltSamples.map((item) => item.src).join('\n')
+                        );
+                        setCopiedAlt(true);
+                        setTimeout(() => setCopiedAlt(false), 1800);
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-red-700 hover:text-red-900 transition-colors"
+                  >
+                    {copiedAlt ? (
+                      <>
+                        <Check className="h-3 w-3" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3 w-3" />
+                        Copy all
+                      </>
+                    )}
+                  </button>
+                </div>
+                <div className="max-h-48 overflow-y-auto rounded border border-red-200/60 bg-red-50/40 p-1.5 space-y-1 font-mono text-[10px] text-red-900">
+                  {missingAltSamples.map((item, i) => {
+                    const isLink = /^(https?:)?\/\//i.test(item.src);
+                    return isLink ? (
+                      <a
+                        key={i}
+                        href={item.src}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block truncate break-all underline decoration-red-300 hover:decoration-red-600"
+                        title={item.src}
+                      >
+                        {item.src}
+                      </a>
+                    ) : (
+                      <div key={i} className="truncate break-all" title={item.src}>
+                        {item.src}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
