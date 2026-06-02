@@ -388,7 +388,11 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
       location_code,
       language_code,
     }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-    const candidate = data?.tasks?.[0]?.result?.[0];
+    // my_business_info nests the business under result[0].items[0], not result[0]
+    // (result[0] is the keyword wrapper). Reading the wrong level made every
+    // lookup "fail" and silently fall back to Maps SERP, which returns the
+    // address as the description and null is_claimed.
+    const candidate = data?.tasks?.[0]?.result?.[0]?.items?.[0];
     if (candidate?.title) business = candidate;
   } catch (err) {
     console.error('my_business_info failed:', err);
@@ -673,7 +677,7 @@ export async function handleLocalKeywordDiscovery(env: Env, userId: string, proj
         location_code: locationCode,
         language_code: 'en',
       }]);
-      gbp = data?.tasks?.[0]?.result?.[0] || null;
+      gbp = data?.tasks?.[0]?.result?.[0]?.items?.[0] || null;
       if (gbp) await env.KV.put(gbpKey, JSON.stringify(gbp), { expirationTtl: LOCAL_KEYWORDS_TTL_SECONDS });
     } catch { gbp = null; }
   }
@@ -865,7 +869,7 @@ export async function handleResolveGBPUrl(request: Request, env: Env): Promise<R
   }];
 
   const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', payload, { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-  const business = data?.tasks?.[0]?.result?.[0];
+  const business = data?.tasks?.[0]?.result?.[0]?.items?.[0];
 
   if (!business) {
     // Fallback: search Maps SERP with business name
@@ -968,7 +972,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
         location_code: project.location_code || 2840,
         language_code: 'en',
       }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-      const biz = data?.tasks?.[0]?.result?.[0];
+      const biz = data?.tasks?.[0]?.result?.[0]?.items?.[0];
       if (biz?.latitude && biz?.longitude) {
         centerLat = biz.latitude;
         centerLng = biz.longitude;
@@ -1010,6 +1014,17 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
   // Generate grid points
   const gridPoints = generateGridPoints(centerLat, centerLng, size, radius);
 
+  // Pick a map zoom that matches the grid's geographic extent. A hardcoded 17z
+  // (~1km viewport) over a multi-km grid returned 0-5 results per pin, so the
+  // business only surfaced at the single pin containing its physical address
+  // (found_count was deterministically 1). Derive zoom from the radius instead,
+  // with a cos(latitude) correction. Calibrated against live Maps data: the
+  // result set is full (~20) across 12z-15z and collapses at 16z+. Clamp to that
+  // validated band. radius 3km (default) -> ~14z, radius 15km -> ~12z.
+  const cosLat = Math.cos((centerLat * Math.PI) / 180);
+  const rawZoom = Math.log2((72453 * cosLat) / radius);
+  const mapZoom = Math.max(12, Math.min(15, Math.round(rawZoom)));
+
   // Maps Live API only supports one task per call, so send concurrently in batches
   const results: Array<{
     row: number; col: number;
@@ -1025,7 +1040,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     const promises = chunk.map(async (point) => {
       const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
         keyword: keyword.trim(),
-        location_coordinate: `${point.lat},${point.lng},17z`,
+        location_coordinate: `${point.lat},${point.lng},${mapZoom}z`,
         language_code: 'en',
         device: 'desktop',
         os: 'windows',
@@ -1203,7 +1218,7 @@ export async function handleGeoGridInsights(request: Request, env: Env, userId: 
         const gbpData = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
           keyword: gbpKeyword, location_code: locCode, language_code: 'en',
         }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-        const candidate = gbpData?.tasks?.[0]?.result?.[0];
+        const candidate = gbpData?.tasks?.[0]?.result?.[0]?.items?.[0];
         if (candidate?.title) biz = candidate;
       } catch { /* fall through to Maps SERP */ }
     }
