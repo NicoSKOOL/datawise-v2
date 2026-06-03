@@ -450,12 +450,12 @@ export function analyzeOnPage(
       code: 'schema_validation_errors',
       category: 'seo',
       severity: 'medium',
-      title: `${totalErrs} schema validation error${totalErrs === 1 ? '' : 's'}`,
+      title: `Structured data may have issues (${totalErrs} flagged)`,
       description:
-        'Existing structured data has validation errors. Google may ignore malformed schema.',
+        'Our crawler\'s structured-data validator flagged potential problems with your schema markup. Validators apply different rule sets, so a flag here does not always mean Google sees an error: confirm before acting.',
       how_to_fix:
-        'Run your homepage through https://validator.schema.org and fix each flagged field. Common issues: missing required properties, wrong types.',
-      display_value: `${totalErrs} errors`,
+        'Test your homepage with Google\'s Rich Results Test (https://search.google.com/test/rich-results), the authority on whether Google can actually use your schema. Fix any errors it reports and ignore warnings for rich-result types you do not need. (validator.schema.org is stricter than Google and often flags fields Google accepts.)',
+      display_value: `${totalErrs} flagged`,
       impact: 'normal',
     });
   }

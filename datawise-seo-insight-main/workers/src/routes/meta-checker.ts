@@ -1,5 +1,5 @@
 import type { Env } from '../index';
-import { safeFetch, UnsafeUrlError } from '../lib/safe-fetch';
+import { safeFetch, UnsafeUrlError, BROWSER_UA } from '../lib/safe-fetch';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -7,8 +7,7 @@ const json = (data: unknown, status = 200) =>
     headers: { 'Content-Type': 'application/json' },
   });
 
-const UA =
-  'Mozilla/5.0 (compatible; DataWiseBot/1.0; +https://datawiseseo.com)';
+const UA = BROWSER_UA;
 const MAX_URLS = 100;
 const FETCH_TIMEOUT_MS = 10_000;
 const CONCURRENCY = 10;

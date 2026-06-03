@@ -1,4 +1,5 @@
 import type { Env } from '../index';
+import { BROWSER_UA } from '../lib/safe-fetch';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
 import {
   getContentOutputInstruction,
@@ -559,7 +560,7 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
   // Check robots.txt first
   try {
     const robotsResp = await fetch(`${domain}/robots.txt`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DataWiseBot/1.0)' },
+      headers: { 'User-Agent': BROWSER_UA },
     });
     if (robotsResp.ok) {
       const text = await robotsResp.text();
@@ -595,7 +596,7 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
   for (const sitemapUrl of uniqueCandidates) {
     try {
       const resp = await fetch(sitemapUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DataWiseBot/1.0)' },
+        headers: { 'User-Agent': BROWSER_UA },
       });
       if (!resp.ok) continue;
 
@@ -607,7 +608,7 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
         for (const childUrl of childUrls.slice(0, 5)) {
           try {
             const childResp = await fetch(childUrl, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (compatible; DataWiseBot/1.0)' },
+              headers: { 'User-Agent': BROWSER_UA },
             });
             if (childResp.ok) {
               const childXml = await childResp.text();

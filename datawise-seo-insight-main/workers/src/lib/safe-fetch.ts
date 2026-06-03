@@ -2,6 +2,16 @@
 // and common cloud metadata endpoints. Use this anywhere a caller-controlled
 // URL is fetched by the Worker.
 
+// Outbound User-Agent for our own crawl/scrape fetches (meta checker, sitemap
+// discovery, page-context pulls). A self-identifying "DataWiseBot" UA gets a
+// blanket 403 from WAF/bot-protection on many WooCommerce/Cloudflare sites
+// (confirmed 2026-06-03 on bradsbikes.com.au + resortstylebeanbags.com.au:
+// 403 to DataWiseBot, 200 + full content to this string). SEO crawlers
+// (Screaming Frog, Ahrefs) all send a browser UA by default for the same
+// reason. Keep this in sync with the value verified to return 200.
+export const BROWSER_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 const BLOCKED_HOSTNAMES = new Set([
   'localhost',
   'metadata.google.internal',
