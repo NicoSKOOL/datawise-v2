@@ -206,33 +206,15 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
     return true;
   };
 
-  // BFS through PAA questions at increasing depth
-  while (searchQueue.length > 0 && apiCallsMade < maxApiCalls) {
-    const current = searchQueue.shift()!;
-    const normalizedKw = current.keyword.toLowerCase().trim();
-
-    if (searchedKeywords.has(normalizedKw)) continue;
-    searchedKeywords.add(normalizedKw);
-
-    let data: any;
-    try {
-      data = await dataforseoRequest(env, '/serp/google/organic/live/advanced', [{
-        keyword: current.keyword,
-        location_code: parseInt(location),
-        language_code: language,
-        device: 'desktop',
-        os: 'windows',
-      }]);
-    } catch {
-      continue;
-    }
-    apiCallsMade++;
-
-    const result = data?.tasks?.[0]?.result?.[0];
-    const items = result?.items || [];
-
-    // The parent for items found in THIS search is the keyword we searched
-    // For the root keyword, parent is the keyword itself; for deeper searches, it's the question we followed
+  // Process one SERP result (its items array) for the keyword we searched.
+  // Extracted so the batched dispatch below can reuse it per task.
+  const processSerpItems = (
+    items: any[],
+    current: { keyword: string; depth: number; parentKeyword: string }
+  ) => {
+    // The parent for items found in THIS search is the keyword we searched.
+    // For the root keyword, parent is the keyword itself; for deeper searches,
+    // it's the question we followed.
     const thisParent = current.parentKeyword || keyword;
 
     for (const item of items) {
@@ -252,8 +234,8 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
             thisParent,
           );
 
-          // Queue for deeper search: use the question as the next keyword
-          // parent_keyword for those results will be THIS question
+          // Queue for deeper search: use the question as the next keyword.
+          // parent_keyword for those results will be THIS question.
           if (added && current.depth < maxDepth) {
             searchQueue.push({
               keyword: questionText,
@@ -264,7 +246,7 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
         }
       }
 
-      // Capture related searches and also queue them for PAA discovery
+      // Capture related searches and also queue them for PAA discovery.
       if (item.type === 'related_searches') {
         for (const related of (item.items || [])) {
           const relatedText = related.title || '';
@@ -280,7 +262,7 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
             thisParent,
           );
 
-          // Queue related searches for deeper PAA discovery too (same depth, not deeper)
+          // Queue related searches for deeper PAA discovery too (same depth, not deeper).
           if (current.depth <= maxDepth) {
             searchQueue.push({
               keyword: relatedText,
@@ -291,6 +273,60 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
         }
       }
     }
+  };
+
+  // BFS through PAA questions at increasing depth. Each round is dispatched as
+  // a SINGLE batched DataForSEO POST: the live/advanced endpoint accepts an
+  // array of tasks and processes them server-side in parallel, returning once
+  // all are done (wall time ~= the slowest task, not the sum). This replaces
+  // the previous one-await-per-keyword loop that made up to 25 sequential live
+  // SERP calls and could take 5+ minutes (bug d45587d5, info@nahiro.net).
+  const BATCH_SIZE = 10;
+  while (searchQueue.length > 0 && apiCallsMade < maxApiCalls) {
+    // Drain the next batch of not-yet-searched keywords, capped by the
+    // remaining call budget and BATCH_SIZE.
+    const batch: Array<{ keyword: string; depth: number; parentKeyword: string }> = [];
+    while (
+      searchQueue.length > 0 &&
+      apiCallsMade + batch.length < maxApiCalls &&
+      batch.length < BATCH_SIZE
+    ) {
+      const candidate = searchQueue.shift()!;
+      const nk = candidate.keyword.toLowerCase().trim();
+      if (searchedKeywords.has(nk)) continue;
+      searchedKeywords.add(nk);
+      batch.push(candidate);
+    }
+    if (batch.length === 0) continue;
+
+    let data: any;
+    try {
+      data = await dataforseoRequest(
+        env,
+        '/serp/google/organic/live/advanced',
+        batch.map((b) => ({
+          keyword: b.keyword,
+          location_code: parseInt(location),
+          language_code: language,
+          device: 'desktop',
+          os: 'windows',
+        })),
+        90_000,
+      );
+    } catch {
+      // Whole batch failed (timeout/quota/etc). Count the attempts so the
+      // budget still advances and we don't spin forever, then stop.
+      apiCallsMade += batch.length;
+      continue;
+    }
+    apiCallsMade += batch.length;
+
+    // DFS returns tasks in submission order, so align each result to its keyword.
+    const tasks = data?.tasks || [];
+    batch.forEach((current, i) => {
+      const items = tasks[i]?.result?.[0]?.items || [];
+      processSerpItems(items, current);
+    });
   }
 
   // Build source stats
