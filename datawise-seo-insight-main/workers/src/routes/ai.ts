@@ -275,58 +275,63 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
     }
   };
 
-  // BFS through PAA questions at increasing depth. Each round is dispatched as
-  // a SINGLE batched DataForSEO POST: the live/advanced endpoint accepts an
-  // array of tasks and processes them server-side in parallel, returning once
-  // all are done (wall time ~= the slowest task, not the sum). This replaces
-  // the previous one-await-per-keyword loop that made up to 25 sequential live
-  // SERP calls and could take 5+ minutes (bug d45587d5, info@nahiro.net).
-  const BATCH_SIZE = 10;
+  // Fetch one keyword's SERP. Each request is a SINGLE task: DataForSEO's
+  // live/advanced endpoint only reliably processes the first task in a POST
+  // array (extra tasks return status 40000, empty) — verified 2026-06-03 — so
+  // we must not batch tasks into one request. `people_also_ask_click_depth`
+  // makes DFS expand the PAA accordion server-side, returning ~12 questions
+  // per call instead of ~4, which is what gets coverage to 50+ across the BFS.
+  const fetchSerpItems = async (
+    current: { keyword: string; depth: number; parentKeyword: string }
+  ): Promise<{ current: typeof current; items: any[] }> => {
+    try {
+      const data = await dataforseoRequest(
+        env,
+        '/serp/google/organic/live/advanced',
+        [{
+          keyword: current.keyword,
+          location_code: parseInt(location),
+          language_code: language,
+          device: 'desktop',
+          os: 'windows',
+          people_also_ask_click_depth: 4,
+        }],
+        45_000,
+      );
+      return { current, items: data?.tasks?.[0]?.result?.[0]?.items || [] };
+    } catch {
+      return { current, items: [] };
+    }
+  };
+
+  // BFS through PAA questions at increasing depth. Each round dispatches up to
+  // CONCURRENCY single-task calls in PARALLEL (Promise.all), so wall time per
+  // round is the slowest call (~10s) rather than the sum. This replaces the
+  // previous one-await-per-keyword loop that made up to 25 sequential live SERP
+  // calls and could take 5+ minutes (bug d45587d5, info@nahiro.net).
+  const CONCURRENCY = 6;
   while (searchQueue.length > 0 && apiCallsMade < maxApiCalls) {
-    // Drain the next batch of not-yet-searched keywords, capped by the
-    // remaining call budget and BATCH_SIZE.
-    const batch: Array<{ keyword: string; depth: number; parentKeyword: string }> = [];
+    // Drain the next round of not-yet-searched keywords, capped by the
+    // remaining call budget and CONCURRENCY.
+    const round: Array<{ keyword: string; depth: number; parentKeyword: string }> = [];
     while (
       searchQueue.length > 0 &&
-      apiCallsMade + batch.length < maxApiCalls &&
-      batch.length < BATCH_SIZE
+      apiCallsMade + round.length < maxApiCalls &&
+      round.length < CONCURRENCY
     ) {
       const candidate = searchQueue.shift()!;
       const nk = candidate.keyword.toLowerCase().trim();
       if (searchedKeywords.has(nk)) continue;
       searchedKeywords.add(nk);
-      batch.push(candidate);
+      round.push(candidate);
     }
-    if (batch.length === 0) continue;
+    if (round.length === 0) continue;
+    apiCallsMade += round.length;
 
-    let data: any;
-    try {
-      data = await dataforseoRequest(
-        env,
-        '/serp/google/organic/live/advanced',
-        batch.map((b) => ({
-          keyword: b.keyword,
-          location_code: parseInt(location),
-          language_code: language,
-          device: 'desktop',
-          os: 'windows',
-        })),
-        90_000,
-      );
-    } catch {
-      // Whole batch failed (timeout/quota/etc). Count the attempts so the
-      // budget still advances and we don't spin forever, then stop.
-      apiCallsMade += batch.length;
-      continue;
-    }
-    apiCallsMade += batch.length;
-
-    // DFS returns tasks in submission order, so align each result to its keyword.
-    const tasks = data?.tasks || [];
-    batch.forEach((current, i) => {
-      const items = tasks[i]?.result?.[0]?.items || [];
+    const results = await Promise.all(round.map(fetchSerpItems));
+    for (const { current, items } of results) {
       processSerpItems(items, current);
-    });
+    }
   }
 
   // Build source stats
