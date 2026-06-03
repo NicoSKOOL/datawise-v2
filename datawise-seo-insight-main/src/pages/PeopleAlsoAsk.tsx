@@ -127,6 +127,7 @@ const PeopleAlsoAsk = () => {
   const [language, setLanguage] = useState("en");
   const [depth, setDepth] = useState("2");
   const [loading, setLoading] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const [data, setData] = useState<PAAItem[]>([]);
   const [sourceStats, setSourceStats] = useState<Record<string, number>>({});
   const [selectedSource, setSelectedSource] = useState<string>('all');
@@ -229,6 +230,22 @@ const PeopleAlsoAsk = () => {
   useEffect(() => {
     setSelectedQuestionKeys(new Set());
   }, [data]);
+
+  // Tick an elapsed-seconds counter while a search is running so the user can
+  // see it is still working (the request spans multiple live SERP fetches and
+  // can take 30-60s). Without this the spinner alone reads as "stuck"
+  // (bug d45587d5).
+  useEffect(() => {
+    if (!loading) {
+      setElapsedSec(0);
+      return;
+    }
+    const started = Date.now();
+    const id = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [loading]);
 
   const visibleQuestionKeys = useMemo(
     () => filteredData.map((item) => normalizePlannerKeyword(item.question)).filter(Boolean),
@@ -395,9 +412,19 @@ const PeopleAlsoAsk = () => {
                     </>
                   )}
                 </Button>
-                {parseInt(depth) >= 2 && (
+                {!loading && parseInt(depth) >= 2 && (
                   <p className="text-xs text-muted-foreground">
                     Depth {depth} uses up to {depth === "2" ? "~6" : "~18"} API calls per search
+                  </p>
+                )}
+                {loading && (
+                  <p className="text-xs text-muted-foreground" aria-live="polite">
+                    {elapsedSec < 15
+                      ? "Querying Google SERPs for People Also Ask questions…"
+                      : elapsedSec < 40
+                        ? "Still working: expanding related questions and deeper results…"
+                        : "Almost there: compiling the content map. Higher depth takes longer."}
+                    {" "}({elapsedSec}s)
                   </p>
                 )}
               </div>

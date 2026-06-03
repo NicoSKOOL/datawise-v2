@@ -206,33 +206,15 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
     return true;
   };
 
-  // BFS through PAA questions at increasing depth
-  while (searchQueue.length > 0 && apiCallsMade < maxApiCalls) {
-    const current = searchQueue.shift()!;
-    const normalizedKw = current.keyword.toLowerCase().trim();
-
-    if (searchedKeywords.has(normalizedKw)) continue;
-    searchedKeywords.add(normalizedKw);
-
-    let data: any;
-    try {
-      data = await dataforseoRequest(env, '/serp/google/organic/live/advanced', [{
-        keyword: current.keyword,
-        location_code: parseInt(location),
-        language_code: language,
-        device: 'desktop',
-        os: 'windows',
-      }]);
-    } catch {
-      continue;
-    }
-    apiCallsMade++;
-
-    const result = data?.tasks?.[0]?.result?.[0];
-    const items = result?.items || [];
-
-    // The parent for items found in THIS search is the keyword we searched
-    // For the root keyword, parent is the keyword itself; for deeper searches, it's the question we followed
+  // Process one SERP result (its items array) for the keyword we searched.
+  // Extracted so the batched dispatch below can reuse it per task.
+  const processSerpItems = (
+    items: any[],
+    current: { keyword: string; depth: number; parentKeyword: string }
+  ) => {
+    // The parent for items found in THIS search is the keyword we searched.
+    // For the root keyword, parent is the keyword itself; for deeper searches,
+    // it's the question we followed.
     const thisParent = current.parentKeyword || keyword;
 
     for (const item of items) {
@@ -252,8 +234,8 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
             thisParent,
           );
 
-          // Queue for deeper search: use the question as the next keyword
-          // parent_keyword for those results will be THIS question
+          // Queue for deeper search: use the question as the next keyword.
+          // parent_keyword for those results will be THIS question.
           if (added && current.depth < maxDepth) {
             searchQueue.push({
               keyword: questionText,
@@ -264,7 +246,7 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
         }
       }
 
-      // Capture related searches and also queue them for PAA discovery
+      // Capture related searches and also queue them for PAA discovery.
       if (item.type === 'related_searches') {
         for (const related of (item.items || [])) {
           const relatedText = related.title || '';
@@ -280,7 +262,7 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
             thisParent,
           );
 
-          // Queue related searches for deeper PAA discovery too (same depth, not deeper)
+          // Queue related searches for deeper PAA discovery too (same depth, not deeper).
           if (current.depth <= maxDepth) {
             searchQueue.push({
               keyword: relatedText,
@@ -290,6 +272,65 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
           }
         }
       }
+    }
+  };
+
+  // Fetch one keyword's SERP. Each request is a SINGLE task: DataForSEO's
+  // live/advanced endpoint only reliably processes the first task in a POST
+  // array (extra tasks return status 40000, empty) — verified 2026-06-03 — so
+  // we must not batch tasks into one request. `people_also_ask_click_depth`
+  // makes DFS expand the PAA accordion server-side, returning ~12 questions
+  // per call instead of ~4, which is what gets coverage to 50+ across the BFS.
+  const fetchSerpItems = async (
+    current: { keyword: string; depth: number; parentKeyword: string }
+  ): Promise<{ current: typeof current; items: any[] }> => {
+    try {
+      const data = await dataforseoRequest(
+        env,
+        '/serp/google/organic/live/advanced',
+        [{
+          keyword: current.keyword,
+          location_code: parseInt(location),
+          language_code: language,
+          device: 'desktop',
+          os: 'windows',
+          people_also_ask_click_depth: 4,
+        }],
+        45_000,
+      );
+      return { current, items: data?.tasks?.[0]?.result?.[0]?.items || [] };
+    } catch {
+      return { current, items: [] };
+    }
+  };
+
+  // BFS through PAA questions at increasing depth. Each round dispatches up to
+  // CONCURRENCY single-task calls in PARALLEL (Promise.all), so wall time per
+  // round is the slowest call (~10s) rather than the sum. This replaces the
+  // previous one-await-per-keyword loop that made up to 25 sequential live SERP
+  // calls and could take 5+ minutes (bug d45587d5, info@nahiro.net).
+  const CONCURRENCY = 6;
+  while (searchQueue.length > 0 && apiCallsMade < maxApiCalls) {
+    // Drain the next round of not-yet-searched keywords, capped by the
+    // remaining call budget and CONCURRENCY.
+    const round: Array<{ keyword: string; depth: number; parentKeyword: string }> = [];
+    while (
+      searchQueue.length > 0 &&
+      apiCallsMade + round.length < maxApiCalls &&
+      round.length < CONCURRENCY
+    ) {
+      const candidate = searchQueue.shift()!;
+      const nk = candidate.keyword.toLowerCase().trim();
+      if (searchedKeywords.has(nk)) continue;
+      searchedKeywords.add(nk);
+      round.push(candidate);
+    }
+    if (round.length === 0) continue;
+    apiCallsMade += round.length;
+
+    const results = await Promise.all(round.map(fetchSerpItems));
+    for (const { current, items } of results) {
+      processSerpItems(items, current);
     }
   }
 
