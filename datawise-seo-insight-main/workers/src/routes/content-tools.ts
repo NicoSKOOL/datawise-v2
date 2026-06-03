@@ -1294,8 +1294,18 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
   ];
   const provider = getLLMProvider(env, body.llm_config);
 
+  // REWRITE_PROMPT asks for a full article (minimum 1,200 words) plus an FAQ.
+  // The default 4096-token cap is far too small for that, and on reasoning
+  // models (deepseek-v4, gpt-5*) the reasoning tokens are deducted from the
+  // same budget, so the model can burn the cap and return only the opening
+  // `# title` line, leaving the user with a title and no body (bug reported
+  // 2026-06-03 by javier.barrezueta, worse in Spanish since output runs ~15-20%
+  // longer). Match the Content Writer's draft budget. See the matching note in
+  // content-writer.ts resolvePostStepMaxTokens.
+  const REWRITE_MAX_TOKENS = 16384;
+
   try {
-    let result = await provider.chatComplete(messages, env, body.llm_config, 4096);
+    let result = await provider.chatComplete(messages, env, body.llm_config, REWRITE_MAX_TOKENS);
     let totalIn = result.usage.input_tokens;
     let totalOut = result.usage.output_tokens;
 
@@ -1305,13 +1315,28 @@ export async function handleRewritePost(request: Request, env: Env): Promise<Res
         console.warn(`[content-tools/rewrite] language mismatch: expected=${expectedLangFamily} detected=${detected}`);
         messages.push({ role: 'assistant', content: result.text });
         messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
-        result = await provider.chatComplete(messages, env, body.llm_config, 4096);
+        result = await provider.chatComplete(messages, env, body.llm_config, REWRITE_MAX_TOKENS);
         totalIn += result.usage.input_tokens;
         totalOut += result.usage.output_tokens;
       }
     }
 
-    return json({ rewritten: result.text.trim(), usage: { input_tokens: totalIn, output_tokens: totalOut } });
+    const rewritten = result.text.trim();
+
+    // Don't return a silent title-only/empty result. If the model gave us
+    // nothing usable (e.g. it spent the whole budget on reasoning), tell the
+    // user plainly instead of rendering a blank rewrite.
+    if (!rewritten) {
+      console.error(`[content-tools/rewrite] empty rewrite (finish_reason=${result.finishReason ?? 'unknown'}, output_tokens=${totalOut})`);
+      return json({
+        error: 'The rewrite came back empty. This usually means the selected model returned no text (often a reasoning model that used its budget without writing). Try again, or switch to a different writing model in Settings.',
+      }, 502);
+    }
+    if (result.finishReason === 'length') {
+      console.warn(`[content-tools/rewrite] output hit the token cap (output_tokens=${totalOut}); rewrite may be truncated`);
+    }
+
+    return json({ rewritten, usage: { input_tokens: totalIn, output_tokens: totalOut } });
   } catch (err) {
     return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
   }
