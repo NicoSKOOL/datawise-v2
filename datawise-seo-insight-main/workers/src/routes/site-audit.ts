@@ -9,6 +9,7 @@ import {
   LIGHTHOUSE_PERFORMANCE_PROBE_CONFIG,
 } from '../dataforseo/on-page';
 import type { OnPageSummary } from '../dataforseo/on-page';
+import { safeFetch, BROWSER_UA } from '../lib/safe-fetch';
 import {
   analyzeOnPage,
   buildStructuredSEO,
@@ -364,6 +365,79 @@ async function scheduleNextAuditPoll(
     .run();
 }
 
+// DFS sometimes reports robots.txt / sitemap as missing when the site's WAF
+// blocked DFS's own fetch (many WooCommerce/Cloudflare sites 403 non-browser
+// user agents) even though the files exist and serve 200 to a real browser.
+// Confirmed 2026-06-03 on resortstylebeanbags.com.au, which was flagged "No
+// robots.txt found" while robots.txt is present. Before trusting a "missing"
+// verdict, re-check ourselves with a browser UA and clear the false negative
+// (mutating summary.domain_info.checks) so the analyzer never emits the wrong
+// finding. Costs zero extra fetches for sites DFS already saw as present.
+async function clearRobotsSitemapFalseNegatives(
+  summary: OnPageSummary,
+  startUrl: string | null
+): Promise<void> {
+  const checks = summary.domain_info?.checks;
+  if (!checks) return;
+  const robotsMissing = checks.robots_txt === false;
+  const sitemapMissing = checks.sitemap === false;
+  if (!robotsMissing && !sitemapMissing) return;
+
+  let origin: string;
+  try {
+    origin = new URL(startUrl || '').origin;
+  } catch {
+    return;
+  }
+
+  const declaredSitemaps: string[] = [];
+
+  if (robotsMissing) {
+    try {
+      const resp = await safeFetch(`${origin}/robots.txt`, {
+        headers: { 'User-Agent': BROWSER_UA, Accept: 'text/plain,*/*' },
+        redirect: 'follow',
+        timeoutMs: 10_000,
+      });
+      if (resp.ok) {
+        const text = (await resp.text()).trim();
+        if (text.length > 0) {
+          checks.robots_txt = true;
+          for (const line of text.split('\n')) {
+            if (line.toLowerCase().startsWith('sitemap:')) {
+              const u = line.split(':').slice(1).join(':').trim();
+              if (u) declaredSitemaps.push(u);
+            }
+          }
+        }
+      }
+    } catch {
+      // leave DFS verdict untouched on fetch/SSRF-guard error
+    }
+  }
+
+  if (sitemapMissing) {
+    const candidates = declaredSitemaps.length
+      ? declaredSitemaps
+      : [`${origin}/sitemap.xml`, `${origin}/sitemap_index.xml`];
+    for (const url of candidates) {
+      try {
+        const resp = await safeFetch(url, {
+          headers: { 'User-Agent': BROWSER_UA, Accept: 'application/xml,text/xml,*/*' },
+          redirect: 'follow',
+          timeoutMs: 10_000,
+        });
+        if (resp.ok && /<(urlset|sitemapindex)/i.test((await resp.text()).slice(0, 5000))) {
+          checks.sitemap = true;
+          break;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+  }
+}
+
 // ---------- Queue processor + finalizer ----------
 // Used by cron and opportunistically by list/detail endpoints. It checks DFS
 // summary, and if the crawl is finished, pulls pages/resources/microdata,
@@ -452,6 +526,10 @@ async function processAuditRow(env: Env, audit: any): Promise<any> {
   console.log(
     `[site-audit] pulled data for ${audit.id} in ${Date.now() - t0}ms: ${pages.length} pages, ${resources.length} resources, microdata=${!!microdata}, perf_samples=${performanceSummary.successful_sample_count}/${PERFORMANCE_PROBE_COUNT}`
   );
+
+  // Clear DFS robots.txt/sitemap false negatives (WAF-blocked DFS fetch) before
+  // analysis so we don't surface findings that contradict the live site.
+  await clearRobotsSitemapFalseNegatives(summary, homepageUrl);
 
   // Run the analyzer.
   let result: AnalyzeResult;
