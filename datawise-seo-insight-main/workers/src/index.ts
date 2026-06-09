@@ -135,6 +135,11 @@ import {
   handleBusinessCategoriesPublic,
 } from './routes/public-tools';
 import { handlePageview, prunePageviews } from './routes/track';
+import {
+  handleGetAITracking, handleUpdateAISettings, handleAddAIQueries,
+  handleDeleteAIQuery, handleRunAICheck, handleAIReport,
+  runScheduledAIChecks,
+} from './routes/ai-tracking';
 
 export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
@@ -148,6 +153,12 @@ export default {
     // Daily GSC re-sync (runs once a day, separate from the 6h email cron).
     if (event.cron === '0 11 * * *') {
       await runDailyGSCSync(env);
+      return;
+    }
+
+    // Weekly AI visibility tracking run (Monday 06:00 UTC).
+    if (event.cron === '0 6 * * 1') {
+      await runScheduledAIChecks(env);
       return;
     }
 
@@ -414,6 +425,32 @@ export default {
       if (path.match(/^\/api\/rank-tracking\/keywords\/[^/]+\/history$/) && method === 'GET') {
         const keywordId = path.split('/')[4];
         return addCors(await handleKeywordHistory(env, user.id, keywordId));
+      }
+
+      // --- AI Visibility Tracking (per rank-tracking project) ---
+      if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+\/ai$/) && method === 'GET') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleGetAITracking(env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+\/ai$/) && method === 'PATCH') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleUpdateAISettings(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+\/ai\/queries$/) && method === 'POST') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleAddAIQueries(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/rank-tracking\/ai-queries\/[^/]+$/) && method === 'DELETE') {
+        const queryId = path.split('/')[4];
+        return addCors(await handleDeleteAIQuery(env, user.id, queryId));
+      }
+      if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+\/ai\/check$/) && method === 'POST') {
+        const projectId = path.split('/')[4];
+        return await withCredit(() => handleRunAICheck(env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+\/ai\/report$/) && method === 'GET') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleAIReport(request, env, user.id, projectId));
       }
 
       // --- Content Planner ---
