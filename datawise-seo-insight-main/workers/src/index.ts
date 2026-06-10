@@ -533,7 +533,7 @@ export default {
         return await withCredit(() => handleGBPProfile(request, env));
       }
       if (path === '/api/local-seo/reviews' && method === 'POST') {
-        return await withCredit(() => handleReviews(request, env));
+        return await withCredit(() => handleReviews(request, env, user.id));
       }
       if (path === '/api/local-seo/keyword-suggestions' && method === 'POST') {
         return await withCredit(() => handleLocalKeywordSuggestions(request, env));

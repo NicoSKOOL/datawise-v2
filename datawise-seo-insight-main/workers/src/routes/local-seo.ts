@@ -7,6 +7,11 @@ import { dataforseoRequest, dataforseoRequestCached, dataforseoGet } from '../da
 const LOCAL_KEYWORDS_TTL_SECONDS = 86400;
 const LOCAL_GBP_TTL_SECONDS = 3600;
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
+import {
+  zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
+  ratingDistributionFallback, computeVelocity, computeReviewsHash, validateReviewThemes,
+  type AggregatedCompetitor,
+} from './local-reviews-analysis';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -486,14 +491,88 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
 }
 
 // POST /api/local-seo/reviews
-export async function handleReviews(request: Request, env: Env): Promise<Response> {
-  const { place_id, cid, business_name, location_code = 2840, language_code = 'en', depth = 20, sort_by = 'newest' } = await request.json() as any;
+// Optional project_id (verified against userId) enables daily snapshot writes
+// and snapshot-based trends for the Reviews report header tiles.
+export async function handleReviews(request: Request, env: Env, userId?: string): Promise<Response> {
+  const {
+    place_id, cid, business_name, location_code = 2840, language_code = 'en',
+    depth = 100, sort_by = 'newest', project_id,
+  } = await request.json() as any;
   if (!place_id && !cid && !business_name) return json({ error: 'place_id, cid, or business_name is required' }, 400);
+
+  // Resolve the owning local project (snapshot scope). Silently ignored when
+  // missing or not owned: reviews still render without trends.
+  let projectId: string | null = null;
+  if (project_id && userId) {
+    const owned = await env.DB.prepare(
+      'SELECT id FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+    ).bind(project_id, userId, 'local').first();
+    if (owned) projectId = project_id;
+  }
+
+  const parseSnapshotRow = (row: any) => row
+    ? { ...row, rating_distribution: row.rating_distribution ? JSON.parse(row.rating_distribution) : null }
+    : null;
+
+  // Snapshot trends for the four header tiles: latest row, the newest row
+  // older than 30 days (period start), and the newest row older than 60 days.
+  const loadSnapshots = async () => {
+    if (!projectId) return { latest: null, period_start: null, previous_period_start: null };
+    const latest = await env.DB.prepare(
+      `SELECT rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution, created_at
+       FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`
+    ).bind(projectId).first();
+    const periodStart = await env.DB.prepare(
+      `SELECT rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution, created_at
+       FROM local_review_snapshots WHERE project_id = ? AND created_at <= datetime('now', '-30 days')
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(projectId).first();
+    const prevPeriodStart = await env.DB.prepare(
+      `SELECT rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution, created_at
+       FROM local_review_snapshots WHERE project_id = ? AND created_at <= datetime('now', '-60 days')
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(projectId).first();
+    return {
+      latest: parseSnapshotRow(latest),
+      period_start: parseSnapshotRow(periodStart),
+      previous_period_start: parseSnapshotRow(prevPeriodStart),
+    };
+  };
+
+  // Review-count baselines for velocity: prefer snapshots, fall back to
+  // local_rank_history.reviews_count captured on every rank check.
+  const loadVelocity = async (currentCount: number | null, snaps: { period_start: any; previous_period_start: any }) => {
+    if (!projectId) return { current: null, previous: null };
+    let startOfPeriod: number | null = snaps.period_start?.reviews_count ?? null;
+    let startOfPrevious: number | null = snaps.previous_period_start?.reviews_count ?? null;
+    if (startOfPeriod == null) {
+      const row = await env.DB.prepare(
+        `SELECT MAX(lrh.reviews_count) as cnt FROM local_rank_history lrh
+         JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+         WHERE tk.project_id = ? AND lrh.checked_at < datetime('now', '-30 days') AND lrh.checked_at >= datetime('now', '-60 days')`
+      ).bind(projectId).first() as any;
+      startOfPeriod = row?.cnt ?? null;
+    }
+    if (startOfPrevious == null) {
+      const row = await env.DB.prepare(
+        `SELECT MAX(lrh.reviews_count) as cnt FROM local_rank_history lrh
+         JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+         WHERE tk.project_id = ? AND lrh.checked_at < datetime('now', '-60 days') AND lrh.checked_at >= datetime('now', '-90 days')`
+      ).bind(projectId).first() as any;
+      startOfPrevious = row?.cnt ?? null;
+    }
+    return computeVelocity({ currentCount, startOfPeriodCount: startOfPeriod, startOfPreviousPeriodCount: startOfPrevious });
+  };
 
   const identifier = place_id || cid || business_name;
   const cacheKey = `gbp-reviews:${identifier}:${sort_by}:${depth}`;
-  const cached = await env.KV.get(cacheKey, 'json');
-  if (cached) return json(cached);
+  const cached = await env.KV.get(cacheKey, 'json') as any;
+  if (cached) {
+    // Snapshots and velocity are project-scoped and never baked into KV.
+    const snapshots = await loadSnapshots();
+    const velocity = await loadVelocity(cached.reviews_count ?? null, snapshots);
+    return json({ ...cached, snapshots, velocity });
+  }
 
   // Reviews API only supports async: task_post then poll task_get
   // place_id and cid are top-level params, not in keyword
@@ -543,17 +622,63 @@ export async function handleReviews(request: Request, env: Env): Promise<Respons
     review_url: item.review_url || item.url || null,
   }));
 
+  // Rating distribution: my_business_info first (KV-cached GBP profile, then a
+  // 1h-cached DFS call), fallback computed from the fetched reviews.
+  let ratingDistribution: Record<string, number> | null = null;
+  const gbpCached = await env.KV.get(`gbp-profile:${place_id || business_name}`, 'json') as any;
+  if (gbpCached?.rating_distribution) {
+    ratingDistribution = gbpCached.rating_distribution;
+  } else if (place_id || business_name) {
+    try {
+      const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
+        keyword: place_id ? `place_id:${place_id}` : business_name,
+        location_code,
+        language_code,
+      }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
+      ratingDistribution = data?.tasks?.[0]?.result?.[0]?.rating_distribution ?? null;
+    } catch { /* fall back to computed */ }
+  }
+  if (!ratingDistribution || Object.keys(ratingDistribution).length === 0) {
+    ratingDistribution = ratingDistributionFallback(reviews);
+  }
+
   const response = {
     rating: result.rating?.value ?? null,
     reviews_count: result.reviews_count ?? reviews.length,
     place_id: place_id || result.place_id || null,
+    rating_distribution: ratingDistribution,
     reviews,
   };
 
-  // Cache for 6h
+  // Daily snapshot on fresh (cache-miss) fetches: at most one row per project per day.
+  if (projectId) {
+    const lastRow = await env.DB.prepare(
+      'SELECT created_at FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(projectId).first() as any;
+    if (shouldWriteSnapshot(lastRow?.created_at ?? null, new Date())) {
+      const snap = buildSnapshot({
+        rating: response.rating,
+        reviews_count: response.reviews_count,
+        reviews,
+        rating_distribution: ratingDistribution,
+      });
+      await env.DB.prepare(
+        `INSERT INTO local_review_snapshots
+           (project_id, rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        projectId, snap.rating, snap.reviews_count, snap.fetched_count,
+        snap.responded_count, snap.response_rate, snap.unanswered_low_star, snap.rating_distribution
+      ).run();
+    }
+  }
+
+  // Cache for 6h (without project-scoped trend fields)
   await env.KV.put(cacheKey, JSON.stringify(response), { expirationTtl: 21600 });
 
-  return json(response);
+  const snapshots = await loadSnapshots();
+  const velocity = await loadVelocity(response.reviews_count, snapshots);
+  return json({ ...response, snapshots, velocity });
 }
 
 // POST /api/local-seo/keyword-suggestions
