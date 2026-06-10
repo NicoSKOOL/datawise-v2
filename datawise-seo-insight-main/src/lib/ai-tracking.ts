@@ -90,7 +90,7 @@ export async function updateAISettings(projectId: string, params: {
   return api(`/api/rank-tracking/projects/${projectId}/ai`, { method: 'PATCH', body: params }) as Promise<AITrackingData>;
 }
 
-export async function addAIQueries(projectId: string, queries: Array<{ text: string; keyword_id?: string }>) {
+export async function addAIQueries(projectId: string, queries: Array<{ text: string; keyword_id?: string; source?: string }>) {
   return api(`/api/rank-tracking/projects/${projectId}/ai/queries`, { method: 'POST', body: { queries } }) as Promise<{ added: number; skipped: number; remaining: number }>;
 }
 
