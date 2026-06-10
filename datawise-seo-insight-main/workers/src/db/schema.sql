@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS geogrid_competitors (
   best_position INTEGER,
   rating REAL,
   reviews INTEGER,
+  is_user INTEGER NOT NULL DEFAULT 0,  -- 1 when the row is the project's own business
   created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_geogrid_competitors_scan ON geogrid_competitors(scan_id);

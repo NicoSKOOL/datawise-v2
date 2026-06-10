@@ -515,10 +515,15 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
 // Optional project_id (verified against userId) enables daily snapshot writes
 // and snapshot-based trends for the Reviews report header tiles.
 export async function handleReviews(request: Request, env: Env, userId?: string): Promise<Response> {
+  const body = await request.json() as any;
   const {
     place_id, cid, business_name, location_code = 2840, language_code = 'en',
-    depth = 100, sort_by = 'newest', project_id,
-  } = await request.json() as any;
+    sort_by = 'newest', project_id,
+  } = body;
+  // Depth backward compatibility: the currently deployed SPA does not send
+  // project_id and was built against the old default of 20; only project-aware
+  // callers get the richer (5x cost) 100-review default. Explicit depth wins.
+  const depth = body.depth ?? (project_id ? 100 : 20);
   if (!place_id && !cid && !business_name) return json({ error: 'place_id, cid, or business_name is required' }, 400);
 
   // Resolve the owning local project (snapshot scope). Silently ignored when
@@ -531,8 +536,12 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
     if (owned) projectId = project_id;
   }
 
+  const parseJsonOrNull = (text: string | null | undefined): any => {
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { return null; }
+  };
   const parseSnapshotRow = (row: any) => row
-    ? { ...row, rating_distribution: row.rating_distribution ? JSON.parse(row.rating_distribution) : null }
+    ? { ...row, rating_distribution: parseJsonOrNull(row.rating_distribution) }
     : null;
 
   // Snapshot trends for the four header tiles: latest row, the newest row
@@ -671,26 +680,32 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
     reviews,
   };
 
-  // Daily snapshot on fresh (cache-miss) fetches: at most one row per project per day.
+  // Daily snapshot on fresh (cache-miss) fetches: at most one row per project
+  // per day. Bookkeeping only: a failed write must never fail the user-facing
+  // response (the table may not exist yet if the migration is pending).
   if (projectId) {
-    const lastRow = await env.DB.prepare(
-      'SELECT created_at FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
-    ).bind(projectId).first() as any;
-    if (shouldWriteSnapshot(lastRow?.created_at ?? null, new Date())) {
-      const snap = buildSnapshot({
-        rating: response.rating,
-        reviews_count: response.reviews_count,
-        reviews,
-        rating_distribution: ratingDistribution,
-      });
-      await env.DB.prepare(
-        `INSERT INTO local_review_snapshots
-           (project_id, rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(
-        projectId, snap.rating, snap.reviews_count, snap.fetched_count,
-        snap.responded_count, snap.response_rate, snap.unanswered_low_star, snap.rating_distribution
-      ).run();
+    try {
+      const lastRow = await env.DB.prepare(
+        'SELECT created_at FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).bind(projectId).first() as any;
+      if (shouldWriteSnapshot(lastRow?.created_at ?? null, new Date())) {
+        const snap = buildSnapshot({
+          rating: response.rating,
+          reviews_count: response.reviews_count,
+          reviews,
+          rating_distribution: ratingDistribution,
+        });
+        await env.DB.prepare(
+          `INSERT INTO local_review_snapshots
+             (project_id, rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          projectId, snap.rating, snap.reviews_count, snap.fetched_count,
+          snap.responded_count, snap.response_rate, snap.unanswered_low_star, snap.rating_distribution
+        ).run();
+      }
+    } catch (err) {
+      console.error('local_review_snapshots insert failed (migration pending?)', err);
     }
   }
 
@@ -716,6 +731,9 @@ export async function handleReviewThemes(request: Request, env: Env, userId: str
   if (!Array.isArray(reviews) || reviews.length === 0) {
     return json({ error: 'reviews array is required' }, 400);
   }
+  if (reviews.length > 200) {
+    return json({ error: 'Too many reviews, send at most 200' }, 400);
+  }
 
   const project = await env.DB.prepare(
     'SELECT id, name, business_name FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
@@ -729,13 +747,17 @@ export async function handleReviewThemes(request: Request, env: Env, userId: str
       'SELECT summary, themes, model, created_at FROM local_review_themes WHERE project_id = ? AND reviews_hash = ? ORDER BY created_at DESC LIMIT 1'
     ).bind(projectId, reviewsHash).first() as any;
     if (cachedRow) {
-      return json({
-        summary: cachedRow.summary,
-        themes: JSON.parse(cachedRow.themes),
-        generated_at: cachedRow.created_at,
-        cached: true,
-        model: cachedRow.model,
-      });
+      let cachedThemes: unknown = null;
+      try { cachedThemes = JSON.parse(cachedRow.themes); } catch { /* corrupt cache row: regenerate */ }
+      if (cachedThemes) {
+        return json({
+          summary: cachedRow.summary,
+          themes: cachedThemes,
+          generated_at: cachedRow.created_at,
+          cached: true,
+          model: cachedRow.model,
+        });
+      }
     }
   }
 
@@ -1352,11 +1374,17 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
   // Aggregate "Who owns your map" competitor share and persist top 10.
   const competitors = aggregateGeogridCompetitors(results, project.business_name);
   if (competitors.length > 0) {
-    await env.DB.batch(competitors.map(c =>
-      env.DB.prepare(
-        'INSERT INTO geogrid_competitors (scan_id, name, appearances, total_points, avg_position, best_position, rating, reviews) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(scanId, c.name, c.appearances, c.total_points, c.avg_position, c.best_position, c.rating, c.reviews)
-    ));
+    // Bookkeeping only: a failed write must never fail the scan response
+    // (the table or column may not exist yet if the migration is pending).
+    try {
+      await env.DB.batch(competitors.map(c =>
+        env.DB.prepare(
+          'INSERT INTO geogrid_competitors (scan_id, name, appearances, total_points, avg_position, best_position, rating, reviews, is_user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(scanId, c.name, c.appearances, c.total_points, c.avg_position, c.best_position, c.rating, c.reviews, c.is_user ? 1 : 0)
+      ));
+    } catch (err) {
+      console.error('geogrid_competitors insert failed (migration pending?)', err);
+    }
   }
 
   return json({
@@ -1402,16 +1430,18 @@ export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: 
 
   if (!scan) return json({ error: 'Scan not found' }, 404);
 
-  const points = JSON.parse(scan.results);
+  let points: any[] = [];
+  try { points = JSON.parse(scan.results) || []; } catch { points = []; }
 
   const { results: compRows } = await env.DB.prepare(
-    'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+    'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews, is_user FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
   ).bind(scanId).all() as { results: any[] };
 
   // Scans from before this feature have no stored rows: aggregate on the fly
-  // from the stored JSON blob (no backfill writes).
+  // from the stored JSON blob (no backfill writes). The stored is_user flag is
+  // authoritative; the name match covers rows written before the column.
   const competitors: AggregatedCompetitor[] = compRows.length > 0
-    ? compRows.map(r => ({ ...r, is_user: !!scan.business_name && r.name === scan.business_name }))
+    ? compRows.map(r => ({ ...r, is_user: !!r.is_user || (!!scan.business_name && r.name === scan.business_name) }))
     : aggregateGeogridCompetitors(points, scan.business_name);
 
   return json({
@@ -1449,17 +1479,30 @@ export async function handleGeoGridCompetitorSeries(request: Request, env: Env, 
     'SELECT id, scanned_at FROM geogrid_scans WHERE project_id = ? AND keyword = ? ORDER BY scanned_at DESC LIMIT 12'
   ).bind(projectId, keyword).all() as { results: any[] };
 
-  const series: Array<{ scan_id: string; scanned_at: string; competitors: AggregatedCompetitor[] }> = [];
-  for (const scan of scans) {
+  // Single query for all scans (instead of one query per scan), grouped in memory.
+  const rowsByScan = new Map<string, AggregatedCompetitor[]>();
+  if (scans.length > 0) {
+    const placeholders = scans.map(() => '?').join(',');
     const { results: rows } = await env.DB.prepare(
-      'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
-    ).bind(scan.id).all() as { results: any[] };
-    series.push({
-      scan_id: scan.id,
-      scanned_at: scan.scanned_at,
-      competitors: rows.map(r => ({ ...r, is_user: !!project.business_name && r.name === project.business_name })),
-    });
+      `SELECT scan_id, name, appearances, total_points, avg_position, best_position, rating, reviews, is_user
+       FROM geogrid_competitors WHERE scan_id IN (${placeholders}) ORDER BY appearances DESC`
+    ).bind(...scans.map(s => s.id)).all() as { results: any[] };
+    for (const row of rows) {
+      const { scan_id, ...rest } = row;
+      const list = rowsByScan.get(scan_id) || [];
+      list.push({
+        ...rest,
+        is_user: !!rest.is_user || (!!project.business_name && rest.name === project.business_name),
+      } as AggregatedCompetitor);
+      rowsByScan.set(scan_id, list);
+    }
   }
+
+  const series: Array<{ scan_id: string; scanned_at: string; competitors: AggregatedCompetitor[] }> = scans.map(scan => ({
+    scan_id: scan.id,
+    scanned_at: scan.scanned_at,
+    competitors: rowsByScan.get(scan.id) || [],
+  }));
   return json({ keyword, scans: series });
 }
 
@@ -1750,17 +1793,17 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
   let geogrid: any = null;
   let latestPoints: Array<{ row: number; col: number; position: number | null }> = [];
   if (latestScan) {
-    latestPoints = JSON.parse(latestScan.results);
+    try { latestPoints = JSON.parse(latestScan.results) || []; } catch { latestPoints = []; }
     const prevScan = await env.DB.prepare(
       'SELECT avg_position, top3_count, found_count, scanned_at FROM geogrid_scans WHERE project_id = ? AND keyword = ? AND scanned_at < ? ORDER BY scanned_at DESC LIMIT 1'
     ).bind(projectId, latestScan.keyword, latestScan.scanned_at).first() as any;
 
     const { results: compRows } = await env.DB.prepare(
-      'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+      'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews, is_user FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
     ).bind(latestScan.id).all() as { results: any[] };
     const competitors: AggregatedCompetitor[] = compRows.length > 0
-      ? compRows.map(r => ({ ...r, is_user: !!project.business_name && r.name === project.business_name }))
-      : aggregateGeogridCompetitors(latestPoints, project.business_name);
+      ? compRows.map(r => ({ ...r, is_user: !!r.is_user || (!!project.business_name && r.name === project.business_name) }))
+      : aggregateGeogridCompetitors(latestPoints as any, project.business_name);
 
     geogrid = {
       latest: {
@@ -1805,6 +1848,11 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
       'SELECT summary, themes, created_at FROM local_review_themes WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
     ).bind(projectId).first() as any;
 
+    let ratingDistribution: any = null;
+    try { ratingDistribution = latest.rating_distribution ? JSON.parse(latest.rating_distribution) : null; } catch { ratingDistribution = null; }
+    let parsedThemes: any = null;
+    try { parsedThemes = themesRow?.themes ? JSON.parse(themesRow.themes) : null; } catch { parsedThemes = null; }
+
     reviews = {
       rating: latest.rating,
       rating_previous: atPeriodStart?.rating ?? null,
@@ -1812,10 +1860,10 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
       response_rate: latest.response_rate,
       response_rate_previous: atPeriodStart?.response_rate ?? null,
       unanswered_low_star: latest.unanswered_low_star,
-      rating_distribution: latest.rating_distribution ? JSON.parse(latest.rating_distribution) : null,
+      rating_distribution: ratingDistribution,
       velocity: { current_period: velocity.current, previous_period: velocity.previous },
-      themes: themesRow
-        ? { summary: themesRow.summary, themes: JSON.parse(themesRow.themes), generated_at: themesRow.created_at }
+      themes: themesRow && parsedThemes
+        ? { summary: themesRow.summary, themes: parsedThemes, generated_at: themesRow.created_at }
         : null,
     };
   }
