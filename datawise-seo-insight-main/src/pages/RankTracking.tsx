@@ -342,9 +342,12 @@ export default function RankTracking() {
     if (!selectedProject) return;
     setChecking(true);
     try {
-      const result = await checkProjectRankings(selectedProject.id) as { checked: number; found: number; not_ranking: number; errors?: number };
+      const result = await checkProjectRankings(selectedProject.id) as { checked: number; total_keywords?: number; found: number; not_ranking: number; errors?: number };
       const parts = [`${result.found} found in Google`, `${result.not_ranking} not in top 100`];
       if (result.errors) parts.push(`${result.errors} failed`);
+      if (result.total_keywords && result.checked < result.total_keywords) {
+        parts.push(`checked ${result.checked} of ${result.total_keywords}, run again for the rest`);
+      }
       toast({
         title: 'Rankings checked',
         description: parts.join(', '),

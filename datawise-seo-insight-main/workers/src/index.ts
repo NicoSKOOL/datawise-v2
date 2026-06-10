@@ -163,9 +163,9 @@ export default {
       return;
     }
 
-    // Weekly SERP rank checks for tracked-keyword projects (Tuesday 08:00 UTC).
-    // KV key `rank-checks-paused` is the kill switch.
-    if (event.cron === '0 8 * * 2') {
+    // Scheduled SERP rank checks for tracked-keyword projects (Tue/Thu/Sat
+    // 08:00 UTC). KV key `rank-checks-paused` is the kill switch.
+    if (event.cron === '0 8 * * 2,4,6') {
       await runScheduledRankChecks(env);
       return;
     }
