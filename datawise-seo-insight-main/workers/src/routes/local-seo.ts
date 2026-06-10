@@ -625,10 +625,15 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
 
   if (!taskId) return json({ error: 'Failed to create reviews task' }, 500);
 
-  // Poll task_get up to 5 times (2s intervals, 10s max)
+  // Poll task_get. Deep fetches (depth > 20) take DataForSEO longer to crawl,
+  // so they get a longer backoff schedule (~40s total) than the original
+  // 5x2s window that was tuned for depth 20.
+  const pollDelaysMs = depth > 20
+    ? [2000, 2000, 3000, 3000, 4000, 4000, 5000, 5000, 6000, 6000]
+    : [2000, 2000, 2000, 2000, 2000];
   let result: any = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
+  for (const delayMs of pollDelaysMs) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
     const getData = await dataforseoGet(env, `/business_data/google/reviews/task_get/${taskId}`);
     const task = getData?.tasks?.[0];
     if (task?.status_code === 20000 && task?.result?.[0]?.items) {
