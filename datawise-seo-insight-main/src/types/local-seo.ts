@@ -215,6 +215,47 @@ export interface GeoGridHistoryItem {
   scanned_at: string;
 }
 
+export interface LocalPeriodKeywordMove {
+  keyword: string;
+  start_position: number | null;
+  current_position: number | null;
+  delta: number | null; // positive = improved
+}
+
+export interface LocalPeriodReportData {
+  project: { id: string; name: string; business_name: string | null; domain: string | null };
+  days: number;
+  keywords: LocalPeriodKeywordMove[];
+  best_movers: LocalPeriodKeywordMove[];
+  decliners: LocalPeriodKeywordMove[];
+  geogrid: {
+    latest: {
+      scan_id: string;
+      keyword: string;
+      scanned_at: string;
+      avg_position: number | null;
+      top3_count: number;
+      found_count: number;
+      total_points: number;
+      competitors: GeoGridCompetitor[];
+    };
+    previous: { avg_position: number | null; top3_count: number; found_count: number; scanned_at: string } | null;
+  } | null;
+  reviews: {
+    rating: number | null;
+    rating_previous: number | null;
+    reviews_count: number | null;
+    response_rate: number | null;
+    response_rate_previous: number | null;
+    unanswered_low_star: number | null;
+    rating_distribution: Record<string, number> | null;
+    velocity: { current_period: number | null; previous_period: number | null };
+    themes: { summary: string; themes: ReviewTheme[]; generated_at: string } | null;
+  } | null;
+  gbp: { completeness_pct: number; missing: string[] } | null;
+  next_steps: Array<{ title: string; detail: string }>;
+}
+
 export interface GeoGridInsightAction {
   title: string;
   impact: 'high' | 'medium' | 'low';

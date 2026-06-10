@@ -20,7 +20,7 @@ import {
 import {
   fetchLocalProjects, createLocalProject, deleteLocalProject,
   fetchLocalKeywords, addLocalKeywords, checkLocalRankings, fetchLocalReport,
-  fetchGBPProfile, linkLocalProjectGBP,
+  fetchGBPProfile, linkLocalProjectGBP, fetchLocalPeriodReport,
 } from '@/lib/local-seo';
 import { Input } from '@/components/ui/input';
 import { RefreshCw, Link2, Sparkles, Activity, Search, ArrowLeft, MapPin, LayoutGrid, List, Globe2 } from 'lucide-react';
@@ -52,6 +52,7 @@ import LocalSuggestionsInline from '@/components/local-seo/LocalSuggestionsInlin
 import LocalKeywordDiscoveryPanel from '@/components/local-seo/LocalKeywordDiscoveryPanel';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildRankTrackingReport } from '@/lib/export/adapters/rankTracking';
+import { buildLocalSEOReport } from '@/lib/export/adapters/localSEO';
 import { captureElementPng } from '@/lib/export/chartCapture';
 
 function getErrorMessage(error: unknown) {
@@ -635,6 +636,24 @@ export default function RankTracking() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <ExportMenu
+              surface="local-seo"
+              identifier={selectedLocalProject.business_name || selectedLocalProject.name}
+              buildPayload={async () => {
+                // Period comes from the page-level selector (7/14/30/90, default 30).
+                const periodReport = await fetchLocalPeriodReport(selectedLocalProject.id, localReportPeriod);
+                const safeCapture = (id: string) =>
+                  captureElementPng(document.getElementById(id)).catch(() => null);
+                const [geoGridPng, ratingDistributionPng] = await Promise.all([
+                  safeCapture('geogrid-map-export'),
+                  safeCapture('rating-distribution-export'),
+                ]);
+                return buildLocalSEOReport({
+                  report: periodReport,
+                  charts: { geoGridPng, ratingDistributionPng },
+                });
+              }}
+            />
             <Button variant="outline" onClick={() => setLocalAddKeywordsOpen(true)}>
               Add Keywords
             </Button>

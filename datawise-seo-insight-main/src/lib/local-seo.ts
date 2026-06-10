@@ -3,6 +3,7 @@ import type {
   LocalProject, LocalTrackedKeyword, LocalProjectReport,
   BusinessSearchResult, GBPProfile, ReviewsResponse, ReviewThemesResponse, LocalCompetitor,
   GeoGridScanResult, GeoGridHistoryItem, GeoGridInsights, GeoGridCompetitorSeries,
+  LocalPeriodReportData,
 } from '@/types/local-seo';
 
 // --- Local Project CRUD ---
@@ -68,6 +69,12 @@ export async function checkLocalRankings(projectId: string) {
 
 export async function fetchLocalReport(projectId: string, period = 30) {
   return api<LocalProjectReport>(`/api/local-seo/projects/${projectId}/report?period=${period}`);
+}
+
+export async function fetchLocalPeriodReport(projectId: string, days = 30) {
+  return api<LocalPeriodReportData>(
+    `/api/local-seo/projects/${projectId}/period-report?days=${days}`
+  );
 }
 
 // --- Business Search ---
