@@ -37,7 +37,7 @@ export interface AIEngineResult {
 export interface AITrackedQuery {
   id: string;
   query_text: string;
-  source: 'keyword' | 'custom';
+  source: 'keyword' | 'custom' | 'discovery';
   keyword_id: string | null;
   created_at: string;
   engines: Partial<Record<AIEngine, AIEngineResult>>;
