@@ -6,11 +6,11 @@ interface LocalStatsCardsProps {
   report: LocalProjectReport | null;
 }
 
-function DeltaBadge({ current, previous, invert = false }: { current: number | null; previous: number | null; invert?: boolean }) {
+function DeltaBadge({ current, previous, invert = false, decimals = 0 }: { current: number | null; previous: number | null; invert?: boolean; decimals?: number }) {
   if (current == null || previous == null || previous === 0) {
     return <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-400 inline-flex items-center gap-0.5"><Minus className="h-3 w-3" />--</span>;
   }
-  const diff = current - previous;
+  const diff = Math.round((current - previous) * 10 ** decimals) / 10 ** decimals;
   if (diff === 0) {
     return <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-gray-50 text-gray-400 inline-flex items-center gap-0.5"><Minus className="h-3 w-3" />0</span>;
   }
@@ -35,7 +35,7 @@ export default function LocalStatsCards({ report }: LocalStatsCardsProps) {
   const { current, previous } = report;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-xs font-medium text-muted-foreground">Tracked Keywords</CardTitle>
@@ -81,9 +81,24 @@ export default function LocalStatsCards({ report }: LocalStatsCardsProps) {
         <CardContent>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-bold tabular-nums">{current.avg_rating ?? '--'}</span>
-            <DeltaBadge current={current.avg_rating} previous={previous.avg_rating} />
+            <DeltaBadge current={current.avg_rating} previous={previous.avg_rating} decimals={1} />
           </div>
           <p className="text-xs text-muted-foreground mt-1">avg from checks</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-xs font-medium text-muted-foreground">Review Velocity</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold tabular-nums">
+              {report.velocity?.current != null ? `+${report.velocity.current}` : '--'}
+            </span>
+            <DeltaBadge current={report.velocity?.current ?? null} previous={report.velocity?.previous ?? null} />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">reviews gained this period</p>
         </CardContent>
       </Card>
 

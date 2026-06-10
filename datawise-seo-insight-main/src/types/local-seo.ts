@@ -54,6 +54,7 @@ export interface LocalTrendPoint {
 export interface LocalProjectReport {
   current: LocalPeriodSnapshot;
   previous: LocalPeriodSnapshot;
+  velocity: { current: number | null; previous: number | null };
   trend: LocalTrendPoint[];
 }
 
@@ -173,6 +174,22 @@ export interface GeoGridSummary {
   not_found_count: number;
 }
 
+export interface GeoGridCompetitor {
+  name: string;
+  appearances: number;
+  total_points: number;
+  avg_position: number | null;
+  best_position: number | null;
+  rating: number | null;
+  reviews: number | null;
+  is_user: boolean;
+}
+
+export interface GeoGridCompetitorSeries {
+  keyword: string;
+  scans: Array<{ scan_id: string; scanned_at: string; competitors: GeoGridCompetitor[] }>;
+}
+
 export interface GeoGridScanResult {
   id: string;
   keyword: string;
@@ -180,6 +197,7 @@ export interface GeoGridScanResult {
   radius_km: number;
   center: { lat: number; lng: number };
   points: GeoGridPoint[];
+  competitors?: GeoGridCompetitor[];
   summary: GeoGridSummary;
   scanned_at: string;
 }

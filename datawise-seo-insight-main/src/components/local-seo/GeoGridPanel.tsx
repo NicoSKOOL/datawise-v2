@@ -6,10 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Grid3X3, Loader2, History, MapPin, Target, Sparkles } from 'lucide-react';
-import { runGeoGridScan, fetchGeoGridHistory, fetchGeoGridScan, fetchGeoGridInsights } from '@/lib/local-seo';
+import { runGeoGridScan, fetchGeoGridHistory, fetchGeoGridScan, fetchGeoGridInsights, fetchGeoGridCompetitorSeries } from '@/lib/local-seo';
 import { getLLMConfig } from '@/lib/chat';
-import type { GeoGridScanResult, GeoGridHistoryItem, LocalTrackedKeyword, GeoGridInsights } from '@/types/local-seo';
+import type { GeoGridScanResult, GeoGridHistoryItem, LocalTrackedKeyword, GeoGridInsights, GeoGridCompetitor } from '@/types/local-seo';
 import GeoGridMap from './GeoGridMap';
+import GeoGridCompetitorsList from './GeoGridCompetitorsList';
 import GeoGridInsightsCard from './GeoGridInsights';
 
 interface GeoGridPanelProps {
@@ -30,6 +31,16 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
   const [showHistory, setShowHistory] = useState(false);
   const [insights, setInsights] = useState<GeoGridInsights | null>(null);
   const [loadingInsights, setLoadingInsights] = useState(false);
+  const [prevCompetitors, setPrevCompetitors] = useState<GeoGridCompetitor[] | null>(null);
+
+  const loadPrevCompetitors = async (result: GeoGridScanResult) => {
+    setPrevCompetitors(null);
+    try {
+      const series = await fetchGeoGridCompetitorSeries(projectId, result.keyword);
+      const prev = series.scans.find(s => s.scan_id !== result.id && s.competitors.length > 0);
+      setPrevCompetitors(prev ? prev.competitors : null);
+    } catch { /* movement column degrades to "new" */ }
+  };
 
   useEffect(() => {
     loadHistoryAndRestoreLatest();
@@ -45,6 +56,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
         const latest = data.scans[0];
         const result = await fetchGeoGridScan(latest.id);
         setScanResult(result);
+        loadPrevCompetitors(result);
         setKeyword(result.keyword);
         setGridSize(String(result.grid_size));
         setRadiusKm(String(result.radius_km));
@@ -75,6 +87,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
         radius_km: parseFloat(radiusKm),
       });
       setScanResult(result);
+      loadPrevCompetitors(result);
       setInsights(null);
       loadHistory();
       toast({
@@ -96,6 +109,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
     try {
       const result = await fetchGeoGridScan(scanId);
       setScanResult(result);
+      loadPrevCompetitors(result);
       setInsights(null);
       setKeyword(result.keyword);
       setGridSize(String(result.grid_size));
@@ -265,6 +279,14 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
                 points={scanResult.points}
                 businessName={businessName}
               />
+
+              {scanResult.competitors && scanResult.competitors.length > 0 && (
+                <GeoGridCompetitorsList
+                  competitors={scanResult.competitors}
+                  previousCompetitors={prevCompetitors}
+                  businessName={businessName}
+                />
+              )}
 
               <p className="text-[10px] text-muted-foreground text-center">
                 Keyword: "{scanResult.keyword}" | {scanResult.grid_size}x{scanResult.grid_size} grid | {scanResult.radius_km}km radius | Scanned: {new Date(scanResult.scanned_at).toLocaleString()}
