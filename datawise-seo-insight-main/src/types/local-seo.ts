@@ -103,11 +103,45 @@ export interface ReviewItem {
   review_url: string | null;
 }
 
+export interface ReviewSnapshotRow {
+  rating: number | null;
+  reviews_count: number | null;
+  fetched_count: number | null;
+  responded_count: number | null;
+  response_rate: number | null;
+  unanswered_low_star: number | null;
+  rating_distribution: Record<string, number> | null;
+  created_at: string;
+}
+
 export interface ReviewsResponse {
   rating: number | null;
   reviews_count: number;
   place_id: string | null;
+  rating_distribution: Record<string, number> | null;
   reviews: ReviewItem[];
+  snapshots: {
+    latest: ReviewSnapshotRow | null;
+    period_start: ReviewSnapshotRow | null;
+    previous_period_start: ReviewSnapshotRow | null;
+  };
+  velocity: { current: number | null; previous: number | null };
+}
+
+export interface ReviewTheme {
+  theme: string;
+  sentiment: 'positive' | 'negative' | 'mixed';
+  mention_count: number;
+  quotes: string[];
+  review_indexes: number[];
+}
+
+export interface ReviewThemesResponse {
+  summary: string;
+  themes: ReviewTheme[];
+  generated_at: string;
+  cached: boolean;
+  model: string | null;
 }
 
 export interface LocalCompetitor {

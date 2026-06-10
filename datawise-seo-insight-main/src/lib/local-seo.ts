@@ -1,7 +1,7 @@
 import { api } from './api';
 import type {
   LocalProject, LocalTrackedKeyword, LocalProjectReport,
-  BusinessSearchResult, GBPProfile, ReviewsResponse, LocalCompetitor,
+  BusinessSearchResult, GBPProfile, ReviewsResponse, ReviewThemesResponse, LocalCompetitor,
   GeoGridScanResult, GeoGridHistoryItem, GeoGridInsights,
 } from '@/types/local-seo';
 
@@ -97,9 +97,21 @@ export async function fetchReviews(params: {
   location_code?: number;
   depth?: number;
   sort_by?: string;
+  project_id?: string;
 }) {
   return api<ReviewsResponse>(
     '/api/local-seo/reviews',
+    { method: 'POST', body: params }
+  );
+}
+
+export async function fetchReviewThemes(projectId: string, params: {
+  reviews: Array<{ rating: number | null; text: string; date: string | null; owner_response: string | null }>;
+  llm_config?: { provider: string; api_key: string; model?: string };
+  force?: boolean;
+}) {
+  return api<ReviewThemesResponse>(
+    `/api/local-seo/projects/${projectId}/review-themes`,
     { method: 'POST', body: params }
   );
 }

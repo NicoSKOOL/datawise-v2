@@ -726,7 +726,7 @@ export default function RankTracking() {
           keywords={localKeywords}
         />
 
-        <ReviewsSection placeId={selectedLocalProject.place_id} cid={selectedLocalProject.cid} businessName={selectedLocalProject.business_name} />
+        <ReviewsSection projectId={selectedLocalProject.id} placeId={selectedLocalProject.place_id} cid={selectedLocalProject.cid} businessName={selectedLocalProject.business_name} />
 
         <LocalCompetitorGrid
           locationCode={localKeywords[0]?.location_code}

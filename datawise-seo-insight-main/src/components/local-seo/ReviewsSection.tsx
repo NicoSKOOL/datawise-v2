@@ -1,30 +1,21 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { RefreshCw, Star, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
-import { fetchReviews } from '@/lib/local-seo';
-import type { ReviewItem, ReviewsResponse } from '@/types/local-seo';
+import { RefreshCw, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
+import { fetchReviews, fetchReviewThemes } from '@/lib/local-seo';
+import { getLLMConfig } from '@/lib/chat';
+import type { ReviewsResponse, ReviewThemesResponse } from '@/types/local-seo';
+import HeaderTiles from './reviews/HeaderTiles';
+import RatingDistribution from './reviews/RatingDistribution';
+import ThemesPanel from './reviews/ThemesPanel';
+import ReviewFilters, { DEFAULT_FILTERS, type ReviewFilterState } from './reviews/ReviewFilters';
+import ReviewList, { type IndexedReview } from './reviews/ReviewList';
 
 interface ReviewsSectionProps {
+  projectId: string;
   placeId: string | null;
   cid: string | null;
   businessName: string | null;
-}
-
-function StarRating({ rating }: { rating: number | null }) {
-  if (rating == null) return null;
-  return (
-    <div className="flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <Star
-          key={i}
-          className={`h-3.5 w-3.5 ${i <= rating ? 'text-yellow-500 fill-yellow-500' : 'text-gray-200'}`}
-        />
-      ))}
-    </div>
-  );
 }
 
 function buildGoogleReviewsUrl(placeId: string | null, businessName: string | null): string | null {
@@ -33,86 +24,41 @@ function buildGoogleReviewsUrl(placeId: string | null, businessName: string | nu
   return null;
 }
 
-function ReviewCard({ review, reviewsPageUrl }: { review: ReviewItem; reviewsPageUrl: string | null }) {
-  const needsResponse = !review.owner_response && (review.rating != null && review.rating <= 3);
-  const reviewLink = review.review_url || reviewsPageUrl;
-
-  return (
-    <div className="border rounded-lg p-4 space-y-2">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-sm">{review.author}</span>
-          {review.is_local_guide && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Local Guide</Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <StarRating rating={review.rating} />
-          {reviewLink && (
-            <a
-              href={reviewLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-primary transition-colors"
-              title="View on Google"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          )}
-        </div>
-      </div>
-
-      {review.date && (
-        <p className="text-xs text-muted-foreground">
-          {new Date(review.date).toLocaleDateString()}
-        </p>
-      )}
-
-      {review.text && (
-        <p className="text-sm text-foreground">{review.text}</p>
-      )}
-
-      {review.owner_response && (
-        <div className="bg-muted rounded-md p-3 mt-2">
-          <p className="text-xs font-medium text-muted-foreground mb-1">Owner Response</p>
-          <p className="text-sm">{review.owner_response}</p>
-        </div>
-      )}
-
-      {needsResponse && (
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs text-amber-600">
-            <AlertCircle className="h-3.5 w-3.5" />
-            <span>Needs response</span>
-          </div>
-          {reviewLink && (
-            <a
-              href={reviewLink}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-primary hover:underline font-medium"
-            >
-              Reply on Google
-            </a>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type ResponseFilter = 'all' | 'responded' | 'not_responded';
-type StarFilter = 'all' | '5' | '4' | '3' | '2' | '1';
-
-export default function ReviewsSection({ placeId, cid, businessName }: ReviewsSectionProps) {
+export default function ReviewsSection({ projectId, placeId, cid, businessName }: ReviewsSectionProps) {
   const [data, setData] = useState<ReviewsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState('newest');
-  const [responseFilter, setResponseFilter] = useState<ResponseFilter>('all');
-  const [starFilter, setStarFilter] = useState<StarFilter>('all');
+  const [themes, setThemes] = useState<ReviewThemesResponse | null>(null);
+  const [themesLoading, setThemesLoading] = useState(false);
+  const [themesError, setThemesError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<ReviewFilterState>({ ...DEFAULT_FILTERS });
 
-  const loadReviews = async () => {
+  const loadThemes = useCallback(async (reviewsData: ReviewsResponse, force = false) => {
+    const llmConfig = getLLMConfig();
+    if (!llmConfig?.api_key) {
+      setThemesError('Add your LLM API key in Settings to see review themes.');
+      return;
+    }
+    setThemesLoading(true);
+    setThemesError(null);
+    try {
+      const result = await fetchReviewThemes(projectId, {
+        reviews: reviewsData.reviews.map(r => ({
+          rating: r.rating, text: r.text, date: r.date, owner_response: r.owner_response,
+        })),
+        llm_config: llmConfig,
+        force,
+      });
+      setThemes(result);
+    } catch (err) {
+      setThemes(null);
+      setThemesError(err instanceof Error ? err.message : 'Theme analysis failed. Use Refresh themes to retry.');
+    } finally {
+      setThemesLoading(false);
+    }
+  }, [projectId]);
+
+  const loadReviews = useCallback(async () => {
     if (!placeId && !cid && !businessName) return;
     setLoading(true);
     setError(null);
@@ -121,47 +67,69 @@ export default function ReviewsSection({ placeId, cid, businessName }: ReviewsSe
         place_id: placeId || undefined,
         cid: cid || undefined,
         business_name: businessName || undefined,
-        depth: 20,
-        sort_by: sortBy,
+        depth: 100,
+        sort_by: 'newest',
+        project_id: projectId,
       });
       setData(result);
+      // Themes hydrate after the report renders; never blocking.
+      if (result.reviews.length > 0) loadThemes(result);
     } catch (err) {
       setData(null);
       setError(err instanceof Error ? err.message : 'Failed to load reviews');
     } finally {
       setLoading(false);
     }
-  };
+  }, [placeId, cid, businessName, projectId, loadThemes]);
 
   useEffect(() => {
     loadReviews();
-  }, [placeId, cid, businessName, sortBy]);
+  }, [loadReviews]);
+
+  const indexed: IndexedReview[] = useMemo(
+    () => (data?.reviews || []).map((review, index) => ({ review, index })),
+    [data]
+  );
+
+  const responseRate = data && data.reviews.length > 0
+    ? Math.round((data.reviews.filter(r => r.owner_response).length / data.reviews.length) * 100)
+    : 0;
+  const unansweredLowStar = data
+    ? data.reviews.filter(r => !r.owner_response && r.rating != null && r.rating <= 3).length
+    : 0;
 
   const filteredReviews = useMemo(() => {
-    if (!data) return [];
-    let reviews = data.reviews;
+    let list = indexed;
+    if (filters.rating === '5') list = list.filter(({ review }) => review.rating === 5);
+    else if (filters.rating === '4') list = list.filter(({ review }) => review.rating === 4);
+    else if (filters.rating === 'low') list = list.filter(({ review }) => review.rating != null && review.rating <= 3);
 
-    if (responseFilter === 'responded') {
-      reviews = reviews.filter(r => !!r.owner_response);
-    } else if (responseFilter === 'not_responded') {
-      reviews = reviews.filter(r => !r.owner_response);
+    if (filters.response === 'responded') list = list.filter(({ review }) => !!review.owner_response);
+    else if (filters.response === 'unanswered') list = list.filter(({ review }) => !review.owner_response);
+
+    if (filters.themeIndex != null && themes) {
+      const theme = themes.themes[filters.themeIndex];
+      if (theme) {
+        const allowed = new Set(theme.review_indexes);
+        list = list.filter(({ index }) => allowed.has(index));
+      }
     }
 
-    if (starFilter !== 'all') {
-      const starVal = parseInt(starFilter, 10);
-      reviews = reviews.filter(r => r.rating === starVal);
+    const sorted = [...list];
+    if (filters.sort === 'newest') {
+      sorted.sort((a, b) => (b.review.date || '').localeCompare(a.review.date || ''));
+    } else if (filters.sort === 'oldest') {
+      sorted.sort((a, b) => (a.review.date || '').localeCompare(b.review.date || ''));
+    } else {
+      sorted.sort((a, b) => (a.review.rating ?? 6) - (b.review.rating ?? 6));
     }
-
-    return reviews;
-  }, [data, responseFilter, starFilter]);
+    return sorted;
+  }, [indexed, filters, themes]);
 
   if (!placeId && !cid && !businessName) return null;
 
-  const responseRate = data
-    ? Math.round((data.reviews.filter(r => r.owner_response).length / Math.max(data.reviews.length, 1)) * 100)
-    : 0;
-
   const reviewsPageUrl = buildGoogleReviewsUrl(data?.place_id || placeId, businessName);
+  const activeThemeName = filters.themeIndex != null && themes ? themes.themes[filters.themeIndex]?.theme ?? null : null;
 
   return (
     <Card>
@@ -172,16 +140,17 @@ export default function ReviewsSection({ placeId, cid, businessName }: ReviewsSe
             Reviews
           </CardTitle>
           <div className="flex items-center gap-2">
-            <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="h-8 w-[120px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="newest">Newest</SelectItem>
-                <SelectItem value="highest_rating">Highest</SelectItem>
-                <SelectItem value="lowest_rating">Lowest</SelectItem>
-              </SelectContent>
-            </Select>
+            {reviewsPageUrl && (
+              <a
+                href={reviewsPageUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-xs text-[#005232] hover:underline font-medium"
+              >
+                View all on Google
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={loadReviews}>
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
@@ -209,90 +178,34 @@ export default function ReviewsSection({ placeId, cid, businessName }: ReviewsSe
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Summary row */}
-            <div className="grid grid-cols-3 gap-4 pb-4 border-b">
-              <div>
-                <p className="text-xs text-muted-foreground">Overall Rating</p>
-                <div className="flex items-center gap-1 mt-1">
-                  <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
-                  <span className="text-lg font-bold">{data.rating ?? '--'}</span>
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Total Reviews</p>
-                <p className="text-lg font-bold mt-1">{data.reviews_count}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Response Rate</p>
-                <p className="text-lg font-bold mt-1">{responseRate}%</p>
-              </div>
+            <HeaderTiles
+              data={data}
+              responseRate={responseRate}
+              unansweredLowStar={unansweredLowStar}
+              onUnansweredClick={() => setFilters({ ...filters, rating: 'low', response: 'unanswered' })}
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <RatingDistribution distribution={data.rating_distribution} />
+              <ThemesPanel
+                themes={themes}
+                loading={themesLoading}
+                error={themesError}
+                activeThemeIndex={filters.themeIndex}
+                onThemeClick={(i) => setFilters({ ...filters, themeIndex: filters.themeIndex === i ? null : i })}
+                onRefresh={() => loadThemes(data, true)}
+              />
             </div>
 
-            {/* Filters */}
-            <div className="flex flex-wrap items-center gap-2 pb-2">
-              <span className="text-xs font-medium text-muted-foreground">Filter:</span>
-              <Select value={responseFilter} onValueChange={(v) => setResponseFilter(v as ResponseFilter)}>
-                <SelectTrigger className="h-7 w-[140px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Responses</SelectItem>
-                  <SelectItem value="responded">Responded</SelectItem>
-                  <SelectItem value="not_responded">Not Responded</SelectItem>
-                </SelectContent>
-              </Select>
+            <ReviewFilters filters={filters} activeThemeName={activeThemeName} onChange={setFilters} />
 
-              <div className="flex items-center gap-1">
-                {(['all', '5', '4', '3', '2', '1'] as StarFilter[]).map((val) => (
-                  <button
-                    key={val}
-                    onClick={() => setStarFilter(val)}
-                    className={`flex items-center gap-0.5 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                      starFilter === val
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted hover:bg-muted/80 text-muted-foreground'
-                    }`}
-                  >
-                    {val === 'all' ? 'All' : (
-                      <>
-                        {val}
-                        <Star className="h-2.5 w-2.5 fill-current" />
-                      </>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {reviewsPageUrl && (
-                <a
-                  href={reviewsPageUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline font-medium"
-                >
-                  View All on Google
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-
-            {/* Filtered count */}
-            {(responseFilter !== 'all' || starFilter !== 'all') && (
+            {(filters.rating !== 'all' || filters.response !== 'all' || filters.themeIndex != null) && (
               <p className="text-xs text-muted-foreground">
                 Showing {filteredReviews.length} of {data.reviews.length} reviews
               </p>
             )}
 
-            {/* Review list */}
-            <div className="space-y-3 max-h-[500px] overflow-y-auto">
-              {filteredReviews.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">No reviews match the current filters.</p>
-              ) : (
-                filteredReviews.map((review, i) => (
-                  <ReviewCard key={i} review={review} reviewsPageUrl={reviewsPageUrl} />
-                ))
-              )}
-            </div>
+            <ReviewList reviews={filteredReviews} themes={themes?.themes ?? null} reviewsPageUrl={reviewsPageUrl} />
           </div>
         )}
       </CardContent>
