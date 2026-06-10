@@ -1,8 +1,9 @@
 import { api } from './api';
 import type {
   LocalProject, LocalTrackedKeyword, LocalProjectReport,
-  BusinessSearchResult, GBPProfile, ReviewsResponse, LocalCompetitor,
-  GeoGridScanResult, GeoGridHistoryItem, GeoGridInsights,
+  BusinessSearchResult, GBPProfile, ReviewsResponse, ReviewThemesResponse, LocalCompetitor,
+  GeoGridScanResult, GeoGridHistoryItem, GeoGridInsights, GeoGridCompetitorSeries,
+  LocalPeriodReportData,
 } from '@/types/local-seo';
 
 // --- Local Project CRUD ---
@@ -70,6 +71,12 @@ export async function fetchLocalReport(projectId: string, period = 30) {
   return api<LocalProjectReport>(`/api/local-seo/projects/${projectId}/report?period=${period}`);
 }
 
+export async function fetchLocalPeriodReport(projectId: string, days = 30) {
+  return api<LocalPeriodReportData>(
+    `/api/local-seo/projects/${projectId}/period-report?days=${days}`
+  );
+}
+
 // --- Business Search ---
 
 export async function searchBusinesses(query: string, location_code = 2840) {
@@ -97,9 +104,21 @@ export async function fetchReviews(params: {
   location_code?: number;
   depth?: number;
   sort_by?: string;
+  project_id?: string;
 }) {
   return api<ReviewsResponse>(
     '/api/local-seo/reviews',
+    { method: 'POST', body: params }
+  );
+}
+
+export async function fetchReviewThemes(projectId: string, params: {
+  reviews: Array<{ rating: number | null; text: string; date: string | null; owner_response: string | null }>;
+  llm_config?: { provider: string; api_key: string; model?: string };
+  force?: boolean;
+}) {
+  return api<ReviewThemesResponse>(
+    `/api/local-seo/projects/${projectId}/review-themes`,
     { method: 'POST', body: params }
   );
 }
@@ -203,5 +222,11 @@ export async function fetchGeoGridInsights(projectId: string, scanId: string, ll
   return api<{ insights: GeoGridInsights; usage: { input_tokens: number; output_tokens: number } }>(
     `/api/local-seo/projects/${projectId}/geogrid-insights`,
     { method: 'POST', body: { scan_id: scanId, llm_config: llmConfig } }
+  );
+}
+
+export async function fetchGeoGridCompetitorSeries(projectId: string, keyword: string) {
+  return api<GeoGridCompetitorSeries>(
+    `/api/local-seo/projects/${projectId}/geogrid-competitors?keyword=${encodeURIComponent(keyword)}`
   );
 }

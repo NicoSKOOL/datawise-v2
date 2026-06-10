@@ -114,7 +114,7 @@ export default function GeoGridMap({ center, points, businessName }: GeoGridMapP
 
   return (
     <div className="relative">
-      <div ref={mapRef} className="w-full h-[500px] rounded-lg border z-0 relative" />
+      <div id="geogrid-map-export" ref={mapRef} className="w-full h-[500px] rounded-lg border z-0 relative" />
       <div className="absolute bottom-3 right-3 z-[1000] bg-card/95 backdrop-blur-sm rounded-lg border px-3 py-2 shadow-md">
         <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Position</div>
         <div className="flex flex-col gap-1">

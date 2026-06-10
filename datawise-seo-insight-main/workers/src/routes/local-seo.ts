@@ -7,6 +7,11 @@ import { dataforseoRequest, dataforseoRequestCached, dataforseoGet } from '../da
 const LOCAL_KEYWORDS_TTL_SECONDS = 86400;
 const LOCAL_GBP_TTL_SECONDS = 3600;
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
+import {
+  zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
+  ratingDistributionFallback, computeVelocity, computeReviewsHash, validateReviewThemes,
+  type AggregatedCompetitor,
+} from './local-reviews-analysis';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -186,6 +191,18 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     ORDER BY lrh.checked_at ASC
   `).bind(projectId, period * 2, period).all();
 
+  // Period before the previous one: needed for the review-velocity delta on
+  // the stats cards (velocity this period vs last period).
+  const { results: prev2Rows } = await env.DB.prepare(`
+    SELECT lrh.reviews_count
+    FROM local_rank_history lrh
+    JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+    WHERE tk.project_id = ? AND tk.is_active = 1
+      AND lrh.checked_at >= datetime('now', '-' || ? || ' days')
+      AND lrh.checked_at < datetime('now', '-' || ? || ' days')
+      AND lrh.reviews_count IS NOT NULL
+  `).bind(projectId, period * 3, period * 2).all();
+
   const countRow = await env.DB.prepare(
     'SELECT COUNT(*) as cnt FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
   ).bind(projectId).first() as any;
@@ -283,7 +300,16 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     return { date, avg_pack_position: avgP, top3: t3, top10: t10, top20: t20, avg_rating: avgR };
   }).sort((a, b) => a.date < b.date ? -1 : 1);
 
-  return json({ current, previous, trend });
+  const prev2Counts = (prev2Rows as any[]).map(r => r.reviews_count as number);
+  const prev2TotalReviews = prev2Counts.length ? Math.max(...prev2Counts) : null;
+  const velocity = {
+    current: current.total_reviews != null && previous.total_reviews != null
+      ? current.total_reviews - previous.total_reviews : null,
+    previous: previous.total_reviews != null && prev2TotalReviews != null
+      ? previous.total_reviews - prev2TotalReviews : null,
+  };
+
+  return json({ current, previous, velocity, trend });
 }
 
 // GET /api/local-seo/projects/:id/keywords
@@ -486,14 +512,97 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
 }
 
 // POST /api/local-seo/reviews
-export async function handleReviews(request: Request, env: Env): Promise<Response> {
-  const { place_id, cid, business_name, location_code = 2840, language_code = 'en', depth = 20, sort_by = 'newest' } = await request.json() as any;
+// Optional project_id (verified against userId) enables daily snapshot writes
+// and snapshot-based trends for the Reviews report header tiles.
+export async function handleReviews(request: Request, env: Env, userId?: string): Promise<Response> {
+  const body = await request.json() as any;
+  const {
+    place_id, cid, business_name, location_code = 2840, language_code = 'en',
+    sort_by = 'newest', project_id,
+  } = body;
+  // Depth backward compatibility: the currently deployed SPA does not send
+  // project_id and was built against the old default of 20; only project-aware
+  // callers get the richer (5x cost) 100-review default. Explicit depth wins.
+  const depth = body.depth ?? (project_id ? 100 : 20);
   if (!place_id && !cid && !business_name) return json({ error: 'place_id, cid, or business_name is required' }, 400);
+
+  // Resolve the owning local project (snapshot scope). Silently ignored when
+  // missing or not owned: reviews still render without trends.
+  let projectId: string | null = null;
+  if (project_id && userId) {
+    const owned = await env.DB.prepare(
+      'SELECT id FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+    ).bind(project_id, userId, 'local').first();
+    if (owned) projectId = project_id;
+  }
+
+  const parseJsonOrNull = (text: string | null | undefined): any => {
+    if (!text) return null;
+    try { return JSON.parse(text); } catch { return null; }
+  };
+  const parseSnapshotRow = (row: any) => row
+    ? { ...row, rating_distribution: parseJsonOrNull(row.rating_distribution) }
+    : null;
+
+  // Snapshot trends for the four header tiles: latest row, the newest row
+  // older than 30 days (period start), and the newest row older than 60 days.
+  const loadSnapshots = async () => {
+    if (!projectId) return { latest: null, period_start: null, previous_period_start: null };
+    const latest = await env.DB.prepare(
+      `SELECT rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution, created_at
+       FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`
+    ).bind(projectId).first();
+    const periodStart = await env.DB.prepare(
+      `SELECT rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution, created_at
+       FROM local_review_snapshots WHERE project_id = ? AND created_at <= datetime('now', '-30 days')
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(projectId).first();
+    const prevPeriodStart = await env.DB.prepare(
+      `SELECT rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution, created_at
+       FROM local_review_snapshots WHERE project_id = ? AND created_at <= datetime('now', '-60 days')
+       ORDER BY created_at DESC LIMIT 1`
+    ).bind(projectId).first();
+    return {
+      latest: parseSnapshotRow(latest),
+      period_start: parseSnapshotRow(periodStart),
+      previous_period_start: parseSnapshotRow(prevPeriodStart),
+    };
+  };
+
+  // Review-count baselines for velocity: prefer snapshots, fall back to
+  // local_rank_history.reviews_count captured on every rank check.
+  const loadVelocity = async (currentCount: number | null, snaps: { period_start: any; previous_period_start: any }) => {
+    if (!projectId) return { current: null, previous: null };
+    let startOfPeriod: number | null = snaps.period_start?.reviews_count ?? null;
+    let startOfPrevious: number | null = snaps.previous_period_start?.reviews_count ?? null;
+    if (startOfPeriod == null) {
+      const row = await env.DB.prepare(
+        `SELECT MAX(lrh.reviews_count) as cnt FROM local_rank_history lrh
+         JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+         WHERE tk.project_id = ? AND lrh.checked_at < datetime('now', '-30 days') AND lrh.checked_at >= datetime('now', '-60 days')`
+      ).bind(projectId).first() as any;
+      startOfPeriod = row?.cnt ?? null;
+    }
+    if (startOfPrevious == null) {
+      const row = await env.DB.prepare(
+        `SELECT MAX(lrh.reviews_count) as cnt FROM local_rank_history lrh
+         JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+         WHERE tk.project_id = ? AND lrh.checked_at < datetime('now', '-60 days') AND lrh.checked_at >= datetime('now', '-90 days')`
+      ).bind(projectId).first() as any;
+      startOfPrevious = row?.cnt ?? null;
+    }
+    return computeVelocity({ currentCount, startOfPeriodCount: startOfPeriod, startOfPreviousPeriodCount: startOfPrevious });
+  };
 
   const identifier = place_id || cid || business_name;
   const cacheKey = `gbp-reviews:${identifier}:${sort_by}:${depth}`;
-  const cached = await env.KV.get(cacheKey, 'json');
-  if (cached) return json(cached);
+  const cached = await env.KV.get(cacheKey, 'json') as any;
+  if (cached) {
+    // Snapshots and velocity are project-scoped and never baked into KV.
+    const snapshots = await loadSnapshots();
+    const velocity = await loadVelocity(cached.reviews_count ?? null, snapshots);
+    return json({ ...cached, snapshots, velocity });
+  }
 
   // Reviews API only supports async: task_post then poll task_get
   // place_id and cid are top-level params, not in keyword
@@ -516,10 +625,15 @@ export async function handleReviews(request: Request, env: Env): Promise<Respons
 
   if (!taskId) return json({ error: 'Failed to create reviews task' }, 500);
 
-  // Poll task_get up to 5 times (2s intervals, 10s max)
+  // Poll task_get. Deep fetches (depth > 20) take DataForSEO longer to crawl,
+  // so they get a longer backoff schedule (~40s total) than the original
+  // 5x2s window that was tuned for depth 20.
+  const pollDelaysMs = depth > 20
+    ? [2000, 2000, 3000, 3000, 4000, 4000, 5000, 5000, 6000, 6000]
+    : [2000, 2000, 2000, 2000, 2000];
   let result: any = null;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
+  for (const delayMs of pollDelaysMs) {
+    await new Promise(resolve => setTimeout(resolve, delayMs));
     const getData = await dataforseoGet(env, `/business_data/google/reviews/task_get/${taskId}`);
     const task = getData?.tasks?.[0];
     if (task?.status_code === 20000 && task?.result?.[0]?.items) {
@@ -543,17 +657,178 @@ export async function handleReviews(request: Request, env: Env): Promise<Respons
     review_url: item.review_url || item.url || null,
   }));
 
+  // Rating distribution: my_business_info first (KV-cached GBP profile, then a
+  // 1h-cached DFS call), fallback computed from the fetched reviews.
+  let ratingDistribution: Record<string, number> | null = null;
+  const gbpCached = await env.KV.get(`gbp-profile:${place_id || business_name}`, 'json') as any;
+  if (gbpCached?.rating_distribution) {
+    ratingDistribution = gbpCached.rating_distribution;
+  } else if (place_id || business_name) {
+    try {
+      const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
+        keyword: place_id ? `place_id:${place_id}` : business_name,
+        location_code,
+        language_code,
+      }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
+      ratingDistribution = data?.tasks?.[0]?.result?.[0]?.rating_distribution ?? null;
+    } catch { /* fall back to computed */ }
+  }
+  if (!ratingDistribution || Object.keys(ratingDistribution).length === 0) {
+    ratingDistribution = ratingDistributionFallback(reviews);
+  }
+
   const response = {
     rating: result.rating?.value ?? null,
     reviews_count: result.reviews_count ?? reviews.length,
     place_id: place_id || result.place_id || null,
+    rating_distribution: ratingDistribution,
     reviews,
   };
 
-  // Cache for 6h
+  // Daily snapshot on fresh (cache-miss) fetches: at most one row per project
+  // per day. Bookkeeping only: a failed write must never fail the user-facing
+  // response (the table may not exist yet if the migration is pending).
+  if (projectId) {
+    try {
+      const lastRow = await env.DB.prepare(
+        'SELECT created_at FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
+      ).bind(projectId).first() as any;
+      if (shouldWriteSnapshot(lastRow?.created_at ?? null, new Date())) {
+        const snap = buildSnapshot({
+          rating: response.rating,
+          reviews_count: response.reviews_count,
+          reviews,
+          rating_distribution: ratingDistribution,
+        });
+        await env.DB.prepare(
+          `INSERT INTO local_review_snapshots
+             (project_id, rating, reviews_count, fetched_count, responded_count, response_rate, unanswered_low_star, rating_distribution)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          projectId, snap.rating, snap.reviews_count, snap.fetched_count,
+          snap.responded_count, snap.response_rate, snap.unanswered_low_star, snap.rating_distribution
+        ).run();
+      }
+    } catch (err) {
+      console.error('local_review_snapshots insert failed (migration pending?)', err);
+    }
+  }
+
+  // Cache for 6h (without project-scoped trend fields)
   await env.KV.put(cacheKey, JSON.stringify(response), { expirationTtl: 21600 });
 
-  return json(response);
+  const snapshots = await loadSnapshots();
+  const velocity = await loadVelocity(response.reviews_count, snapshots);
+  return json({ ...response, snapshots, velocity });
+}
+
+// POST /api/local-seo/projects/:id/review-themes
+// One LLM call over the fetched reviews -> summary + 5-8 themes with
+// review_indexes for theme-to-review tagging. Cached in D1 keyed by
+// project + SHA-256 of the review set. Never in the report's critical
+// render path: the SPA hydrates themes when this returns.
+export async function handleReviewThemes(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const { reviews, llm_config, force = false } = await request.json() as {
+    reviews?: Array<{ rating: number | null; text: string; date: string | null; owner_response: string | null }>;
+    llm_config?: UserLLMConfig;
+    force?: boolean;
+  };
+  if (!Array.isArray(reviews) || reviews.length === 0) {
+    return json({ error: 'reviews array is required' }, 400);
+  }
+  if (reviews.length > 200) {
+    return json({ error: 'Too many reviews, send at most 200' }, 400);
+  }
+
+  const project = await env.DB.prepare(
+    'SELECT id, name, business_name FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as any;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+
+  const reviewsHash = await computeReviewsHash(reviews.map(r => ({ date: r.date, text: r.text })));
+
+  if (!force) {
+    const cachedRow = await env.DB.prepare(
+      'SELECT summary, themes, model, created_at FROM local_review_themes WHERE project_id = ? AND reviews_hash = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(projectId, reviewsHash).first() as any;
+    if (cachedRow) {
+      let cachedThemes: unknown = null;
+      try { cachedThemes = JSON.parse(cachedRow.themes); } catch { /* corrupt cache row: regenerate */ }
+      if (cachedThemes) {
+        return json({
+          summary: cachedRow.summary,
+          themes: cachedThemes,
+          generated_at: cachedRow.created_at,
+          cached: true,
+          model: cachedRow.model,
+        });
+      }
+    }
+  }
+
+  const numbered = reviews.map((r, i) => {
+    const text = (r.text || '(no text)').replace(/\s+/g, ' ').slice(0, 400);
+    return `[${i}] ${r.rating ?? '?'} stars | ${r.date ? String(r.date).slice(0, 10) : 'no date'} | ${r.owner_response ? 'responded' : 'no response'} | ${text}`;
+  }).join('\n');
+
+  const prompt = `You are a local SEO consultant summarizing Google reviews for ${project.business_name || project.name}.
+
+## Reviews (numbered)
+${numbered}
+
+## Instructions
+Return ONLY valid JSON (no markdown, no code fences) with this exact structure:
+{
+  "summary": "<one paragraph, 3 to 5 sentences, summarizing what customers say>",
+  "themes": [
+    {
+      "theme": "<short theme name, 2-4 words>",
+      "sentiment": "positive" | "negative" | "mixed",
+      "mention_count": <number of reviews mentioning this theme>,
+      "quotes": ["<up to 2 short verbatim quotes from the reviews>"],
+      "review_indexes": [<the [n] indexes of reviews that mention this theme>]
+    }
+  ]
+}
+
+Rules:
+- Return 5 to 8 themes, most mentioned first
+- review_indexes must only contain index numbers shown in brackets above
+- Quotes must be verbatim substrings of review text, 15 words or fewer
+- Plain English, written for a business owner
+- Never use em dashes in any output text`;
+
+  const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
+  const provider = getLLMProvider(env, llm_config);
+
+  try {
+    const result = await provider.chatComplete(messages, env, llm_config, 4096);
+    let raw = result.text.trim();
+    if (raw.startsWith('```')) {
+      raw = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(raw); } catch { /* validated below */ }
+    const validated = validateReviewThemes(parsed, reviews.length);
+    if (!validated) {
+      return json({ error: 'The model returned an unreadable response. Use Refresh themes to retry.' }, 502);
+    }
+
+    const model = llm_config?.model || null;
+    await env.DB.prepare(
+      'INSERT INTO local_review_themes (project_id, reviews_hash, summary, themes, model) VALUES (?, ?, ?, ?, ?)'
+    ).bind(projectId, reviewsHash, validated.summary, JSON.stringify(validated.themes), model).run();
+
+    return json({
+      summary: validated.summary,
+      themes: validated.themes,
+      generated_at: new Date().toISOString(),
+      cached: false,
+      model,
+    });
+  } catch (err) {
+    return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}. Use Refresh themes to retry.` }, 502);
+  }
 }
 
 // POST /api/local-seo/keyword-suggestions
@@ -1042,7 +1317,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     const promises = chunk.map(async (point) => {
       const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
         keyword: keyword.trim(),
-        location_coordinate: `${point.lat},${point.lng},17z`,
+        location_coordinate: `${point.lat},${point.lng},${zoomForRadius(radius)}`,
         language_code: 'en',
         device: 'desktop',
         os: 'windows',
@@ -1101,6 +1376,22 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     avgPosition, top3Count, foundCount, scannedAt
   ).run();
 
+  // Aggregate "Who owns your map" competitor share and persist top 10.
+  const competitors = aggregateGeogridCompetitors(results, project.business_name);
+  if (competitors.length > 0) {
+    // Bookkeeping only: a failed write must never fail the scan response
+    // (the table or column may not exist yet if the migration is pending).
+    try {
+      await env.DB.batch(competitors.map(c =>
+        env.DB.prepare(
+          'INSERT INTO geogrid_competitors (scan_id, name, appearances, total_points, avg_position, best_position, rating, reviews, is_user) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(scanId, c.name, c.appearances, c.total_points, c.avg_position, c.best_position, c.rating, c.reviews, c.is_user ? 1 : 0)
+      ));
+    } catch (err) {
+      console.error('geogrid_competitors insert failed (migration pending?)', err);
+    }
+  }
+
   return json({
     id: scanId,
     keyword: keyword.trim(),
@@ -1108,6 +1399,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     radius_km: radius,
     center: { lat: centerLat, lng: centerLng },
     points: results,
+    competitors,
     summary: {
       avg_position: avgPosition,
       top3_count: top3Count,
@@ -1136,12 +1428,26 @@ export async function handleGeoGridHistory(env: Env, userId: string, projectId: 
 // GET /api/local-seo/geogrid-scans/:scanId
 export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: string): Promise<Response> {
   const scan = await env.DB.prepare(`
-    SELECT gs.* FROM geogrid_scans gs
+    SELECT gs.*, sp.business_name FROM geogrid_scans gs
     JOIN seo_projects sp ON sp.id = gs.project_id
     WHERE gs.id = ? AND sp.user_id = ?
   `).bind(scanId, userId).first() as any;
 
   if (!scan) return json({ error: 'Scan not found' }, 404);
+
+  let points: any[] = [];
+  try { points = JSON.parse(scan.results) || []; } catch { points = []; }
+
+  const { results: compRows } = await env.DB.prepare(
+    'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews, is_user FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+  ).bind(scanId).all() as { results: any[] };
+
+  // Scans from before this feature have no stored rows: aggregate on the fly
+  // from the stored JSON blob (no backfill writes). The stored is_user flag is
+  // authoritative; the name match covers rows written before the column.
+  const competitors: AggregatedCompetitor[] = compRows.length > 0
+    ? compRows.map(r => ({ ...r, is_user: !!r.is_user || (!!scan.business_name && r.name === scan.business_name) }))
+    : aggregateGeogridCompetitors(points, scan.business_name);
 
   return json({
     id: scan.id,
@@ -1149,7 +1455,8 @@ export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: 
     grid_size: scan.grid_size,
     radius_km: scan.radius_km,
     center: { lat: scan.center_lat, lng: scan.center_lng },
-    points: JSON.parse(scan.results),
+    points,
+    competitors,
     summary: {
       avg_position: scan.avg_position,
       top3_count: scan.top3_count,
@@ -1158,6 +1465,50 @@ export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: 
     },
     scanned_at: scan.scanned_at,
   });
+}
+
+// GET /api/local-seo/projects/:id/geogrid-competitors?keyword=
+// Per-scan competitor series for a keyword, most recent first. The SPA uses
+// the two most recent scans to show movement vs the previous scan.
+export async function handleGeoGridCompetitorSeries(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, business_name FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as any;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+
+  const url = new URL(request.url);
+  const keyword = (url.searchParams.get('keyword') || '').trim();
+  if (!keyword) return json({ error: 'keyword query param is required' }, 400);
+
+  const { results: scans } = await env.DB.prepare(
+    'SELECT id, scanned_at FROM geogrid_scans WHERE project_id = ? AND keyword = ? ORDER BY scanned_at DESC LIMIT 12'
+  ).bind(projectId, keyword).all() as { results: any[] };
+
+  // Single query for all scans (instead of one query per scan), grouped in memory.
+  const rowsByScan = new Map<string, AggregatedCompetitor[]>();
+  if (scans.length > 0) {
+    const placeholders = scans.map(() => '?').join(',');
+    const { results: rows } = await env.DB.prepare(
+      `SELECT scan_id, name, appearances, total_points, avg_position, best_position, rating, reviews, is_user
+       FROM geogrid_competitors WHERE scan_id IN (${placeholders}) ORDER BY appearances DESC`
+    ).bind(...scans.map(s => s.id)).all() as { results: any[] };
+    for (const row of rows) {
+      const { scan_id, ...rest } = row;
+      const list = rowsByScan.get(scan_id) || [];
+      list.push({
+        ...rest,
+        is_user: !!rest.is_user || (!!project.business_name && rest.name === project.business_name),
+      } as AggregatedCompetitor);
+      rowsByScan.set(scan_id, list);
+    }
+  }
+
+  const series: Array<{ scan_id: string; scanned_at: string; competitors: AggregatedCompetitor[] }> = scans.map(scan => ({
+    scan_id: scan.id,
+    scanned_at: scan.scanned_at,
+    competitors: rowsByScan.get(scan.id) || [],
+  }));
+  return json({ keyword, scans: series });
 }
 
 // POST /api/local-seo/projects/:id/geogrid-insights
@@ -1394,4 +1745,204 @@ Rules:
   } catch (err) {
     return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
   }
+}
+
+// GET /api/local-seo/projects/:id/period-report?days=30
+// Aggregate report for the period-performance export. Reviews block reads
+// snapshots + cached themes only: never fetches reviews, never calls an LLM.
+export async function handleLocalPeriodReport(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, name, domain, business_name, place_id, location_code FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as any;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+
+  const url = new URL(request.url);
+  const days = Math.min(Math.max(parseInt(url.searchParams.get('days') || '30', 10) || 30, 7), 365);
+
+  const totalTracked = await env.DB.prepare(
+    'SELECT COUNT(*) as n FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
+  ).bind(projectId).first() as any;
+
+  // --- Keyword movement: first vs latest check inside the window per keyword ---
+  const { results: kwRows } = await env.DB.prepare(`
+    SELECT tk.id, tk.keyword, lrh.pack_position, lrh.checked_at
+    FROM tracked_keywords tk
+    JOIN local_rank_history lrh ON lrh.keyword_id = tk.id
+    WHERE tk.project_id = ? AND tk.is_active = 1
+      AND lrh.checked_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY lrh.checked_at ASC
+  `).bind(projectId, days).all() as { results: any[] };
+
+  const byKeyword = new Map<string, { keyword: string; first: number | null; last: number | null }>();
+  for (const row of kwRows) {
+    const entry = byKeyword.get(row.id);
+    if (!entry) {
+      byKeyword.set(row.id, { keyword: row.keyword, first: row.pack_position, last: row.pack_position });
+    } else {
+      entry.last = row.pack_position;
+    }
+  }
+  const keywords = Array.from(byKeyword.values()).map(k => ({
+    keyword: k.keyword,
+    start_position: k.first,
+    current_position: k.last,
+    // positive = improved (moved up the pack)
+    delta: k.first != null && k.last != null ? k.first - k.last : null,
+  }));
+  const best_movers = keywords.filter(k => (k.delta ?? 0) > 0)
+    .sort((a, b) => (b.delta ?? 0) - (a.delta ?? 0)).slice(0, 3);
+  const decliners = keywords.filter(k => (k.delta ?? 0) < 0)
+    .sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0)).slice(0, 3);
+
+  // --- Geo-grid: latest scan + previous scan for the same keyword ---
+  const latestScan = await env.DB.prepare(
+    'SELECT id, keyword, grid_size, avg_position, top3_count, found_count, scanned_at, results FROM geogrid_scans WHERE project_id = ? ORDER BY scanned_at DESC LIMIT 1'
+  ).bind(projectId).first() as any;
+
+  let geogrid: any = null;
+  let latestPoints: Array<{ row: number; col: number; position: number | null }> = [];
+  if (latestScan) {
+    try { latestPoints = JSON.parse(latestScan.results) || []; } catch { latestPoints = []; }
+    const prevScan = await env.DB.prepare(
+      'SELECT avg_position, top3_count, found_count, scanned_at FROM geogrid_scans WHERE project_id = ? AND keyword = ? AND scanned_at < ? ORDER BY scanned_at DESC LIMIT 1'
+    ).bind(projectId, latestScan.keyword, latestScan.scanned_at).first() as any;
+
+    const { results: compRows } = await env.DB.prepare(
+      'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews, is_user FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+    ).bind(latestScan.id).all() as { results: any[] };
+    const competitors: AggregatedCompetitor[] = compRows.length > 0
+      ? compRows.map(r => ({ ...r, is_user: !!r.is_user || (!!project.business_name && r.name === project.business_name) }))
+      : aggregateGeogridCompetitors(latestPoints as any, project.business_name);
+
+    geogrid = {
+      latest: {
+        scan_id: latestScan.id,
+        keyword: latestScan.keyword,
+        scanned_at: latestScan.scanned_at,
+        avg_position: latestScan.avg_position,
+        top3_count: latestScan.top3_count,
+        found_count: latestScan.found_count,
+        total_points: latestScan.grid_size * latestScan.grid_size,
+        competitors,
+      },
+      previous: prevScan ? {
+        avg_position: prevScan.avg_position,
+        top3_count: prevScan.top3_count,
+        found_count: prevScan.found_count,
+        scanned_at: prevScan.scanned_at,
+      } : null,
+    };
+  }
+
+  // --- Reviews block: snapshots + cached themes only ---
+  const { results: snapRows } = await env.DB.prepare(`
+    SELECT rating, reviews_count, response_rate, unanswered_low_star, rating_distribution, created_at
+    FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 120
+  `).bind(projectId).all() as { results: any[] };
+
+  let reviews: any = null;
+  if (snapRows.length > 0) {
+    const latest = snapRows[0];
+    const cutoffStart = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const cutoffPrev = new Date(Date.now() - days * 2 * 86400000).toISOString().slice(0, 10);
+    const atPeriodStart = snapRows.find(r => r.created_at.slice(0, 10) <= cutoffStart) || null;
+    const atPrevStart = snapRows.find(r => r.created_at.slice(0, 10) <= cutoffPrev) || null;
+    const velocity = computeVelocity({
+      currentCount: latest.reviews_count,
+      startOfPeriodCount: atPeriodStart?.reviews_count ?? null,
+      startOfPreviousPeriodCount: atPrevStart?.reviews_count ?? null,
+    });
+
+    const themesRow = await env.DB.prepare(
+      'SELECT summary, themes, created_at FROM local_review_themes WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(projectId).first() as any;
+
+    let ratingDistribution: any = null;
+    try { ratingDistribution = latest.rating_distribution ? JSON.parse(latest.rating_distribution) : null; } catch { ratingDistribution = null; }
+    let parsedThemes: any = null;
+    try { parsedThemes = themesRow?.themes ? JSON.parse(themesRow.themes) : null; } catch { parsedThemes = null; }
+
+    reviews = {
+      rating: latest.rating,
+      rating_previous: atPeriodStart?.rating ?? null,
+      reviews_count: latest.reviews_count,
+      response_rate: latest.response_rate,
+      response_rate_previous: atPeriodStart?.response_rate ?? null,
+      unanswered_low_star: latest.unanswered_low_star,
+      rating_distribution: ratingDistribution,
+      velocity: { current_period: velocity.current, previous_period: velocity.previous },
+      themes: themesRow && parsedThemes
+        ? { summary: themesRow.summary, themes: parsedThemes, generated_at: themesRow.created_at }
+        : null,
+    };
+  }
+
+  // --- GBP completeness from the KV-cached profile (no DFS call in this path) ---
+  let gbp: any = null;
+  const gbpCached = await env.KV.get(`gbp-profile:${project.place_id || project.business_name}`, 'json') as any;
+  if (gbpCached?.title) {
+    // Mirrors the GBPProfileCard formula: checks the API cannot determine
+    // ('unknown') are excluded from the denominator, not counted as missing.
+    const checks: Array<{ label: string; status: 'ok' | 'missing' | 'unknown' }> = [
+      { label: 'Description', status: gbpCached.description && gbpCached.description !== gbpCached.address ? 'ok' : 'missing' },
+      { label: 'Phone', status: gbpCached.phone ? 'ok' : 'missing' },
+      { label: 'Website', status: gbpCached.url ? 'ok' : 'missing' },
+      { label: 'Hours', status: gbpCached.work_time ? 'ok' : 'missing' },
+      { label: 'Photos', status: (gbpCached.total_photos ?? 0) > 0 ? 'ok' : 'missing' },
+      { label: 'Claimed', status: gbpCached.is_claimed === true ? 'ok' : gbpCached.is_claimed === false ? 'missing' : 'unknown' },
+    ];
+    const verifiable = checks.filter(c => c.status !== 'unknown');
+    gbp = {
+      completeness_pct: verifiable.length > 0 ? Math.round((verifiable.filter(c => c.status === 'ok').length / verifiable.length) * 100) : 100,
+      missing: checks.filter(c => c.status === 'missing').map(c => c.label),
+    };
+  }
+
+  // --- Rule-based next steps ---
+  const next_steps: Array<{ title: string; detail: string }> = [];
+  if (gbp && gbp.missing.length > 0) {
+    next_steps.push({
+      title: 'Complete your Google Business Profile',
+      detail: `These profile fields look incomplete or could not be verified: ${gbp.missing.join(', ')}. A complete profile is the strongest local ranking signal you control.`,
+    });
+  }
+  if (reviews && (reviews.unanswered_low_star ?? 0) > 0) {
+    next_steps.push({
+      title: `Respond to ${reviews.unanswered_low_star} low rated review${reviews.unanswered_low_star === 1 ? '' : 's'}`,
+      detail: 'Reviews rated 3 stars or below with no owner response hurt trust and conversion. A calm, specific reply to each one shows future customers you listen.',
+    });
+  }
+  const nearTop3 = keywords.filter(k => k.current_position != null && k.current_position >= 4 && k.current_position <= 6);
+  if (nearTop3.length > 0) {
+    next_steps.push({
+      title: 'Push keywords just outside the top 3',
+      detail: `${nearTop3.map(k => `"${k.keyword}" (#${k.current_position})`).join(', ')} ${nearTop3.length === 1 ? 'is' : 'are'} within reach of the local pack top 3. Fresh reviews, posts, and category tuning move these fastest.`,
+    });
+  }
+  if (latestScan && latestPoints.length > 0) {
+    const gridSize = latestScan.grid_size as number;
+    const weakEdges = latestPoints.filter(p =>
+      (p.row === 0 || p.row === gridSize - 1 || p.col === 0 || p.col === gridSize - 1) &&
+      (p.position == null || p.position > 10)
+    ).length;
+    if (weakEdges > 0) {
+      next_steps.push({
+        title: 'Improve visibility at the edges of your service area',
+        detail: `Your business is weak or invisible at ${weakEdges} outer grid point${weakEdges === 1 ? '' : 's'} for "${latestScan.keyword}". Location pages, citations, and reviews mentioning those neighborhoods extend your reach.`,
+      });
+    }
+  }
+
+  return json({
+    project: { id: project.id, name: project.name, business_name: project.business_name, domain: project.domain },
+    days,
+    total_tracked: totalTracked?.n ?? 0,
+    keywords,
+    best_movers,
+    decliners,
+    geogrid,
+    reviews,
+    gbp,
+    next_steps,
+  });
 }

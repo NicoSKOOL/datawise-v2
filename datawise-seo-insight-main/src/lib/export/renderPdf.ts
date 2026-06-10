@@ -67,7 +67,8 @@ function renderCover(ctx: Ctx) {
   if (payload.domain || payload.dateRange) {
     const meta: string[] = [];
     if (payload.domain) meta.push(payload.domain);
-    if (payload.dateRange) meta.push(`${payload.dateRange.from} → ${payload.dateRange.to}`);
+    // Plain "to" instead of an arrow: the embedded PDF font cannot encode it.
+    if (payload.dateRange) meta.push(`${payload.dateRange.from} to ${payload.dateRange.to}`);
     doc.setFontSize(10);
     doc.setTextColor(...BRAND_RGB.textMuted);
     doc.text(meta.join('  ·  '), PAGE.marginX, ctx.y + 2);

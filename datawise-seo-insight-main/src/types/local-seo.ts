@@ -54,6 +54,7 @@ export interface LocalTrendPoint {
 export interface LocalProjectReport {
   current: LocalPeriodSnapshot;
   previous: LocalPeriodSnapshot;
+  velocity: { current: number | null; previous: number | null };
   trend: LocalTrendPoint[];
 }
 
@@ -103,11 +104,45 @@ export interface ReviewItem {
   review_url: string | null;
 }
 
+export interface ReviewSnapshotRow {
+  rating: number | null;
+  reviews_count: number | null;
+  fetched_count: number | null;
+  responded_count: number | null;
+  response_rate: number | null;
+  unanswered_low_star: number | null;
+  rating_distribution: Record<string, number> | null;
+  created_at: string;
+}
+
 export interface ReviewsResponse {
   rating: number | null;
   reviews_count: number;
   place_id: string | null;
+  rating_distribution: Record<string, number> | null;
   reviews: ReviewItem[];
+  snapshots: {
+    latest: ReviewSnapshotRow | null;
+    period_start: ReviewSnapshotRow | null;
+    previous_period_start: ReviewSnapshotRow | null;
+  };
+  velocity: { current: number | null; previous: number | null };
+}
+
+export interface ReviewTheme {
+  theme: string;
+  sentiment: 'positive' | 'negative' | 'mixed';
+  mention_count: number;
+  quotes: string[];
+  review_indexes: number[];
+}
+
+export interface ReviewThemesResponse {
+  summary: string;
+  themes: ReviewTheme[];
+  generated_at: string;
+  cached: boolean;
+  model: string | null;
 }
 
 export interface LocalCompetitor {
@@ -139,6 +174,22 @@ export interface GeoGridSummary {
   not_found_count: number;
 }
 
+export interface GeoGridCompetitor {
+  name: string;
+  appearances: number;
+  total_points: number;
+  avg_position: number | null;
+  best_position: number | null;
+  rating: number | null;
+  reviews: number | null;
+  is_user: boolean;
+}
+
+export interface GeoGridCompetitorSeries {
+  keyword: string;
+  scans: Array<{ scan_id: string; scanned_at: string; competitors: GeoGridCompetitor[] }>;
+}
+
 export interface GeoGridScanResult {
   id: string;
   keyword: string;
@@ -146,6 +197,7 @@ export interface GeoGridScanResult {
   radius_km: number;
   center: { lat: number; lng: number };
   points: GeoGridPoint[];
+  competitors?: GeoGridCompetitor[];
   summary: GeoGridSummary;
   scanned_at: string;
 }
@@ -161,6 +213,48 @@ export interface GeoGridHistoryItem {
   top3_count: number;
   found_count: number;
   scanned_at: string;
+}
+
+export interface LocalPeriodKeywordMove {
+  keyword: string;
+  start_position: number | null;
+  current_position: number | null;
+  delta: number | null; // positive = improved
+}
+
+export interface LocalPeriodReportData {
+  project: { id: string; name: string; business_name: string | null; domain: string | null };
+  days: number;
+  total_tracked: number;
+  keywords: LocalPeriodKeywordMove[];
+  best_movers: LocalPeriodKeywordMove[];
+  decliners: LocalPeriodKeywordMove[];
+  geogrid: {
+    latest: {
+      scan_id: string;
+      keyword: string;
+      scanned_at: string;
+      avg_position: number | null;
+      top3_count: number;
+      found_count: number;
+      total_points: number;
+      competitors: GeoGridCompetitor[];
+    };
+    previous: { avg_position: number | null; top3_count: number; found_count: number; scanned_at: string } | null;
+  } | null;
+  reviews: {
+    rating: number | null;
+    rating_previous: number | null;
+    reviews_count: number | null;
+    response_rate: number | null;
+    response_rate_previous: number | null;
+    unanswered_low_star: number | null;
+    rating_distribution: Record<string, number> | null;
+    velocity: { current_period: number | null; previous_period: number | null };
+    themes: { summary: string; themes: ReviewTheme[]; generated_at: string } | null;
+  } | null;
+  gbp: { completeness_pct: number; missing: string[] } | null;
+  next_steps: Array<{ title: string; detail: string }>;
 }
 
 export interface GeoGridInsightAction {

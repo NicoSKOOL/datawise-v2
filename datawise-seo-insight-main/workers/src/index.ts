@@ -69,10 +69,12 @@ import {
 } from './routes/planner-clusters';
 import {
   handleBusinessSearch, handleCreateLocalProject, handleLinkLocalProjectGBP, handleLocalKeywordDiscovery, handleLocalKeywords,
-  handleLocalRankCheck, handleLocalProjectReport,
+  handleLocalRankCheck, handleLocalProjectReport, handleLocalPeriodReport,
   handleGBPProfile, handleReviews, handleLocalCompetitors, handleLocalKeywordSuggestions,
   handleResolveGBPUrl,
   handleGeoGridScan, handleGeoGridHistory, handleGeoGridScanDetail, handleGeoGridInsights,
+  handleGeoGridCompetitorSeries,
+  handleReviewThemes,
 } from './routes/local-seo';
 import {
   handleFetchPost, handleDiscoverSitemap, handleAnalyzePost, handleRewritePost,
@@ -533,7 +535,7 @@ export default {
         return await withCredit(() => handleGBPProfile(request, env));
       }
       if (path === '/api/local-seo/reviews' && method === 'POST') {
-        return await withCredit(() => handleReviews(request, env));
+        return await withCredit(() => handleReviews(request, env, user.id));
       }
       if (path === '/api/local-seo/keyword-suggestions' && method === 'POST') {
         return await withCredit(() => handleLocalKeywordSuggestions(request, env));
@@ -559,6 +561,18 @@ export default {
       if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/geogrid-insights$/) && method === 'POST') {
         const projectId = path.split('/')[4];
         return addCors(await handleGeoGridInsights(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/review-themes$/) && method === 'POST') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleReviewThemes(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/geogrid-competitors$/) && method === 'GET') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleGeoGridCompetitorSeries(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/period-report$/) && method === 'GET') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleLocalPeriodReport(request, env, user.id, projectId));
       }
 
       // --- AI Visibility (reporting, not credit-gated) ---
