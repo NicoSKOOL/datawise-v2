@@ -34,6 +34,7 @@ import ProjectStatsCards from '@/components/rank-tracking/ProjectStatsCards';
 import KeywordTable from '@/components/rank-tracking/KeywordTable';
 import KeywordHistoryDialog from '@/components/rank-tracking/KeywordHistoryDialog';
 import ProjectListView from '@/components/rank-tracking/ProjectListView';
+import AIVisibilityPanel from '@/components/rank-tracking/AIVisibilityPanel';
 import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';
 import RankTrendChart from '@/components/rank-tracking/RankTrendChart';
 import PeriodSelector from '@/components/rank-tracking/PeriodSelector';
@@ -816,6 +817,11 @@ export default function RankTracking() {
           history={history}
           loading={loadingHistory}
           onClose={() => setHistoryKeyword(null)}
+        />
+
+        <AIVisibilityPanel
+          project={selectedProject}
+          trackedKeywords={keywords.map((kw) => kw.keyword)}
         />
 
         <CompetitorComparison domain={selectedProject.domain} />
