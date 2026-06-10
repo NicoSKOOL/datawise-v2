@@ -189,6 +189,7 @@ export default function ReviewsSection({ projectId, placeId, cid, businessName }
               <RatingDistribution distribution={data.rating_distribution} />
               <ThemesPanel
                 themes={themes}
+                reviews={data.reviews}
                 loading={themesLoading}
                 error={themesError}
                 activeThemeIndex={filters.themeIndex}
