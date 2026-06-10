@@ -138,7 +138,7 @@ import {
 import { handlePageview, prunePageviews } from './routes/track';
 import {
   handleGetAITracking, handleUpdateAISettings, handleAddAIQueries,
-  handleDeleteAIQuery, handleRunAICheck, handleAIReport,
+  handleDeleteAIQuery, handleRunAICheck, handleAIReport, handleGetAIAnswer,
   runScheduledAIChecks,
 } from './routes/ai-tracking';
 
@@ -459,6 +459,10 @@ export default {
       if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+\/ai\/report$/) && method === 'GET') {
         const projectId = path.split('/')[4];
         return addCors(await handleAIReport(request, env, user.id, projectId));
+      }
+      const aiAnswerMatch = path.match(/^\/api\/rank-tracking\/ai\/checks\/(\d+)\/answer$/);
+      if (aiAnswerMatch && method === 'GET') {
+        return addCors(await handleGetAIAnswer(env, user.id, aiAnswerMatch[1]));
       }
 
       // --- Content Planner ---
