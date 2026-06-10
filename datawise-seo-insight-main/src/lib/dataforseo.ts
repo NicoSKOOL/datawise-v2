@@ -154,7 +154,7 @@ export async function fetchProjectKeywords(projectId: string) {
   return api(`/api/rank-tracking/projects/${projectId}/keywords`);
 }
 
-export async function addProjectKeywords(projectId: string, params: { keywords: string[]; location_code?: number; language_code?: string; initial_positions?: Record<string, number> }) {
+export async function addProjectKeywords(projectId: string, params: { keywords: string[]; location_code?: number; language_code?: string; device?: 'desktop' | 'mobile'; initial_positions?: Record<string, number> }) {
   return api(`/api/rank-tracking/projects/${projectId}/keywords`, { method: 'POST', body: params });
 }
 

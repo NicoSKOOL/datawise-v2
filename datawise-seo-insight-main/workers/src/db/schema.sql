@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS tracked_keywords (
   keyword TEXT NOT NULL,
   location_code INTEGER,
   language_code TEXT,
+  device TEXT DEFAULT 'desktop',
   is_active INTEGER DEFAULT 1,
   created_at TEXT DEFAULT (datetime('now'))
 );

@@ -57,6 +57,7 @@ import {
   handleListKeywords, handleAddKeywords, handleDeleteKeyword,
   handleCheckRankings, handleKeywordHistory,
   handleProjectReport, handleDashboardSummary,
+  runScheduledRankChecks,
 } from './routes/rank-tracking';
 import {
   handleListPlannerKeywords, handleAddPlannerKeyword, handleBulkAddPlannerKeywords,
@@ -159,6 +160,13 @@ export default {
     // Weekly AI visibility tracking run (Monday 06:00 UTC).
     if (event.cron === '0 6 * * 1') {
       await runScheduledAIChecks(env);
+      return;
+    }
+
+    // Weekly SERP rank checks for tracked-keyword projects (Tuesday 08:00 UTC).
+    // KV key `rank-checks-paused` is the kill switch.
+    if (event.cron === '0 8 * * 2') {
+      await runScheduledRankChecks(env);
       return;
     }
 

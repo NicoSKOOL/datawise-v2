@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useTabParam } from '@/hooks/use-tab-param';
+import { useProperty } from '@/contexts/PropertyContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import {
@@ -14,8 +14,8 @@ import {
   checkProjectRankings, fetchKeywordHistory, fetchProjectReport,
 } from '@/lib/dataforseo';
 import {
-  getGSCProperties, getGSCData, syncGSCProperty, getGSCQueries,
-  type GSCProperty, type GSCOverviewData, type GSCQueryFilter, type GSCQuerySort, type GSCResultRow,
+  getGSCData, syncGSCProperty, getGSCQueries,
+  type GSCOverviewData, type GSCQueryFilter, type GSCQuerySort, type GSCResultRow,
 } from '@/lib/gsc';
 import {
   fetchLocalProjects, createLocalProject, deleteLocalProject,
@@ -23,7 +23,7 @@ import {
   fetchGBPProfile, linkLocalProjectGBP,
 } from '@/lib/local-seo';
 import { Input } from '@/components/ui/input';
-import { RefreshCw, Link2, Sparkles, Activity, Search, ArrowLeft, MapPin, LayoutGrid, List } from 'lucide-react';
+import { RefreshCw, Link2, Sparkles, Activity, Search, ArrowLeft, MapPin, LayoutGrid, List, Globe2 } from 'lucide-react';
 import GSCQueryTable from '@/components/rank-tracking/GSCQueryTable';
 
 import type { Project, TrackedKeyword, HistoryEntry, ProjectReport } from '@/types/rank-tracking';
@@ -73,10 +73,17 @@ export default function RankTracking() {
   const [historyKeyword, setHistoryKeyword] = useState<TrackedKeyword | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [gscConnected, setGscConnected] = useState(false);
-  const [gscProperties, setGscProperties] = useState<GSCProperty[]>([]);
-  const [selectedPropertyId, setSelectedPropertyId] = useState('');
-  const [loadingGSCProperties, setLoadingGSCProperties] = useState(true);
+  // Property selection comes from the global PropertyContext (sidebar
+  // selector). A second page-level selector here used to disagree with the
+  // sidebar and show zeros for the "wrong" property (same confusion as the
+  // SEO Assistant two-selector bug 89b32130).
+  const {
+    connected: gscConnected,
+    selectedProperty,
+    selectedPropertyId,
+    loading: loadingGSCProperties,
+    primaryDomain,
+  } = useProperty();
   const [loadingGSCOverview, setLoadingGSCOverview] = useState(false);
   const [syncingPropertyId, setSyncingPropertyId] = useState<string | null>(null);
   const [gscOverview, setGscOverview] = useState<GSCOverviewData | null>(null);
@@ -87,6 +94,9 @@ export default function RankTracking() {
   const [filteredOffset, setFilteredOffset] = useState(0);
   const [loadingFiltered, setLoadingFiltered] = useState(false);
   const [querySearch, setQuerySearch] = useState('');
+  // Debounced copy of querySearch: the filtered-queries fetch keys off this,
+  // so typing a 10-letter keyword costs 1 API call instead of 10.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [querySort, setQuerySort] = useState<{ column: GSCQuerySort; order: 'asc' | 'desc' }>({ column: 'clicks', order: 'desc' });
   const [trackedGSCKeywords, setTrackedGSCKeywords] = useState<Set<string>>(new Set());
   const [report, setReport] = useState<ProjectReport | null>(null);
@@ -110,8 +120,10 @@ export default function RankTracking() {
   const [linkGBPOpen, setLinkGBPOpen] = useState(false);
   const { toast } = useToast();
 
-  const availableProperties = gscProperties.filter((property) => property.is_enabled !== 0);
-  const selectableProperties = availableProperties.length > 0 ? availableProperties : gscProperties;
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(querySearch), 300);
+    return () => clearTimeout(timer);
+  }, [querySearch]);
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -143,31 +155,6 @@ export default function RankTracking() {
     }
   }, [toast]);
 
-  const loadGSCProperties = useCallback(async () => {
-    setLoadingGSCProperties(true);
-    try {
-      const data = await getGSCProperties();
-      const properties = data.properties || [];
-      const enabledProperties = properties.filter((property) => property.is_enabled !== 0);
-      const nextSelectableProperties = enabledProperties.length > 0 ? enabledProperties : properties;
-      const nextPropertyId = nextSelectableProperties[0]?.id || '';
-
-      setGscConnected(data.connected);
-      setGscProperties(properties);
-      setSelectedPropertyId((current) => {
-        if (current && nextSelectableProperties.some((property) => property.id === current)) return current;
-        return nextPropertyId;
-      });
-    } catch {
-      setGscConnected(false);
-      setGscProperties([]);
-      setSelectedPropertyId('');
-    } finally {
-      setLoadingGSCProperties(false);
-      setLoadingGSCOverview(false);
-    }
-  }, []);
-
   const loadGSCOverview = useCallback(async (propertyId: string) => {
     if (!propertyId) {
       setGscOverview(null);
@@ -197,7 +184,7 @@ export default function RankTracking() {
       const data = await getGSCQueries(
         selectedPropertyId,
         selectedCard,
-        querySearch,
+        debouncedSearch,
         querySort.column,
         querySort.order,
         100,
@@ -212,14 +199,14 @@ export default function RankTracking() {
     } finally {
       setLoadingFiltered(false);
     }
-  }, [selectedPropertyId, selectedCard, querySearch, querySort, filteredOffset]);
+  }, [selectedPropertyId, selectedCard, debouncedSearch, querySort, filteredOffset]);
 
   // Fetch filtered queries when card, search, or sort changes
   useEffect(() => {
     if (selectedCard) {
       loadFilteredQueries(false);
     }
-  }, [selectedCard, querySearch, querySort, loadFilteredQueries]);
+  }, [selectedCard, debouncedSearch, querySort, loadFilteredQueries]);
 
   // Reset filter state when property changes
   useEffect(() => {
@@ -268,8 +255,7 @@ export default function RankTracking() {
   useEffect(() => {
     loadProjects();
     loadLocalProjects();
-    loadGSCProperties();
-  }, [loadProjects, loadLocalProjects, loadGSCProperties]);
+  }, [loadProjects, loadLocalProjects]);
 
   const loadReport = useCallback(async (projectId: string, period: number) => {
     setLoadingReport(true);
@@ -322,13 +308,14 @@ export default function RankTracking() {
     }
   };
 
-  const handleAddKeywords = async (keywordList: string[], locationCode: number, languageCode: string) => {
+  const handleAddKeywords = async (keywordList: string[], locationCode: number, languageCode: string, device: 'desktop' | 'mobile') => {
     if (!selectedProject) return;
     try {
       const result = await addProjectKeywords(selectedProject.id, {
         keywords: keywordList,
         location_code: locationCode,
         language_code: languageCode,
+        device,
       }) as { added: number; skipped: number };
 
       toast({ title: 'Keywords added', description: `Added ${result.added}, skipped ${result.skipped} duplicates` });
@@ -392,7 +379,6 @@ export default function RankTracking() {
     try {
       const result = await syncGSCProperty(selectedPropertyId);
       toast({ title: 'GSC sync complete', description: `Synced ${result.rows_synced} rows from ${result.property}` });
-      await loadGSCProperties();
       await loadGSCOverview(selectedPropertyId);
     } catch (err: unknown) {
       toast({
@@ -878,28 +864,21 @@ export default function RankTracking() {
           ) : (
             <>
               <div className="bg-white rounded-xl p-6 shadow-[0_1px_4px_rgba(24,28,32,0.06)]">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,320px)_auto] lg:items-end">
-                      <div className="space-y-2">
-                        <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Property</Label>
-                        <Select value={selectedPropertyId} onValueChange={setSelectedPropertyId}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select property" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {selectableProperties.map((property) => (
-                              <SelectItem key={property.id} value={property.id}>
-                                {property.site_url.replace(/^(sc-domain:|https?:\/\/)/, '')}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Property</Label>
+                      <div className="flex items-center gap-2">
+                        <Globe2 className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">
+                          {selectedProperty ? selectedProperty.site_url.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/\/+$/, '') : 'No site selected'}
+                        </span>
                       </div>
-                      <Button onClick={handleSyncProperty} disabled={!selectedPropertyId || syncingPropertyId === selectedPropertyId}>
-                        <RefreshCw className={`h-4 w-4 mr-2 ${syncingPropertyId === selectedPropertyId ? 'animate-spin' : ''}`} />
-                        {syncingPropertyId === selectedPropertyId ? 'Syncing...' : 'Sync GSC Data'}
-                      </Button>
+                      <p className="text-xs text-muted-foreground">Follows the website selected in the sidebar.</p>
                     </div>
+                    <Button onClick={handleSyncProperty} disabled={!selectedPropertyId || syncingPropertyId === selectedPropertyId}>
+                      <RefreshCw className={`h-4 w-4 mr-2 ${syncingPropertyId === selectedPropertyId ? 'animate-spin' : ''}`} />
+                      {syncingPropertyId === selectedPropertyId ? 'Syncing...' : 'Sync GSC Data'}
+                    </Button>
                   </div>
               </div>
 
@@ -1101,6 +1080,7 @@ export default function RankTracking() {
           <ProjectListView
             projects={projects}
             loading={loadingProjects}
+            selectedDomain={primaryDomain}
             onSelect={setSelectedProject}
             onDelete={handleDeleteProject}
             onCreate={handleCreateProject}

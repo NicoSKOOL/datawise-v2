@@ -9,13 +9,14 @@ import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 interface AddKeywordsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdd: (keywords: string[], locationCode: number, languageCode: string) => Promise<void>;
+  onAdd: (keywords: string[], locationCode: number, languageCode: string, device: 'desktop' | 'mobile') => Promise<void>;
 }
 
 export default function AddKeywordsDialog({ open, onOpenChange, onAdd }: AddKeywordsDialogProps) {
   const [keywordInput, setKeywordInput] = useState('');
   const [location, setLocation] = useState('2840');
   const [language, setLanguage] = useState('en');
+  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [adding, setAdding] = useState(false);
 
   const handleAdd = async () => {
@@ -23,7 +24,7 @@ export default function AddKeywordsDialog({ open, onOpenChange, onAdd }: AddKeyw
     if (keywordList.length === 0) return;
     setAdding(true);
     try {
-      await onAdd(keywordList, parseInt(location, 10), language);
+      await onAdd(keywordList, parseInt(location, 10), language, device);
       setKeywordInput('');
     } finally {
       setAdding(false);
@@ -69,6 +70,19 @@ export default function AddKeywordsDialog({ open, onOpenChange, onAdd }: AddKeyw
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div>
+            <Label>Device</Label>
+            <Select value={device} onValueChange={(value) => setDevice(value === 'mobile' ? 'mobile' : 'desktop')}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent className="bg-popover border z-50">
+                <SelectItem value="desktop">Desktop</SelectItem>
+                <SelectItem value="mobile">Mobile</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Positions are checked on this device's Google results. Add the same keyword twice to track both.
+            </p>
           </div>
         </div>
         <DialogFooter>
