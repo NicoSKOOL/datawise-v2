@@ -1759,6 +1759,10 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
   const url = new URL(request.url);
   const days = Math.min(Math.max(parseInt(url.searchParams.get('days') || '30', 10) || 30, 7), 365);
 
+  const totalTracked = await env.DB.prepare(
+    'SELECT COUNT(*) as n FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
+  ).bind(projectId).first() as any;
+
   // --- Keyword movement: first vs latest check inside the window per keyword ---
   const { results: kwRows } = await env.DB.prepare(`
     SELECT tk.id, tk.keyword, lrh.pack_position, lrh.checked_at
@@ -1877,17 +1881,20 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
   let gbp: any = null;
   const gbpCached = await env.KV.get(`gbp-profile:${project.place_id || project.business_name}`, 'json') as any;
   if (gbpCached?.title) {
-    const checks = [
-      { label: 'Description', ok: !!(gbpCached.description && gbpCached.description !== gbpCached.address) },
-      { label: 'Phone', ok: !!gbpCached.phone },
-      { label: 'Website', ok: !!gbpCached.url },
-      { label: 'Hours', ok: !!gbpCached.work_time },
-      { label: 'Photos', ok: (gbpCached.total_photos ?? 0) > 0 },
-      { label: 'Claimed', ok: gbpCached.is_claimed === true },
+    // Mirrors the GBPProfileCard formula: checks the API cannot determine
+    // ('unknown') are excluded from the denominator, not counted as missing.
+    const checks: Array<{ label: string; status: 'ok' | 'missing' | 'unknown' }> = [
+      { label: 'Description', status: gbpCached.description && gbpCached.description !== gbpCached.address ? 'ok' : 'missing' },
+      { label: 'Phone', status: gbpCached.phone ? 'ok' : 'missing' },
+      { label: 'Website', status: gbpCached.url ? 'ok' : 'missing' },
+      { label: 'Hours', status: gbpCached.work_time ? 'ok' : 'missing' },
+      { label: 'Photos', status: (gbpCached.total_photos ?? 0) > 0 ? 'ok' : 'missing' },
+      { label: 'Claimed', status: gbpCached.is_claimed === true ? 'ok' : gbpCached.is_claimed === false ? 'missing' : 'unknown' },
     ];
+    const verifiable = checks.filter(c => c.status !== 'unknown');
     gbp = {
-      completeness_pct: Math.round((checks.filter(c => c.ok).length / checks.length) * 100),
-      missing: checks.filter(c => !c.ok).map(c => c.label),
+      completeness_pct: verifiable.length > 0 ? Math.round((verifiable.filter(c => c.status === 'ok').length / verifiable.length) * 100) : 100,
+      missing: checks.filter(c => c.status === 'missing').map(c => c.label),
     };
   }
 
@@ -1929,6 +1936,7 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
   return json({
     project: { id: project.id, name: project.name, business_name: project.business_name, domain: project.domain },
     days,
+    total_tracked: totalTracked?.n ?? 0,
     keywords,
     best_movers,
     decliners,

@@ -225,6 +225,7 @@ export interface LocalPeriodKeywordMove {
 export interface LocalPeriodReportData {
   project: { id: string; name: string; business_name: string | null; domain: string | null };
   days: number;
+  total_tracked: number;
   keywords: LocalPeriodKeywordMove[];
   best_movers: LocalPeriodKeywordMove[];
   decliners: LocalPeriodKeywordMove[];

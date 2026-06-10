@@ -33,7 +33,7 @@ export function buildLocalSEOReport({ report, charts }: Args): ReportPayload {
   const inPack = report.keywords.filter(k => k.current_position != null).length;
   const top3 = report.keywords.filter(k => k.current_position != null && k.current_position <= 3).length;
   const kpis: Array<{ label: string; value: string; delta?: string; tone?: 'up' | 'down' | 'neutral' }> = [
-    { label: 'Tracked Keywords', value: String(report.keywords.length) },
+    { label: 'Tracked Keywords', value: String(report.total_tracked ?? report.keywords.length) },
     { label: 'In Local Pack', value: String(inPack) },
     { label: 'Top 3', value: String(top3) },
   ];
