@@ -270,11 +270,13 @@ async function runChecksForProject(
       if (classification.status === 'mentioned') summary.mentioned++;
 
       const inserted = await env.DB.prepare(`
-        INSERT INTO ai_visibility_checks (query_id, engine, status, citation_position, cited_url, answer_excerpt, run_type, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ai_visibility_checks (query_id, engine, status, citation_position, cited_url, answer_excerpt, answer_text, run_type, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         query.id, engine, classification.status, classification.citation_position,
-        classification.cited_url, classification.answer_excerpt, runType, checkedAt,
+        classification.cited_url, classification.answer_excerpt,
+        parsed.answerText ? parsed.answerText.slice(0, 10_000) : null,
+        runType, checkedAt,
       ).run();
 
       const checkId = inserted.meta?.last_row_id;
