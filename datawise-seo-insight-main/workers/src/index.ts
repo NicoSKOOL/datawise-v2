@@ -69,7 +69,7 @@ import {
 } from './routes/planner-clusters';
 import {
   handleBusinessSearch, handleCreateLocalProject, handleLinkLocalProjectGBP, handleLocalKeywordDiscovery, handleLocalKeywords,
-  handleLocalRankCheck, handleLocalProjectReport,
+  handleLocalRankCheck, handleLocalProjectReport, handleLocalPeriodReport,
   handleGBPProfile, handleReviews, handleLocalCompetitors, handleLocalKeywordSuggestions,
   handleResolveGBPUrl,
   handleGeoGridScan, handleGeoGridHistory, handleGeoGridScanDetail, handleGeoGridInsights,
@@ -569,6 +569,10 @@ export default {
       if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/geogrid-competitors$/) && method === 'GET') {
         const projectId = path.split('/')[4];
         return addCors(await handleGeoGridCompetitorSeries(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/period-report$/) && method === 'GET') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleLocalPeriodReport(request, env, user.id, projectId));
       }
 
       // --- AI Visibility (reporting, not credit-gated) ---

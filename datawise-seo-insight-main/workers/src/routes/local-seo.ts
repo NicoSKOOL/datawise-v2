@@ -191,6 +191,18 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     ORDER BY lrh.checked_at ASC
   `).bind(projectId, period * 2, period).all();
 
+  // Period before the previous one: needed for the review-velocity delta on
+  // the stats cards (velocity this period vs last period).
+  const { results: prev2Rows } = await env.DB.prepare(`
+    SELECT lrh.reviews_count
+    FROM local_rank_history lrh
+    JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+    WHERE tk.project_id = ? AND tk.is_active = 1
+      AND lrh.checked_at >= datetime('now', '-' || ? || ' days')
+      AND lrh.checked_at < datetime('now', '-' || ? || ' days')
+      AND lrh.reviews_count IS NOT NULL
+  `).bind(projectId, period * 3, period * 2).all();
+
   const countRow = await env.DB.prepare(
     'SELECT COUNT(*) as cnt FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
   ).bind(projectId).first() as any;
@@ -288,7 +300,16 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     return { date, avg_pack_position: avgP, top3: t3, top10: t10, top20: t20, avg_rating: avgR };
   }).sort((a, b) => a.date < b.date ? -1 : 1);
 
-  return json({ current, previous, trend });
+  const prev2Counts = (prev2Rows as any[]).map(r => r.reviews_count as number);
+  const prev2TotalReviews = prev2Counts.length ? Math.max(...prev2Counts) : null;
+  const velocity = {
+    current: current.total_reviews != null && previous.total_reviews != null
+      ? current.total_reviews - previous.total_reviews : null,
+    previous: previous.total_reviews != null && prev2TotalReviews != null
+      ? previous.total_reviews - prev2TotalReviews : null,
+  };
+
+  return json({ current, previous, velocity, trend });
 }
 
 // GET /api/local-seo/projects/:id/keywords
@@ -1676,4 +1697,191 @@ Rules:
   } catch (err) {
     return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 500);
   }
+}
+
+// GET /api/local-seo/projects/:id/period-report?days=30
+// Aggregate report for the period-performance export. Reviews block reads
+// snapshots + cached themes only: never fetches reviews, never calls an LLM.
+export async function handleLocalPeriodReport(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, name, domain, business_name, place_id, location_code FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as any;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+
+  const url = new URL(request.url);
+  const days = Math.min(Math.max(parseInt(url.searchParams.get('days') || '30', 10) || 30, 7), 365);
+
+  // --- Keyword movement: first vs latest check inside the window per keyword ---
+  const { results: kwRows } = await env.DB.prepare(`
+    SELECT tk.id, tk.keyword, lrh.pack_position, lrh.checked_at
+    FROM tracked_keywords tk
+    JOIN local_rank_history lrh ON lrh.keyword_id = tk.id
+    WHERE tk.project_id = ? AND tk.is_active = 1
+      AND lrh.checked_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY lrh.checked_at ASC
+  `).bind(projectId, days).all() as { results: any[] };
+
+  const byKeyword = new Map<string, { keyword: string; first: number | null; last: number | null }>();
+  for (const row of kwRows) {
+    const entry = byKeyword.get(row.id);
+    if (!entry) {
+      byKeyword.set(row.id, { keyword: row.keyword, first: row.pack_position, last: row.pack_position });
+    } else {
+      entry.last = row.pack_position;
+    }
+  }
+  const keywords = Array.from(byKeyword.values()).map(k => ({
+    keyword: k.keyword,
+    start_position: k.first,
+    current_position: k.last,
+    // positive = improved (moved up the pack)
+    delta: k.first != null && k.last != null ? k.first - k.last : null,
+  }));
+  const best_movers = keywords.filter(k => (k.delta ?? 0) > 0)
+    .sort((a, b) => (b.delta ?? 0) - (a.delta ?? 0)).slice(0, 3);
+  const decliners = keywords.filter(k => (k.delta ?? 0) < 0)
+    .sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0)).slice(0, 3);
+
+  // --- Geo-grid: latest scan + previous scan for the same keyword ---
+  const latestScan = await env.DB.prepare(
+    'SELECT id, keyword, grid_size, avg_position, top3_count, found_count, scanned_at, results FROM geogrid_scans WHERE project_id = ? ORDER BY scanned_at DESC LIMIT 1'
+  ).bind(projectId).first() as any;
+
+  let geogrid: any = null;
+  let latestPoints: Array<{ row: number; col: number; position: number | null }> = [];
+  if (latestScan) {
+    latestPoints = JSON.parse(latestScan.results);
+    const prevScan = await env.DB.prepare(
+      'SELECT avg_position, top3_count, found_count, scanned_at FROM geogrid_scans WHERE project_id = ? AND keyword = ? AND scanned_at < ? ORDER BY scanned_at DESC LIMIT 1'
+    ).bind(projectId, latestScan.keyword, latestScan.scanned_at).first() as any;
+
+    const { results: compRows } = await env.DB.prepare(
+      'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+    ).bind(latestScan.id).all() as { results: any[] };
+    const competitors: AggregatedCompetitor[] = compRows.length > 0
+      ? compRows.map(r => ({ ...r, is_user: !!project.business_name && r.name === project.business_name }))
+      : aggregateGeogridCompetitors(latestPoints, project.business_name);
+
+    geogrid = {
+      latest: {
+        scan_id: latestScan.id,
+        keyword: latestScan.keyword,
+        scanned_at: latestScan.scanned_at,
+        avg_position: latestScan.avg_position,
+        top3_count: latestScan.top3_count,
+        found_count: latestScan.found_count,
+        total_points: latestScan.grid_size * latestScan.grid_size,
+        competitors,
+      },
+      previous: prevScan ? {
+        avg_position: prevScan.avg_position,
+        top3_count: prevScan.top3_count,
+        found_count: prevScan.found_count,
+        scanned_at: prevScan.scanned_at,
+      } : null,
+    };
+  }
+
+  // --- Reviews block: snapshots + cached themes only ---
+  const { results: snapRows } = await env.DB.prepare(`
+    SELECT rating, reviews_count, response_rate, unanswered_low_star, rating_distribution, created_at
+    FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 120
+  `).bind(projectId).all() as { results: any[] };
+
+  let reviews: any = null;
+  if (snapRows.length > 0) {
+    const latest = snapRows[0];
+    const cutoffStart = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const cutoffPrev = new Date(Date.now() - days * 2 * 86400000).toISOString().slice(0, 10);
+    const atPeriodStart = snapRows.find(r => r.created_at.slice(0, 10) <= cutoffStart) || null;
+    const atPrevStart = snapRows.find(r => r.created_at.slice(0, 10) <= cutoffPrev) || null;
+    const velocity = computeVelocity({
+      currentCount: latest.reviews_count,
+      startOfPeriodCount: atPeriodStart?.reviews_count ?? null,
+      startOfPreviousPeriodCount: atPrevStart?.reviews_count ?? null,
+    });
+
+    const themesRow = await env.DB.prepare(
+      'SELECT summary, themes, created_at FROM local_review_themes WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(projectId).first() as any;
+
+    reviews = {
+      rating: latest.rating,
+      rating_previous: atPeriodStart?.rating ?? null,
+      reviews_count: latest.reviews_count,
+      response_rate: latest.response_rate,
+      response_rate_previous: atPeriodStart?.response_rate ?? null,
+      unanswered_low_star: latest.unanswered_low_star,
+      rating_distribution: latest.rating_distribution ? JSON.parse(latest.rating_distribution) : null,
+      velocity: { current_period: velocity.current, previous_period: velocity.previous },
+      themes: themesRow
+        ? { summary: themesRow.summary, themes: JSON.parse(themesRow.themes), generated_at: themesRow.created_at }
+        : null,
+    };
+  }
+
+  // --- GBP completeness from the KV-cached profile (no DFS call in this path) ---
+  let gbp: any = null;
+  const gbpCached = await env.KV.get(`gbp-profile:${project.place_id || project.business_name}`, 'json') as any;
+  if (gbpCached?.title) {
+    const checks = [
+      { label: 'Description', ok: !!(gbpCached.description && gbpCached.description !== gbpCached.address) },
+      { label: 'Phone', ok: !!gbpCached.phone },
+      { label: 'Website', ok: !!gbpCached.url },
+      { label: 'Hours', ok: !!gbpCached.work_time },
+      { label: 'Photos', ok: (gbpCached.total_photos ?? 0) > 0 },
+      { label: 'Claimed', ok: gbpCached.is_claimed === true },
+    ];
+    gbp = {
+      completeness_pct: Math.round((checks.filter(c => c.ok).length / checks.length) * 100),
+      missing: checks.filter(c => !c.ok).map(c => c.label),
+    };
+  }
+
+  // --- Rule-based next steps ---
+  const next_steps: Array<{ title: string; detail: string }> = [];
+  if (gbp && gbp.missing.length > 0) {
+    next_steps.push({
+      title: 'Complete your Google Business Profile',
+      detail: `These profile fields look incomplete or could not be verified: ${gbp.missing.join(', ')}. A complete profile is the strongest local ranking signal you control.`,
+    });
+  }
+  if (reviews && (reviews.unanswered_low_star ?? 0) > 0) {
+    next_steps.push({
+      title: `Respond to ${reviews.unanswered_low_star} low rated review${reviews.unanswered_low_star === 1 ? '' : 's'}`,
+      detail: 'Reviews rated 3 stars or below with no owner response hurt trust and conversion. A calm, specific reply to each one shows future customers you listen.',
+    });
+  }
+  const nearTop3 = keywords.filter(k => k.current_position != null && k.current_position >= 4 && k.current_position <= 6);
+  if (nearTop3.length > 0) {
+    next_steps.push({
+      title: 'Push keywords just outside the top 3',
+      detail: `${nearTop3.map(k => `"${k.keyword}" (#${k.current_position})`).join(', ')} ${nearTop3.length === 1 ? 'is' : 'are'} within reach of the local pack top 3. Fresh reviews, posts, and category tuning move these fastest.`,
+    });
+  }
+  if (latestScan && latestPoints.length > 0) {
+    const gridSize = latestScan.grid_size as number;
+    const weakEdges = latestPoints.filter(p =>
+      (p.row === 0 || p.row === gridSize - 1 || p.col === 0 || p.col === gridSize - 1) &&
+      (p.position == null || p.position > 10)
+    ).length;
+    if (weakEdges > 0) {
+      next_steps.push({
+        title: 'Improve visibility at the edges of your service area',
+        detail: `Your business is weak or invisible at ${weakEdges} outer grid point${weakEdges === 1 ? '' : 's'} for "${latestScan.keyword}". Location pages, citations, and reviews mentioning those neighborhoods extend your reach.`,
+      });
+    }
+  }
+
+  return json({
+    project: { id: project.id, name: project.name, business_name: project.business_name, domain: project.domain },
+    days,
+    keywords,
+    best_movers,
+    decliners,
+    geogrid,
+    reviews,
+    gbp,
+    next_steps,
+  });
 }
