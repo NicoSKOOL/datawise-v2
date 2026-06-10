@@ -1269,7 +1269,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     const promises = chunk.map(async (point) => {
       const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
         keyword: keyword.trim(),
-        location_coordinate: `${point.lat},${point.lng},17z`,
+        location_coordinate: `${point.lat},${point.lng},${zoomForRadius(radius)}`,
         language_code: 'en',
         device: 'desktop',
         os: 'windows',
@@ -1328,6 +1328,16 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     avgPosition, top3Count, foundCount, scannedAt
   ).run();
 
+  // Aggregate "Who owns your map" competitor share and persist top 10.
+  const competitors = aggregateGeogridCompetitors(results, project.business_name);
+  if (competitors.length > 0) {
+    await env.DB.batch(competitors.map(c =>
+      env.DB.prepare(
+        'INSERT INTO geogrid_competitors (scan_id, name, appearances, total_points, avg_position, best_position, rating, reviews) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(scanId, c.name, c.appearances, c.total_points, c.avg_position, c.best_position, c.rating, c.reviews)
+    ));
+  }
+
   return json({
     id: scanId,
     keyword: keyword.trim(),
@@ -1335,6 +1345,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     radius_km: radius,
     center: { lat: centerLat, lng: centerLng },
     points: results,
+    competitors,
     summary: {
       avg_position: avgPosition,
       top3_count: top3Count,
@@ -1363,12 +1374,24 @@ export async function handleGeoGridHistory(env: Env, userId: string, projectId: 
 // GET /api/local-seo/geogrid-scans/:scanId
 export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: string): Promise<Response> {
   const scan = await env.DB.prepare(`
-    SELECT gs.* FROM geogrid_scans gs
+    SELECT gs.*, sp.business_name FROM geogrid_scans gs
     JOIN seo_projects sp ON sp.id = gs.project_id
     WHERE gs.id = ? AND sp.user_id = ?
   `).bind(scanId, userId).first() as any;
 
   if (!scan) return json({ error: 'Scan not found' }, 404);
+
+  const points = JSON.parse(scan.results);
+
+  const { results: compRows } = await env.DB.prepare(
+    'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+  ).bind(scanId).all() as { results: any[] };
+
+  // Scans from before this feature have no stored rows: aggregate on the fly
+  // from the stored JSON blob (no backfill writes).
+  const competitors: AggregatedCompetitor[] = compRows.length > 0
+    ? compRows.map(r => ({ ...r, is_user: !!scan.business_name && r.name === scan.business_name }))
+    : aggregateGeogridCompetitors(points, scan.business_name);
 
   return json({
     id: scan.id,
@@ -1376,7 +1399,8 @@ export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: 
     grid_size: scan.grid_size,
     radius_km: scan.radius_km,
     center: { lat: scan.center_lat, lng: scan.center_lng },
-    points: JSON.parse(scan.results),
+    points,
+    competitors,
     summary: {
       avg_position: scan.avg_position,
       top3_count: scan.top3_count,
@@ -1385,6 +1409,37 @@ export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: 
     },
     scanned_at: scan.scanned_at,
   });
+}
+
+// GET /api/local-seo/projects/:id/geogrid-competitors?keyword=
+// Per-scan competitor series for a keyword, most recent first. The SPA uses
+// the two most recent scans to show movement vs the previous scan.
+export async function handleGeoGridCompetitorSeries(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, business_name FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as any;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+
+  const url = new URL(request.url);
+  const keyword = (url.searchParams.get('keyword') || '').trim();
+  if (!keyword) return json({ error: 'keyword query param is required' }, 400);
+
+  const { results: scans } = await env.DB.prepare(
+    'SELECT id, scanned_at FROM geogrid_scans WHERE project_id = ? AND keyword = ? ORDER BY scanned_at DESC LIMIT 12'
+  ).bind(projectId, keyword).all() as { results: any[] };
+
+  const series: Array<{ scan_id: string; scanned_at: string; competitors: AggregatedCompetitor[] }> = [];
+  for (const scan of scans) {
+    const { results: rows } = await env.DB.prepare(
+      'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
+    ).bind(scan.id).all() as { results: any[] };
+    series.push({
+      scan_id: scan.id,
+      scanned_at: scan.scanned_at,
+      competitors: rows.map(r => ({ ...r, is_user: !!project.business_name && r.name === project.business_name })),
+    });
+  }
+  return json({ keyword, scans: series });
 }
 
 // POST /api/local-seo/projects/:id/geogrid-insights
