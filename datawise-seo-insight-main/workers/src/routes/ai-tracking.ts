@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
+import { buildRecommendation, type EngineCheck } from './ai-recommendations';
 
 // AI Visibility Tracker: persistent weekly tracking of AI search presence per
 // rank-tracking project. See docs/specs/2026-06-09-ai-visibility-tracker-design.md.
@@ -7,7 +8,7 @@ import { dataforseoRequestCached } from '../dataforseo/client';
 export type AIEngine = 'google_ai_mode' | 'chatgpt' | 'perplexity';
 export const ALL_AI_ENGINES: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
 
-export const MAX_AI_QUERIES_PER_PROJECT = 10;
+export const MAX_AI_QUERIES_PER_PROJECT = 20;
 // Cross-user dedup window: identical query+engine payloads within the same
 // weekly cycle share one DataForSEO call. 6 days so it never spans two runs.
 const ENGINE_CACHE_TTL_SECONDS = 6 * 24 * 3600;
@@ -270,11 +271,13 @@ async function runChecksForProject(
       if (classification.status === 'mentioned') summary.mentioned++;
 
       const inserted = await env.DB.prepare(`
-        INSERT INTO ai_visibility_checks (query_id, engine, status, citation_position, cited_url, answer_excerpt, run_type, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO ai_visibility_checks (query_id, engine, status, citation_position, cited_url, answer_excerpt, answer_text, run_type, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         query.id, engine, classification.status, classification.citation_position,
-        classification.cited_url, classification.answer_excerpt, runType, checkedAt,
+        classification.cited_url, classification.answer_excerpt,
+        parsed.answerText ? parsed.answerText.slice(0, 10_000) : null,
+        runType, checkedAt,
       ).run();
 
       const checkId = inserted.meta?.last_row_id;
@@ -353,13 +356,30 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
 
   const { results: queryRows } = await env.DB.prepare(`
     SELECT q.id, q.query_text, q.source, q.keyword_id, q.created_at,
-      c.engine, c.status, c.citation_position, c.cited_url, c.answer_excerpt, c.checked_at
+      c.engine, c.status, c.citation_position, c.cited_url, c.answer_excerpt, c.checked_at,
+      c.id as check_id
     FROM ai_tracked_queries q
     LEFT JOIN ai_visibility_checks c ON c.query_id = q.id
       AND c.id = (SELECT MAX(id) FROM ai_visibility_checks WHERE query_id = q.id AND engine = c.engine)
     WHERE q.project_id = ? AND q.is_active = 1
     ORDER BY q.created_at ASC
   `).bind(projectId).all();
+
+  // Citations for each latest check (the per-engine evidence lists).
+  const checkIds = [...new Set((queryRows as any[] || []).map(r => r.check_id).filter(Boolean))];
+  const citationsByCheck = new Map<number, Array<{ domain: string; url: string | null; position: number }>>();
+  if (checkIds.length) {
+    const placeholders2 = checkIds.map(() => '?').join(',');
+    const { results: citeRows } = await env.DB.prepare(
+      `SELECT check_id, domain, url, position FROM ai_check_citations
+       WHERE check_id IN (${placeholders2}) ORDER BY position ASC`
+    ).bind(...checkIds).all();
+    for (const row of (citeRows as any[] || [])) {
+      if (!citationsByCheck.has(row.check_id)) citationsByCheck.set(row.check_id, []);
+      const list = citationsByCheck.get(row.check_id)!;
+      if (list.length < 10) list.push({ domain: row.domain, url: row.url, position: row.position });
+    }
+  }
 
   const byQuery = new Map<string, any>();
   for (const row of (queryRows as any[] || [])) {
@@ -380,8 +400,17 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
         cited_url: row.cited_url,
         answer_excerpt: row.answer_excerpt,
         checked_at: row.checked_at,
+        check_id: row.check_id,
+        citations: citationsByCheck.get(row.check_id) || [],
       };
     }
+  }
+
+  for (const q of byQuery.values()) {
+    const checks: EngineCheck[] = Object.entries(q.engines).map(([engine, e]: [string, any]) => ({
+      engine, status: e.status, citation_position: e.citation_position, citations: e.citations || [],
+    }));
+    q.recommendation = buildRecommendation(q.query_text, checks, project.domain);
   }
 
   return json({
@@ -434,7 +463,7 @@ export async function handleAddAIQueries(request: Request, env: Env, userId: str
   const project = await getOwnedProject(env, userId, projectId);
   if (!project) return json({ error: 'Project not found' }, 404);
 
-  const { queries } = await request.json() as { queries?: Array<{ text: string; keyword_id?: string }> };
+  const { queries } = await request.json() as { queries?: Array<{ text: string; keyword_id?: string; source?: string }> };
   if (!queries?.length) return json({ error: 'queries array is required' }, 400);
 
   const countRow = await env.DB.prepare(
@@ -455,12 +484,24 @@ export async function handleAddAIQueries(request: Request, env: Env, userId: str
     existingSet.add(text.toLowerCase());
     await env.DB.prepare(
       'INSERT INTO ai_tracked_queries (id, project_id, query_text, source, keyword_id) VALUES (?, ?, ?, ?, ?)'
-    ).bind(generateId(), projectId, text, q.keyword_id ? 'keyword' : 'custom', q.keyword_id || null).run();
+    ).bind(generateId(), projectId, text, q.source === 'discovery' ? 'discovery' : (q.keyword_id ? 'keyword' : 'custom'), q.keyword_id || null).run();
     remaining--;
     added++;
   }
 
   return json({ added, skipped: queries.length - added, remaining });
+}
+
+// GET /api/rank-tracking/ai/checks/:id/answer
+export async function handleGetAIAnswer(env: Env, userId: string, checkId: string): Promise<Response> {
+  const row = await env.DB.prepare(`
+    SELECT c.answer_text FROM ai_visibility_checks c
+    JOIN ai_tracked_queries q ON q.id = c.query_id
+    JOIN seo_projects p ON p.id = q.project_id
+    WHERE c.id = ? AND p.user_id = ?
+  `).bind(checkId, userId).first() as any;
+  if (!row) return json({ error: 'Check not found' }, 404);
+  return json({ answer_text: row.answer_text ?? null });
 }
 
 // DELETE /api/rank-tracking/ai-queries/:id
@@ -537,5 +578,10 @@ export async function handleAIReport(request: Request, env: Env, userId: string,
     is_you: !!target && domainsMatch(row.domain, target),
   }));
 
-  return json({ trend: trendRows || [], share_of_voice: share, period });
+  const trend = (trendRows as any[] || []).map(r => ({
+    ...r,
+    score: r.total ? Math.round(((r.cited + 0.5 * r.mentioned) / r.total) * 100) : 0,
+  }));
+
+  return json({ trend, share_of_voice: share, period });
 }

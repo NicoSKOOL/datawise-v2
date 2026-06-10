@@ -38,7 +38,6 @@ import AIVisibilityPanel from '@/components/rank-tracking/AIVisibilityPanel';
 import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';
 import RankTrendChart from '@/components/rank-tracking/RankTrendChart';
 import PeriodSelector from '@/components/rank-tracking/PeriodSelector';
-import CompetitorComparison from '@/components/rank-tracking/CompetitorComparison';
 import LocalProjectListView from '@/components/local-seo/LocalProjectListView';
 import LocalStatsCards from '@/components/local-seo/LocalStatsCards';
 import LocalRankTable from '@/components/local-seo/LocalRankTable';
@@ -812,8 +811,6 @@ export default function RankTracking() {
           project={selectedProject}
           trackedKeywords={keywords.map((kw) => kw.keyword)}
         />
-
-        <CompetitorComparison domain={selectedProject.domain} />
       </div>
     );
   }

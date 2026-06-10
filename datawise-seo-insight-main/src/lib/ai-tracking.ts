@@ -12,21 +12,36 @@ export const AI_ENGINE_LABELS: Record<AIEngine, string> = {
 
 export type AICheckStatus = 'cited' | 'mentioned' | 'absent' | 'no_answer' | 'error';
 
+export interface AICitation {
+  domain: string;
+  url: string | null;
+  position: number;
+}
+
+export interface AIRecommendation {
+  title: string;
+  body: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
 export interface AIEngineResult {
   status: AICheckStatus;
   citation_position: number | null;
   cited_url: string | null;
   answer_excerpt: string | null;
   checked_at: string;
+  check_id?: number;
+  citations?: AICitation[];
 }
 
 export interface AITrackedQuery {
   id: string;
   query_text: string;
-  source: 'keyword' | 'custom';
+  source: 'keyword' | 'custom' | 'discovery';
   keyword_id: string | null;
   created_at: string;
   engines: Partial<Record<AIEngine, AIEngineResult>>;
+  recommendation?: AIRecommendation;
 }
 
 export interface AITrackingSettings {
@@ -47,6 +62,7 @@ export interface AITrendPoint {
   total: number;
   cited: number;
   mentioned: number;
+  score?: number;
 }
 
 export interface AIShareOfVoiceRow {
@@ -74,7 +90,7 @@ export async function updateAISettings(projectId: string, params: {
   return api(`/api/rank-tracking/projects/${projectId}/ai`, { method: 'PATCH', body: params }) as Promise<AITrackingData>;
 }
 
-export async function addAIQueries(projectId: string, queries: Array<{ text: string; keyword_id?: string }>) {
+export async function addAIQueries(projectId: string, queries: Array<{ text: string; keyword_id?: string; source?: string }>) {
   return api(`/api/rank-tracking/projects/${projectId}/ai/queries`, { method: 'POST', body: { queries } }) as Promise<{ added: number; skipped: number; remaining: number }>;
 }
 
@@ -88,4 +104,8 @@ export async function runAICheck(projectId: string) {
 
 export async function fetchAIReport(projectId: string, period = 90) {
   return api(`/api/rank-tracking/projects/${projectId}/ai/report?period=${period}`) as Promise<AIReport>;
+}
+
+export async function fetchAIAnswer(checkId: number) {
+  return api(`/api/rank-tracking/ai/checks/${checkId}/answer`) as Promise<{ answer_text: string | null }>;
 }
