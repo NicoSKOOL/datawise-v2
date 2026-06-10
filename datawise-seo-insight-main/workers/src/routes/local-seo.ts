@@ -92,39 +92,56 @@ export async function handleLocalRankCheck(env: Env, userId: string, projectId: 
   let found = 0;
   let notInPack = 0;
 
-  // Maps SERP Live API only supports one task per call, so send each keyword individually
-  for (const kw of keywords) {
-    const payload = [{
-      keyword: kw.keyword,
-      location_code: kw.location_code || 2840,
-      language_code: kw.language_code || 'en',
-      device: 'desktop',
-      os: 'windows',
-      depth: 20,
-    }];
+  // Maps SERP Live API only supports one task per call, so each keyword is its
+  // own request. Run them in small concurrent batches instead of strictly
+  // sequentially: 20 keywords used to mean 20 awaited round-trips (~1 min of
+  // spinner); batches of 5 cut the wall time ~5x without hammering DFS.
+  const CONCURRENCY = 5;
+  for (let i = 0; i < keywords.length; i += CONCURRENCY) {
+    const batch = keywords.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(batch.map(async (kw) => {
+      const payload = [{
+        keyword: kw.keyword,
+        location_code: kw.location_code || 2840,
+        language_code: kw.language_code || 'en',
+        device: 'desktop',
+        os: 'windows',
+        depth: 20,
+      }];
+      const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', payload);
+      return data?.tasks?.[0]?.result?.[0]?.items || [];
+    }));
 
-    const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', payload);
-    const items = data?.tasks?.[0]?.result?.[0]?.items || [];
-    const match = findLocalPackPosition(items, project);
+    for (let j = 0; j < batch.length; j++) {
+      const kw = batch[j];
+      const result = results[j];
+      if (result.status === 'rejected') {
+        // Failed request: record nothing for this keyword (a NULL row would
+        // read as "dropped out of the pack", which we don't know).
+        console.error(`Local rank check failed for keyword ${kw.id}:`, result.reason);
+        continue;
+      }
+      const match = findLocalPackPosition(result.value, project);
 
-    if (match) {
-      found++;
-      const position = match.rank_absolute ?? match.rank_group ?? null;
-      const rating = match.rating?.value ?? null;
-      const reviewsCount = match.rating?.votes_count ?? null;
+      if (match) {
+        found++;
+        const position = match.rank_absolute ?? match.rank_group ?? null;
+        const rating = match.rating?.value ?? null;
+        const reviewsCount = match.rating?.votes_count ?? null;
 
-      stmts.push(
-        env.DB.prepare(
-          'INSERT INTO local_rank_history (keyword_id, pack_position, rating, reviews_count, checked_at) VALUES (?, ?, ?, ?, ?)'
-        ).bind(kw.id, position, rating, reviewsCount, checkedAt)
-      );
-    } else {
-      notInPack++;
-      stmts.push(
-        env.DB.prepare(
-          'INSERT INTO local_rank_history (keyword_id, pack_position, rating, reviews_count, checked_at) VALUES (?, ?, ?, ?, ?)'
-        ).bind(kw.id, null, null, null, checkedAt)
-      );
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO local_rank_history (keyword_id, pack_position, rating, reviews_count, checked_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(kw.id, position, rating, reviewsCount, checkedAt)
+        );
+      } else {
+        notInPack++;
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO local_rank_history (keyword_id, pack_position, rating, reviews_count, checked_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(kw.id, null, null, null, checkedAt)
+        );
+      }
     }
   }
 

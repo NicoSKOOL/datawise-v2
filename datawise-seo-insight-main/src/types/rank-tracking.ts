@@ -5,6 +5,9 @@ export interface Project {
   keyword_count: number;
   location_code: number | null;
   created_at: string;
+  ranking_keywords?: number;
+  avg_position?: number | null;
+  last_checked_at?: string | null;
 }
 
 export interface TrackedKeyword {
@@ -17,6 +20,7 @@ export interface TrackedKeyword {
   checked_at: string | null;
   location_code: number;
   language_code: string;
+  device?: 'desktop' | 'mobile';
 }
 
 export interface HistoryEntry {

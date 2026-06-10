@@ -9,7 +9,11 @@ compatibility_date = "2024-12-01"
 # "0 6 * * 1": weekly AI visibility tracking run (Monday 06:00 UTC) — see
 # src/routes/ai-tracking.ts runScheduledAIChecks (KV key `ai-tracking-paused`
 # is the kill switch).
-crons = ["*/5 * * * *", "0 11 * * *", "0 */6 * * *", "0 6 * * 1"]
+# "0 8 * * 2,4,6": scheduled SERP rank checks for tracked-keyword projects
+# (Tue/Thu/Sat 08:00 UTC) — see src/routes/rank-tracking.ts
+# runScheduledRankChecks (KV key `rank-checks-paused` is the kill switch;
+# session-gated; 200 keywords/run cap because DFS live = 1 task per request).
+crons = ["*/5 * * * *", "0 11 * * *", "0 */6 * * *", "0 6 * * 1", "0 8 * * 2,4,6"]
 
 [vars]
 ENVIRONMENT = "development"

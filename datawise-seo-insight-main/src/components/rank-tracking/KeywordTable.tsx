@@ -1,10 +1,14 @@
+import { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { RefreshCw, ArrowUpDown, Plus, ChevronUp, ChevronDown, Minus, Trash2 } from 'lucide-react';
+import { ArrowUpDown, Plus, ChevronUp, ChevronDown, Minus, Trash2, Monitor, Smartphone } from 'lucide-react';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import type { TrackedKeyword } from '@/types/rank-tracking';
+
+const PAGE_SIZE = 50;
 
 const locationLabelByCode = new Map(locationOptions.map((o) => [o.value, o.label]));
 const languageLabelByCode = new Map(languageOptions.map((o) => [o.value, o.label]));
@@ -29,11 +33,22 @@ interface KeywordTableProps {
 }
 
 export default function KeywordTable({ keywords, loading, onViewHistory, onDelete, onAddKeywords }: KeywordTableProps) {
+  const [page, setPage] = useState(0);
+
   if (loading) {
     return (
-      <div className="flex justify-center py-12">
-        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
+      <Card>
+        <CardContent className="p-6 space-y-3">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex items-center gap-4">
+              <Skeleton className="h-5 w-2/5" />
+              <Skeleton className="h-5 w-12" />
+              <Skeleton className="h-5 w-12" />
+              <Skeleton className="h-5 w-1/4" />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
     );
   }
 
@@ -51,6 +66,10 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
     );
   }
 
+  const totalPages = Math.ceil(keywords.length / PAGE_SIZE);
+  const safePage = Math.min(page, totalPages - 1);
+  const pageRows = keywords.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
   return (
     <Card>
       <CardContent className="p-0">
@@ -66,7 +85,7 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
             </TableRow>
           </TableHeader>
           <TableBody>
-            {keywords.map((keyword) => {
+            {pageRows.map((keyword) => {
               const change = (keyword.position != null && keyword.prev_position != null)
                 ? keyword.prev_position - keyword.position
                 : null;
@@ -87,8 +106,10 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
                       >
                         {keyword.position}
                       </Badge>
+                    ) : keyword.checked_at ? (
+                      <span className="text-muted-foreground text-sm" title="Checked, but the domain was not found in the top 100 results">&gt;100</span>
                     ) : (
-                      <span className="text-muted-foreground text-sm">Not ranking</span>
+                      <span className="text-muted-foreground text-sm">Not checked</span>
                     )}
                   </TableCell>
                   <TableCell className="text-center">
@@ -102,7 +123,12 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
                     )}
                   </TableCell>
                   <TableCell className="text-center text-sm text-muted-foreground">
-                    {formatLocale(keyword.location_code, keyword.language_code)}
+                    <span className="inline-flex items-center gap-1.5">
+                      {keyword.device === 'mobile'
+                        ? <Smartphone className="h-3.5 w-3.5" aria-label="Mobile" />
+                        : <Monitor className="h-3.5 w-3.5" aria-label="Desktop" />}
+                      {formatLocale(keyword.location_code, keyword.language_code)}
+                    </span>
                   </TableCell>
                   <TableCell className="text-center text-sm text-muted-foreground">
                     {formatDate(keyword.checked_at)}
@@ -122,6 +148,21 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
             })}
           </TableBody>
         </Table>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t text-sm text-muted-foreground">
+            <span>
+              {safePage * PAGE_SIZE + 1}-{Math.min((safePage + 1) * PAGE_SIZE, keywords.length)} of {keywords.length} keywords
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
+                Previous
+              </Button>
+              <Button variant="outline" size="sm" disabled={safePage >= totalPages - 1} onClick={() => setPage(safePage + 1)}>
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

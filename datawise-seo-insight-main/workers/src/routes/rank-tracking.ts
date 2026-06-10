@@ -72,7 +72,43 @@ export async function handleListProjects(env: Env, userId: string): Promise<Resp
     ORDER BY p.created_at DESC
   `).bind(userId).all();
 
-  return json(results);
+  // Per-project health for the list cards: avg position + ranking count from
+  // each keyword's latest check, and when the project was last checked at all.
+  const { results: stats } = await env.DB.prepare(`
+    WITH latest AS (
+      SELECT tk.project_id, rh.position,
+        ROW_NUMBER() OVER (PARTITION BY rh.keyword_id ORDER BY rh.checked_at DESC, rh.id DESC) as rn
+      FROM rank_history rh
+      JOIN tracked_keywords tk ON tk.id = rh.keyword_id
+      JOIN seo_projects p ON p.id = tk.project_id
+      WHERE p.user_id = ? AND tk.is_active = 1
+    )
+    SELECT project_id,
+      COUNT(CASE WHEN position IS NOT NULL THEN 1 END) as ranking_keywords,
+      ROUND(AVG(position), 1) as avg_position
+    FROM latest WHERE rn = 1
+    GROUP BY project_id
+  `).bind(userId).all();
+
+  const { results: lastChecks } = await env.DB.prepare(`
+    SELECT tk.project_id, MAX(rh.checked_at) as last_checked_at
+    FROM rank_history rh
+    JOIN tracked_keywords tk ON tk.id = rh.keyword_id
+    JOIN seo_projects p ON p.id = tk.project_id
+    WHERE p.user_id = ?
+    GROUP BY tk.project_id
+  `).bind(userId).all();
+
+  const statsById = new Map((stats as any[]).map(s => [s.project_id, s]));
+  const lastById = new Map((lastChecks as any[]).map(s => [s.project_id, s.last_checked_at]));
+  const enriched = (results as any[]).map(p => ({
+    ...p,
+    ranking_keywords: statsById.get(p.id)?.ranking_keywords ?? 0,
+    avg_position: statsById.get(p.id)?.avg_position ?? null,
+    last_checked_at: lastById.get(p.id) ?? null,
+  }));
+
+  return json(enriched);
 }
 
 // POST /api/rank-tracking/projects
@@ -113,18 +149,26 @@ export async function handleListKeywords(env: Env, userId: string, projectId: st
 
   if (!project) return json({ error: 'Project not found' }, 404);
 
+  // Single window-function pass instead of two correlated subqueries per
+  // keyword (the old shape re-scanned rank_history twice per row and
+  // degraded quadratically as check history accumulated).
   const { results } = await env.DB.prepare(`
+    WITH ranked AS (
+      SELECT rh.keyword_id, rh.position, rh.rank_group, rh.estimated_traffic, rh.checked_at,
+        ROW_NUMBER() OVER (PARTITION BY rh.keyword_id ORDER BY rh.checked_at DESC, rh.id DESC) as rn
+      FROM rank_history rh
+      JOIN tracked_keywords tk ON tk.id = rh.keyword_id
+      WHERE tk.project_id = ? AND tk.is_active = 1
+    )
     SELECT tk.*,
-      rh.position, rh.rank_group, rh.estimated_traffic, rh.checked_at,
+      cur.position, cur.rank_group, cur.estimated_traffic, cur.checked_at,
       prev.position as prev_position
     FROM tracked_keywords tk
-    LEFT JOIN rank_history rh ON rh.keyword_id = tk.id
-      AND rh.checked_at = (SELECT MAX(checked_at) FROM rank_history WHERE keyword_id = tk.id)
-    LEFT JOIN rank_history prev ON prev.keyword_id = tk.id
-      AND prev.checked_at = (SELECT MAX(checked_at) FROM rank_history WHERE keyword_id = tk.id AND checked_at < rh.checked_at)
+    LEFT JOIN ranked cur ON cur.keyword_id = tk.id AND cur.rn = 1
+    LEFT JOIN ranked prev ON prev.keyword_id = tk.id AND prev.rn = 2
     WHERE tk.project_id = ? AND tk.is_active = 1
-    ORDER BY CASE WHEN rh.position IS NULL THEN 1 ELSE 0 END, rh.position ASC
-  `).bind(projectId).all();
+    ORDER BY CASE WHEN cur.position IS NULL THEN 1 ELSE 0 END, cur.position ASC
+  `).bind(projectId, projectId).all();
 
   return json(results);
 }
@@ -138,14 +182,17 @@ export async function handleAddKeywords(request: Request, env: Env, userId: stri
   if (!project) return json({ error: 'Project not found' }, 404);
   const isLocal = project.project_type === 'local';
 
-  const { keywords, location_code = 2840, language_code = 'en', initial_positions } = await request.json() as any;
+  const { keywords, location_code = 2840, language_code = 'en', device = 'desktop', initial_positions } = await request.json() as any;
   if (!keywords?.length) return json({ error: 'Keywords array is required' }, 400);
+  const cleanDevice = device === 'mobile' ? 'mobile' : 'desktop';
 
-  // Get existing keywords to skip duplicates
+  // Get existing keywords to skip duplicates. Dedupe is per keyword+device:
+  // the same keyword tracked on desktop AND mobile is two distinct entries.
   const { results: existing } = await env.DB.prepare(
-    'SELECT keyword FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
+    'SELECT keyword, device FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
   ).bind(projectId).all();
-  const existingSet = new Set((existing || []).map((r: any) => r.keyword.toLowerCase()));
+  const dupKey = (keyword: string, dev: any) => `${keyword}::${dev === 'mobile' ? 'mobile' : 'desktop'}`;
+  const existingSet = new Set((existing || []).map((r: any) => dupKey(r.keyword.toLowerCase(), r.device)));
 
   let added = 0;
   const stmts: D1PreparedStatement[] = [];
@@ -153,13 +200,13 @@ export async function handleAddKeywords(request: Request, env: Env, userId: stri
 
   for (const kw of keywords) {
     const cleaned = kw.trim().toLowerCase();
-    if (!cleaned || existingSet.has(cleaned)) continue;
-    existingSet.add(cleaned);
+    if (!cleaned || existingSet.has(dupKey(cleaned, cleanDevice))) continue;
+    existingSet.add(dupKey(cleaned, cleanDevice));
     const keywordId = generateId();
     stmts.push(
       env.DB.prepare(
-        'INSERT INTO tracked_keywords (id, project_id, keyword, location_code, language_code) VALUES (?, ?, ?, ?, ?)'
-      ).bind(keywordId, projectId, cleaned, location_code, language_code)
+        'INSERT INTO tracked_keywords (id, project_id, keyword, location_code, language_code, device) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(keywordId, projectId, cleaned, location_code, language_code, cleanDevice)
     );
 
     // Seed history with the provided position so the first row of the
@@ -211,74 +258,93 @@ export async function handleDeleteKeyword(env: Env, userId: string, keywordId: s
   return json({ success: true });
 }
 
-// POST /api/rank-tracking/projects/:id/check
-export async function handleCheckRankings(env: Env, userId: string, projectId: string): Promise<Response> {
-  const project = await env.DB.prepare(
-    'SELECT id, domain, location_code FROM seo_projects WHERE id = ? AND user_id = ?'
-  ).bind(projectId, userId).first() as any;
+// One check run processes at most this many keywords. DataForSEO live
+// endpoints accept ONE task per request ("You can set only one task at a
+// time" — verified against the live API 2026-06-10; the old 50-per-POST
+// batching silently checked only the first keyword of every batch). One
+// request per keyword plus its cache KV ops counts against the Worker's
+// 1,000-subrequest budget, so 200 keywords/run is the safe ceiling. Keywords
+// are processed least-recently-checked first, so repeated runs (or the cron)
+// rotate through projects bigger than the cap slice by slice.
+const MAX_KEYWORDS_PER_CHECK = 200;
+const SERP_CONCURRENCY = 5;
 
-  if (!project) return json({ error: 'Project not found' }, 404);
+// Core SERP check for one project. Shared by the manual check button and the
+// scheduled cron.
+async function checkRankingsForProject(
+  env: Env,
+  project: { id: string; domain: string; location_code?: number | null },
+): Promise<{ total: number; checked: number; found: number; not_ranking: number; errors: number }> {
+  const totalRow = await env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
+  ).bind(project.id).first() as any;
+  const total = Number(totalRow?.cnt || 0);
+  if (!total) return { total: 0, checked: 0, found: 0, not_ranking: 0, errors: 0 };
 
-  const { results: keywords } = await env.DB.prepare(
-    'SELECT id, keyword, location_code, language_code FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
-  ).bind(projectId).all() as { results: any[] };
+  const { results: keywords } = await env.DB.prepare(`
+    SELECT tk.id, tk.keyword, tk.location_code, tk.language_code, tk.device
+    FROM tracked_keywords tk
+    WHERE tk.project_id = ? AND tk.is_active = 1
+    ORDER BY COALESCE((SELECT MAX(rh.checked_at) FROM rank_history rh WHERE rh.keyword_id = tk.id), '') ASC
+    LIMIT ?
+  `).bind(project.id, MAX_KEYWORDS_PER_CHECK).all() as { results: any[] };
 
-  if (!keywords.length) return json({ error: 'No keywords to check' }, 400);
-
-  // Group keywords by location+language to minimize API calls
-  // Use project's location_code as fallback instead of hardcoded US (2840)
   const projectLocCode = project.location_code || 2840;
-  const groups = new Map<string, { location_code: number; language_code: string; keywords: any[] }>();
-  for (const kw of keywords) {
-    const locCode = kw.location_code || projectLocCode;
-    const key = `${locCode}_${kw.language_code || 'en'}`;
-    if (!groups.has(key)) {
-      groups.set(key, { location_code: locCode, language_code: kw.language_code || 'en', keywords: [] });
-    }
-    groups.get(key)!.keywords.push(kw);
-  }
-
   const stmts: D1PreparedStatement[] = [];
   const checkedAt = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
   let found = 0;
   let notRanking = 0;
+  let errors = 0;
 
-  for (const [, group] of groups) {
-    const chunkSize = 50;
-
-    for (let i = 0; i < group.keywords.length; i += chunkSize) {
-      const keywordChunk = group.keywords.slice(i, i + chunkSize);
-      const payload = keywordChunk.map((kw) => ({
+  for (let i = 0; i < keywords.length; i += SERP_CONCURRENCY) {
+    const batch = keywords.slice(i, i + SERP_CONCURRENCY);
+    const results = await Promise.allSettled(batch.map(async (kw) => {
+      const device = kw.device === 'mobile' ? 'mobile' : 'desktop';
+      const payload = [{
         keyword: kw.keyword,
-        location_code: group.location_code,
-        language_code: group.language_code,
-        device: 'desktop',
-        os: 'windows',
+        location_code: kw.location_code || projectLocCode,
+        language_code: kw.language_code || 'en',
+        device,
+        os: device === 'mobile' ? 'android' : 'windows',
         depth: 100,
-      }));
-
+      }];
       const data = await dataforseoRequestCached(env, '/serp/google/organic/live/regular', payload, { ttlSeconds: SERP_TTL_SECONDS });
-      const tasks = data?.tasks || [];
+      const task = data?.tasks?.[0];
+      if (!task || task.status_code !== 20000) {
+        throw new Error(`DFS task failed: ${task?.status_code} ${task?.status_message || ''}`);
+      }
+      return task.result?.[0]?.items || [];
+    }));
 
-      for (let taskIndex = 0; taskIndex < keywordChunk.length; taskIndex++) {
-        const kw = keywordChunk[taskIndex];
-        const task = tasks[taskIndex];
-        const items = task?.result?.[0]?.items || [];
-        const match = findTrackedDomainPosition(items, project.domain);
+    for (let j = 0; j < batch.length; j++) {
+      const kw = batch[j];
+      const result = results[j];
+      if (result.status === 'rejected') {
+        // Request failed: record nothing. A NULL row would read as "dropped
+        // out of the top 100", which we don't actually know.
+        errors++;
+        console.error(`Rank check failed for keyword ${kw.id} (${kw.keyword}):`, result.reason);
+        continue;
+      }
+      const match = findTrackedDomainPosition(result.value, project.domain);
 
-        if (match?.position != null) {
-          found++;
-          stmts.push(
-            env.DB.prepare(
-              'INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at) VALUES (?, ?, ?, ?, ?)'
-            ).bind(kw.id, match.position, match.rank_group, null, checkedAt)
-          );
-        } else {
-          // Don't overwrite existing positions with NULL.
-          // If SERP check can't find the domain (common for niche/long-tail terms
-          // that GSC confirms are ranking), preserve the last known position.
-          notRanking++;
-        }
+      if (match?.position != null) {
+        found++;
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(kw.id, match.position, match.rank_group, null, checkedAt)
+        );
+      } else {
+        // Record the miss as a NULL-position row. A tracker that silently
+        // keeps the stale rank when a keyword drops out of the top 100 is
+        // lying to the user; the NULL row also updates "Last Checked".
+        notRanking++;
+        stmts.push(
+          env.DB.prepare(
+            'INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(kw.id, null, null, null, checkedAt)
+        );
       }
     }
   }
@@ -290,7 +356,95 @@ export async function handleCheckRankings(env: Env, userId: string, projectId: s
     }
   }
 
-  return json({ checked: keywords.length, found, not_ranking: notRanking });
+  return { total, checked: keywords.length, found, not_ranking: notRanking, errors };
+}
+
+// POST /api/rank-tracking/projects/:id/check
+export async function handleCheckRankings(env: Env, userId: string, projectId: string): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, domain, location_code FROM seo_projects WHERE id = ? AND user_id = ?'
+  ).bind(projectId, userId).first() as any;
+
+  if (!project) return json({ error: 'Project not found' }, 404);
+
+  const summary = await checkRankingsForProject(env, project);
+  if (summary.total === 0) return json({ error: 'No keywords to check' }, 400);
+
+  return json({
+    checked: summary.checked,
+    total_keywords: summary.total,
+    found: summary.found,
+    not_ranking: summary.not_ranking,
+    errors: summary.errors,
+  });
+}
+
+// --- Scheduled weekly rank checks ------------------------------------------
+//
+// Kill switch: set KV key `rank-checks-paused` to any value to skip runs.
+// Scope guards (same philosophy as runDailyGSCSync):
+//  - only organic projects with at least one active keyword
+//  - only owners with a currently valid session (inactive users cost nothing)
+//  - only projects with no check (manual or scheduled) in the last 6 days
+//  - hard per-run keyword budget: one DFS request per keyword (live API is
+//    single-task) plus cache KV ops must stay under the Worker invocation's
+//    1,000-subrequest limit. The cron runs Tue/Thu/Sat to spread the backlog.
+const RANK_CHECKS_PAUSE_KEY = 'rank-checks-paused';
+const RANK_CHECKS_MAX_KEYWORDS_PER_RUN = 200;
+const RANK_CHECKS_STALE_DAYS = 6;
+
+export async function runScheduledRankChecks(env: Env): Promise<void> {
+  const startedAt = Date.now();
+  const paused = await env.KV.get(RANK_CHECKS_PAUSE_KEY);
+  if (paused) {
+    console.log('Rank checks: paused via KV kill switch, skipping scheduled run');
+    return;
+  }
+
+  const { results: projects } = await env.DB.prepare(`
+    SELECT p.id, p.user_id, p.domain, p.location_code
+    FROM seo_projects p
+    WHERE COALESCE(p.project_type, 'organic') != 'local'
+      AND p.domain IS NOT NULL AND p.domain != ''
+      AND EXISTS (SELECT 1 FROM tracked_keywords tk WHERE tk.project_id = p.id AND tk.is_active = 1)
+      AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = p.user_id AND s.expires_at > datetime('now'))
+      AND NOT EXISTS (
+        SELECT 1 FROM rank_history rh
+        JOIN tracked_keywords tk2 ON tk2.id = rh.keyword_id
+        WHERE tk2.project_id = p.id
+          AND rh.checked_at > datetime('now', '-' || ? || ' days')
+      )
+    ORDER BY p.created_at ASC
+  `).bind(RANK_CHECKS_STALE_DAYS).all() as { results: any[] };
+
+  if (!projects?.length) {
+    console.log('Rank checks: no due projects');
+    return;
+  }
+
+  let budget = RANK_CHECKS_MAX_KEYWORDS_PER_RUN;
+  let done = 0, checked = 0, errors = 0;
+
+  for (const project of projects) {
+    if (budget <= 0) {
+      console.warn(`Rank checks: per-run keyword budget exhausted; ${projects.length - done} project(s) deferred to next run`);
+      break;
+    }
+    try {
+      const summary = await checkRankingsForProject(env, project);
+      budget -= summary.checked;
+      checked += summary.checked;
+      done++;
+    } catch (err) {
+      errors++;
+      console.error(`Rank checks: project ${project.id} failed:`, err);
+    }
+  }
+
+  console.log(
+    `Rank checks scheduled run: ${done}/${projects.length} due projects, ${checked} keywords checked, ` +
+    `${errors} errors, ${Date.now() - startedAt}ms`
+  );
 }
 
 // GET /api/rank-tracking/projects/:id/report?period=30
