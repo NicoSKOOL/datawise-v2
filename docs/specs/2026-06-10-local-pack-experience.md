@@ -16,7 +16,7 @@ The Local Pack section already pulls rich DataForSEO data (Maps SERP, GBP profil
 
 ## 1. Reviews report
 
-Placement: replaces the header area of the existing `ReviewsSection.tsx`; the existing review list + filters stay underneath unchanged.
+Placement: replaces the header area of the existing `ReviewsSection.tsx`; the review list underneath is upgraded with a first-class filter bar (see below).
 
 ### Header strip (four tiles, each with delta vs previous period)
 
@@ -36,6 +36,23 @@ Five horizontal bars (5 stars down to 1). Source: `rating_distribution` from `my
 - Cache: stored in D1 (`local_review_themes`) keyed by project + a SHA-256 hash of the review IDs/timestamps+texts. Cache hit returns instantly with `generated_at`. Regenerates only when the review set changes or the user clicks Refresh themes.
 - The rest of the report renders without it; themes hydrate when ready (skeleton while loading). LLM is never in the critical render path.
 - Reviews fetch depth: 20 -> 100 (`handleReviews`), keep `sort_by: newest`, existing 6h KV cache stays.
+
+### Theme-to-review tagging
+
+The LLM receives the reviews numbered and returns `review_indexes: number[]` per theme. The SPA uses this to (a) show a theme label on each review card and (b) filter the review list when a theme card is clicked. Indexes out of range are dropped on validation.
+
+### Filterable review list (first-class)
+
+The review list below the report gets a filter bar (mockup v2, approved):
+
+- Rating chips: All, 5, 4, 3 and below.
+- Response chips: All, Responded, Unanswered.
+- Sort: newest first (default), oldest, lowest rating first.
+- Clear filters button, visible only when a filter is active.
+- The red "Unanswered low-star" tile is clickable and applies rating "3 and below" + "Unanswered".
+- Clicking a theme card filters to that theme's tagged reviews.
+- Review cards: author, stars, relative date, Local Guide badge, text, theme label, owner response (when present), "Needs response" badge for unanswered <= 3 stars, link to the review on Google, severity left border (red 1 star, orange 2, amber 3).
+- All filtering is client-side over the fetched 100 reviews.
 
 ### Snapshots table
 
