@@ -53,7 +53,7 @@ export default function SentimentTrend({ reviews }: SentimentTrendProps) {
           const total = m.positive + m.neutral + m.negative;
           const heightPct = (total / maxTotal) * 100;
           return (
-            <div key={m.key} className="flex-1 flex flex-col justify-end items-center gap-1 min-w-0">
+            <div key={m.key} className="flex-1 h-full flex flex-col justify-end items-center gap-1 min-w-0">
               <div
                 className="w-full max-w-[34px] flex flex-col-reverse rounded-sm overflow-hidden"
                 style={{ height: `${heightPct}%`, minHeight: total > 0 ? 6 : 0 }}
