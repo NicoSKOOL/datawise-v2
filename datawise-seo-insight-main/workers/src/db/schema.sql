@@ -215,6 +215,46 @@ CREATE TABLE IF NOT EXISTS geogrid_scans (
 );
 CREATE INDEX IF NOT EXISTS idx_geogrid_scans_project ON geogrid_scans(project_id, scanned_at);
 
+-- Local Pack Experience (2026-06-10)
+CREATE TABLE IF NOT EXISTS local_review_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  rating REAL,
+  reviews_count INTEGER,
+  fetched_count INTEGER,
+  responded_count INTEGER,
+  response_rate INTEGER,
+  unanswered_low_star INTEGER,
+  rating_distribution TEXT,  -- JSON {"5":n,"4":n,...}
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_local_review_snapshots_project ON local_review_snapshots(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS local_review_themes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  reviews_hash TEXT NOT NULL,
+  summary TEXT,
+  themes TEXT,               -- JSON array
+  model TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_local_review_themes_project ON local_review_themes(project_id, created_at);
+
+CREATE TABLE IF NOT EXISTS geogrid_competitors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scan_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  appearances INTEGER NOT NULL,   -- grid points where business appeared in top 3
+  total_points INTEGER NOT NULL,
+  avg_position REAL,
+  best_position INTEGER,
+  rating REAL,
+  reviews INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_geogrid_competitors_scan ON geogrid_competitors(scan_id);
+
 -- Feedback / bug reports
 CREATE TABLE IF NOT EXISTS feedback_reports (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
