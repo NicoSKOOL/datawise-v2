@@ -73,6 +73,7 @@ import {
   handleGBPProfile, handleReviews, handleLocalCompetitors, handleLocalKeywordSuggestions,
   handleResolveGBPUrl,
   handleGeoGridScan, handleGeoGridHistory, handleGeoGridScanDetail, handleGeoGridInsights,
+  handleReviewThemes,
 } from './routes/local-seo';
 import {
   handleFetchPost, handleDiscoverSitemap, handleAnalyzePost, handleRewritePost,
@@ -559,6 +560,10 @@ export default {
       if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/geogrid-insights$/) && method === 'POST') {
         const projectId = path.split('/')[4];
         return addCors(await handleGeoGridInsights(request, env, user.id, projectId));
+      }
+      if (path.match(/^\/api\/local-seo\/projects\/[^/]+\/review-themes$/) && method === 'POST') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleReviewThemes(request, env, user.id, projectId));
       }
 
       // --- AI Visibility (reporting, not credit-gated) ---

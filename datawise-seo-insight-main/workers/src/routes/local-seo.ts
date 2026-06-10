@@ -681,6 +681,108 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
   return json({ ...response, snapshots, velocity });
 }
 
+// POST /api/local-seo/projects/:id/review-themes
+// One LLM call over the fetched reviews -> summary + 5-8 themes with
+// review_indexes for theme-to-review tagging. Cached in D1 keyed by
+// project + SHA-256 of the review set. Never in the report's critical
+// render path: the SPA hydrates themes when this returns.
+export async function handleReviewThemes(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  const { reviews, llm_config, force = false } = await request.json() as {
+    reviews?: Array<{ rating: number | null; text: string; date: string | null; owner_response: string | null }>;
+    llm_config?: UserLLMConfig;
+    force?: boolean;
+  };
+  if (!Array.isArray(reviews) || reviews.length === 0) {
+    return json({ error: 'reviews array is required' }, 400);
+  }
+
+  const project = await env.DB.prepare(
+    'SELECT id, name, business_name FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as any;
+  if (!project) return json({ error: 'Local project not found' }, 404);
+
+  const reviewsHash = await computeReviewsHash(reviews.map(r => ({ date: r.date, text: r.text })));
+
+  if (!force) {
+    const cachedRow = await env.DB.prepare(
+      'SELECT summary, themes, model, created_at FROM local_review_themes WHERE project_id = ? AND reviews_hash = ? ORDER BY created_at DESC LIMIT 1'
+    ).bind(projectId, reviewsHash).first() as any;
+    if (cachedRow) {
+      return json({
+        summary: cachedRow.summary,
+        themes: JSON.parse(cachedRow.themes),
+        generated_at: cachedRow.created_at,
+        cached: true,
+        model: cachedRow.model,
+      });
+    }
+  }
+
+  const numbered = reviews.map((r, i) => {
+    const text = (r.text || '(no text)').replace(/\s+/g, ' ').slice(0, 400);
+    return `[${i}] ${r.rating ?? '?'} stars | ${r.date ? String(r.date).slice(0, 10) : 'no date'} | ${r.owner_response ? 'responded' : 'no response'} | ${text}`;
+  }).join('\n');
+
+  const prompt = `You are a local SEO consultant summarizing Google reviews for ${project.business_name || project.name}.
+
+## Reviews (numbered)
+${numbered}
+
+## Instructions
+Return ONLY valid JSON (no markdown, no code fences) with this exact structure:
+{
+  "summary": "<one paragraph, 3 to 5 sentences, summarizing what customers say>",
+  "themes": [
+    {
+      "theme": "<short theme name, 2-4 words>",
+      "sentiment": "positive" | "negative" | "mixed",
+      "mention_count": <number of reviews mentioning this theme>,
+      "quotes": ["<up to 2 short verbatim quotes from the reviews>"],
+      "review_indexes": [<the [n] indexes of reviews that mention this theme>]
+    }
+  ]
+}
+
+Rules:
+- Return 5 to 8 themes, most mentioned first
+- review_indexes must only contain index numbers shown in brackets above
+- Quotes must be verbatim substrings of review text, 15 words or fewer
+- Plain English, written for a business owner
+- Never use em dashes in any output text`;
+
+  const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
+  const provider = getLLMProvider(env, llm_config);
+
+  try {
+    const result = await provider.chatComplete(messages, env, llm_config, 4096);
+    let raw = result.text.trim();
+    if (raw.startsWith('```')) {
+      raw = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    }
+    let parsed: unknown = null;
+    try { parsed = JSON.parse(raw); } catch { /* validated below */ }
+    const validated = validateReviewThemes(parsed, reviews.length);
+    if (!validated) {
+      return json({ error: 'The model returned an unreadable response. Use Refresh themes to retry.' }, 502);
+    }
+
+    const model = llm_config?.model || null;
+    await env.DB.prepare(
+      'INSERT INTO local_review_themes (project_id, reviews_hash, summary, themes, model) VALUES (?, ?, ?, ?, ?)'
+    ).bind(projectId, reviewsHash, validated.summary, JSON.stringify(validated.themes), model).run();
+
+    return json({
+      summary: validated.summary,
+      themes: validated.themes,
+      generated_at: new Date().toISOString(),
+      cached: false,
+      model,
+    });
+  } catch (err) {
+    return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}. Use Refresh themes to retry.` }, 502);
+  }
+}
+
 // POST /api/local-seo/keyword-suggestions
 export async function handleLocalKeywordSuggestions(request: Request, env: Env): Promise<Response> {
   const { category, city, location_code = 2840, language_code = 'en' } = await request.json() as any;
