@@ -12,12 +12,26 @@ export const AI_ENGINE_LABELS: Record<AIEngine, string> = {
 
 export type AICheckStatus = 'cited' | 'mentioned' | 'absent' | 'no_answer' | 'error';
 
+export interface AICitation {
+  domain: string;
+  url: string | null;
+  position: number;
+}
+
+export interface AIRecommendation {
+  title: string;
+  body: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
 export interface AIEngineResult {
   status: AICheckStatus;
   citation_position: number | null;
   cited_url: string | null;
   answer_excerpt: string | null;
   checked_at: string;
+  check_id?: number;
+  citations?: AICitation[];
 }
 
 export interface AITrackedQuery {
@@ -27,6 +41,7 @@ export interface AITrackedQuery {
   keyword_id: string | null;
   created_at: string;
   engines: Partial<Record<AIEngine, AIEngineResult>>;
+  recommendation?: AIRecommendation;
 }
 
 export interface AITrackingSettings {
@@ -47,6 +62,7 @@ export interface AITrendPoint {
   total: number;
   cited: number;
   mentioned: number;
+  score?: number;
 }
 
 export interface AIShareOfVoiceRow {
@@ -88,4 +104,8 @@ export async function runAICheck(projectId: string) {
 
 export async function fetchAIReport(projectId: string, period = 90) {
   return api(`/api/rank-tracking/projects/${projectId}/ai/report?period=${period}`) as Promise<AIReport>;
+}
+
+export async function fetchAIAnswer(checkId: number) {
+  return api(`/api/rank-tracking/ai/checks/${checkId}/answer`) as Promise<{ answer_text: string | null }>;
 }
