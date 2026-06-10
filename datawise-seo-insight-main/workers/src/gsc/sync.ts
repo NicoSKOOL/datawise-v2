@@ -45,7 +45,7 @@ async function fetchAllSearchAnalyticsRows(
 
 // POST /gsc/sync - Fetch Search Analytics data for a property
 export async function handleGSCSync(request: Request, env: Env, userId: string): Promise<Response> {
-  const { property_id } = await request.json() as { property_id: string };
+  const { property_id, trigger } = await request.json() as { property_id: string; trigger?: 'scheduled' };
   if (!property_id) {
     return new Response(JSON.stringify({ error: 'property_id required' }), { status: 400 });
   }
@@ -80,6 +80,30 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   const ninetyDaysAgo = new Date(now);
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
+  // --- Incremental sync state ---
+  // A property synced since the two-set model shipped has source='pd' rows.
+  // For those, only the data GSC could have changed since the last sync is
+  // refetched and rewritten; the old DELETE-all + full 90-day reinsert was
+  // the dominant D1 rows-written cost. Properties still on legacy
+  // source='gsc' rows (or never synced) take the full path, which converts
+  // them, so the two formats still never coexist for a property.
+  const syncState = await env.DB.prepare(
+    `SELECT MAX(CASE WHEN source = 'pd' THEN date END) as last_pd_date,
+            MAX(CASE WHEN source = 'agg90' THEN date END) as agg90_stamp
+       FROM gsc_search_data WHERE property_id = ?`
+  ).bind(property_id).first<{ last_pd_date: string | null; agg90_stamp: string | null }>();
+  const lastPdDate = syncState?.last_pd_date || null;
+  const incremental = lastPdDate !== null;
+
+  // The 90-day aggregate cannot be built incrementally (it is one rolling
+  // window), but it barely moves between cron runs. Scheduled syncs reuse it
+  // for up to 7 days; the manual Sync button always rebuilds it fresh.
+  let refreshAgg90 = true;
+  if (incremental && trigger === 'scheduled' && syncState?.agg90_stamp) {
+    const ageMs = now.getTime() - new Date(`${syncState.agg90_stamp}T00:00:00Z`).getTime();
+    refreshAgg90 = ageMs >= 7 * 86400000;
+  }
+
   // --- Pass 1: Daily totals (dimensions: ['date']) ---
   // ~90 rows, never truncated, gives accurate daily click/impression totals
   const dailyResponse = await fetch(apiUrl, {
@@ -108,16 +132,19 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   // Stored as source='agg90'. Powers the default dashboard, /gsc/queries,
   // and the 90-day range. Paginated, so large sites are no longer capped
   // at 25k rows (the old 3x25k batch scheme silently dropped the long tail).
-  let aggRows: SearchAnalyticsRow[];
-  try {
-    aggRows = (await fetchAllSearchAnalyticsRows(apiUrl, headers, {
-      startDate: formatDate(ninetyDaysAgo),
-      endDate: formatDate(now),
-      dimensions: ['query', 'page'],
-      dataState: 'final',
-    })).rows;
-  } catch {
-    return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
+  // Skipped entirely when a scheduled sync can reuse a recent aggregate.
+  let aggRows: SearchAnalyticsRow[] = [];
+  if (refreshAgg90) {
+    try {
+      aggRows = (await fetchAllSearchAnalyticsRows(apiUrl, headers, {
+        startDate: formatDate(ninetyDaysAgo),
+        endDate: formatDate(now),
+        dimensions: ['query', 'page'],
+        dataState: 'final',
+      })).rows;
+    } catch {
+      return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
+    }
   }
 
   // --- Pass 2b: Per-day query+page for the last 35 days ---
@@ -126,10 +153,20 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   // volume; the 90-day view uses the aggregate above instead.
   const thirtyFiveDaysAgo = new Date(now);
   thirtyFiveDaysAgo.setDate(thirtyFiveDaysAgo.getDate() - 35);
+  // Incremental: refetch only from 2 days before the newest stored per-day
+  // row. dataState:'final' rows do not change once published, so older days
+  // are already correct; the 2-day overlap absorbs late finalization at the
+  // edge of the window.
+  let pdStart = thirtyFiveDaysAgo;
+  if (incremental) {
+    const overlapStart = new Date(`${lastPdDate}T00:00:00Z`);
+    overlapStart.setUTCDate(overlapStart.getUTCDate() - 2);
+    if (overlapStart > pdStart) pdStart = overlapStart;
+  }
   let perDayRows: SearchAnalyticsRow[];
   try {
     perDayRows = (await fetchAllSearchAnalyticsRows(apiUrl, headers, {
-      startDate: formatDate(thirtyFiveDaysAgo),
+      startDate: formatDate(pdStart),
       endDate: formatDate(now),
       dimensions: ['date', 'query', 'page'],
       dataState: 'final',
@@ -155,13 +192,46 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   });
 
   let query7dRows: SearchAnalyticsRow[] = [];
-  if (recent7dResponse.ok) {
+  const query7dFetched = recent7dResponse.ok;
+  if (query7dFetched) {
     const data = await recent7dResponse.json() as { rows?: SearchAnalyticsRow[] };
     query7dRows = data.rows || [];
   }
 
-  // Clear old data for this property
-  await env.DB.prepare('DELETE FROM gsc_search_data WHERE property_id = ?').bind(property_id).run();
+  // All GSC fetches are done; only now is stored data mutated, so a failed
+  // fetch can never strand a property with deleted data.
+  if (!incremental) {
+    // First sync, or legacy-format property: full wipe-and-reload converts it
+    // to the two-set model. From then on syncs take the incremental path.
+    await env.DB.prepare('DELETE FROM gsc_search_data WHERE property_id = ?').bind(property_id).run();
+  } else {
+    // Targeted deletes covering exactly the row sets rewritten below.
+    const deletes = [
+      // Daily totals: ~90 rows, replaced wholesale (window slides daily).
+      env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__'`
+      ).bind(property_id),
+      // Per-day rows inside the refetched overlap window.
+      env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE property_id = ? AND source = 'pd' AND date >= ?`
+      ).bind(property_id, formatDate(pdStart)),
+      // Per-day rows that slid out of the 35-day window.
+      env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE property_id = ? AND source = 'pd' AND date < ?`
+      ).bind(property_id, formatDate(thirtyFiveDaysAgo)),
+    ];
+    if (query7dFetched) {
+      deletes.push(env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE property_id = ? AND page = '__7d_query__'`
+      ).bind(property_id));
+    }
+    if (refreshAgg90) {
+      deletes.push(env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE property_id = ? AND source = 'agg90'`
+      ).bind(property_id));
+    }
+    await env.DB.batch(deletes);
+  }
 
   // Insert daily totals (query = '__daily_total__' to distinguish from query-level rows)
   // 500/batch (D1 allows up to 1000 statements) keeps round-trips low so large
@@ -222,6 +292,8 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   const totalRows = dailyRows.length + query7dRows.length + aggRows.length + perDayRows.length;
   return new Response(JSON.stringify({
     success: true,
+    mode: incremental ? 'incremental' : 'full',
+    agg90_refreshed: refreshAgg90,
     rows_synced: totalRows,
     daily_rows: dailyRows.length,
     query_7d_rows: query7dRows.length,
@@ -581,7 +653,9 @@ export async function syncProperty(env: Env, userId: string, propertyId: string)
   const request = new Request('https://internal/gsc/sync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ property_id: propertyId }),
+    // 'scheduled' lets the sync reuse a recent agg90 aggregate instead of
+    // rebuilding it every cron run; the manual Sync button stays fully fresh.
+    body: JSON.stringify({ property_id: propertyId, trigger: 'scheduled' }),
   });
   const response = await handleGSCSync(request, env, userId);
   if (!response.ok) {
