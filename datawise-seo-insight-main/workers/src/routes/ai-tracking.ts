@@ -366,7 +366,7 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
   `).bind(projectId).all();
 
   // Citations for each latest check (the per-engine evidence lists).
-  const checkIds = (queryRows as any[] || []).map(r => r.check_id).filter(Boolean);
+  const checkIds = [...new Set((queryRows as any[] || []).map(r => r.check_id).filter(Boolean))];
   const citationsByCheck = new Map<number, Array<{ domain: string; url: string | null; position: number }>>();
   if (checkIds.length) {
     const placeholders2 = checkIds.map(() => '?').join(',');
@@ -410,7 +410,7 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
     const checks: EngineCheck[] = Object.entries(q.engines).map(([engine, e]: [string, any]) => ({
       engine, status: e.status, citation_position: e.citation_position, citations: e.citations || [],
     }));
-    q.recommendation = buildRecommendation(q.query_text, checks);
+    q.recommendation = buildRecommendation(q.query_text, checks, project.domain);
   }
 
   return json({

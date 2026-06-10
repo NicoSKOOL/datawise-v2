@@ -63,9 +63,18 @@ describe('buildRecommendation', () => {
     const checks: EngineCheck[] = [
       { engine: 'google_ai_mode', status: 'cited', citation_position: 1, citations: [cite('airankingskool.com', null, 1), cite('semrush.com', null, 2)] },
     ];
-    const rec = buildRecommendation(q, checks);
+    const rec = buildRecommendation(q, checks, 'airankingskool.com');
     expect(rec.priority).toBe('low');
     expect(rec.body).toContain('semrush.com');
+  });
+
+  it('rule 4: rival is a competitor domain, never the user, regardless of positions', () => {
+    const checks: EngineCheck[] = [
+      { engine: 'google_ai_mode', status: 'cited', citation_position: 2, citations: [cite('semrush.com', null, 1), cite('airankingskool.com', null, 2)] },
+    ];
+    const rec = buildRecommendation(q, checks, 'airankingskool.com');
+    expect(rec.body).toContain('semrush.com');
+    expect(rec.body).not.toContain('airankingskool.com');
   });
 
   it('rule 5: no answer anywhere -> informational', () => {

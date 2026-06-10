@@ -35,6 +35,14 @@ export function classifyCitationUrl(domain: string, url: string | null): Citatio
 
 function label(engine: string): string { return ENGINE_LABELS[engine] || engine; }
 
+function isUserDomain(domain: string, userDomain?: string): boolean {
+  if (!userDomain) return false;
+  const clean = (d: string) => d.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/^www\./, '').split('/')[0].toLowerCase();
+  const a = clean(domain);
+  const b = clean(userDomain);
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+}
+
 function absentPlay(query: string, check: EngineCheck): Recommendation {
   const cites = check.citations.slice(0, 5);
   const byCategory = new Map<CitationCategory, RecCitation[]>();
@@ -70,7 +78,7 @@ function absentPlay(query: string, check: EngineCheck): Recommendation {
   return { title, body, priority: 'high' };
 }
 
-export function buildRecommendation(query: string, checks: EngineCheck[]): Recommendation {
+export function buildRecommendation(query: string, checks: EngineCheck[], userDomain?: string): Recommendation {
   const usable = checks.filter(c => c.status !== 'error');
   if (!usable.length) {
     return { title: 'No checks yet', body: 'Run a check to get recommendations for this query.', priority: 'low' };
@@ -101,7 +109,7 @@ export function buildRecommendation(query: string, checks: EngineCheck[]): Recom
 
   const cited = usable.find(c => c.status === 'cited');
   if (cited) {
-    const rival = cited.citations.find(c => c.position !== cited.citation_position);
+    const rival = cited.citations.find(c => !isUserDomain(c.domain, userDomain));
     return {
       title: 'Defend this query',
       body: `You are cited in the top 3. Keep the cited page fresh${rival ? `; ${rival.domain} is also being cited and could overtake you` : ''}.`,
