@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { exportReport, type ReportPayload, type ExportFormat } from '@/lib/export';
+import { resolveBrandingForExport, type BrandingConfig } from '@/lib/branding';
 
 interface UseExportArgs {
   surface: string;
@@ -20,7 +21,14 @@ export function useExport({ surface, buildPayload, identifier }: UseExportArgs) 
         const payload = await buildPayload();
         const id =
           typeof identifier === 'function' ? identifier() : identifier;
-        await exportReport(payload, format, { surface, identifier: id });
+        // Branding is best-effort: exports must never fail because of it.
+        let branding: BrandingConfig | undefined;
+        try {
+          branding = await resolveBrandingForExport();
+        } catch {
+          branding = undefined;
+        }
+        await exportReport(payload, format, { surface, identifier: id, branding });
         toast({
           title: `${format.toUpperCase()} exported`,
           description: 'Your report has been downloaded.',

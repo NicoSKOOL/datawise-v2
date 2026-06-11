@@ -121,6 +121,10 @@ import {
 } from './routes/site-audit';
 import { handleMetaCheck, handleFetchSitemap } from './routes/meta-checker';
 import {
+  handleGetBranding, handleUpdateBranding,
+  handleUploadBrandingLogo, handleDeleteBrandingLogo,
+} from './routes/branding';
+import {
   handleListWorkspaces, handleCreateWorkspace, handleResolveWorkspace, handleGetWorkspace, handleDeleteWorkspace,
   handleGetKBDoc, handleUpdateKBDoc, handleDiscoverWebsitePages, handleAutoDraftKnowledgeBase, handleInterview, handleFinalize,
   handleListPosts, handleCreatePost, handleGetPost, handleUpdatePost, handleDeletePost,
@@ -323,6 +327,20 @@ export default {
 
       // All API routes require auth
       if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
+
+      // --- White-label export branding (auth-required, not credit-gated) ---
+      if (path === '/api/branding' && method === 'GET') {
+        return addCors(await handleGetBranding(request, env, user.id));
+      }
+      if (path === '/api/branding' && method === 'PATCH') {
+        return addCors(await handleUpdateBranding(request, env, user.id));
+      }
+      if (path === '/api/branding/logo' && method === 'POST') {
+        return addCors(await handleUploadBrandingLogo(request, env, user.id));
+      }
+      if (path === '/api/branding/logo' && method === 'DELETE') {
+        return addCors(await handleDeleteBrandingLogo(env, user.id));
+      }
 
       // --- Promo Codes (auth-required, not credit-gated) ---
       if (path === '/api/promo/redeem' && method === 'POST') {

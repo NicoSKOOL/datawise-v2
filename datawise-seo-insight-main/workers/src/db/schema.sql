@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS users (
   signup_utm_term TEXT,
   signup_referrer TEXT,
   signup_landing_path TEXT,
+  branding_logo_key TEXT,
+  branding_color TEXT,
+  branding_name TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
