@@ -13,6 +13,8 @@ import { KeywordClusteredView } from "@/components/KeywordClusteredView";
 import { OpportunityMatrix } from "@/components/OpportunityMatrix";
 import { AIAnalysisSummary } from "@/components/AIAnalysisSummary";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
+import { ExportMenu } from "@/components/export/ExportMenu";
+import { buildKeywordGapReport } from "@/lib/export/adapters/keywordGap";
 
 interface KeywordData {
   keyword: string;
@@ -289,6 +291,23 @@ const KeywordGapAnalysis = () => {
             gaps={results.gaps}
             advantages={results.advantages}
           />
+
+          <div className="flex justify-end">
+            <ExportMenu
+              surface="keyword-gap"
+              identifier={`${results.my_domain}-vs-${results.competitor_domain}`}
+              disabled={!results}
+              buildPayload={() =>
+                buildKeywordGapReport({
+                  myDomain: results.my_domain,
+                  competitorDomain: results.competitor_domain,
+                  gaps: processedGaps,
+                  bothRanking: processedBothRanking,
+                  advantages: processedAdvantages,
+                })
+              }
+            />
+          </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="grid w-full grid-cols-3">

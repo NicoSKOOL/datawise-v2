@@ -17,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Info, Search, Globe, TrendingUp, Eye, BarChart3 } from 'lucide-react';
+import { Info, Search, Globe, TrendingUp, Eye, BarChart3, Download } from 'lucide-react';
 import {
   fetchLlmAggregate,
   fetchLlmTopDomains,
@@ -25,6 +25,10 @@ import {
   sumDim,
   type LlmSearchRow,
 } from '@/lib/llm-mentions';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildBrandTrackerReport } from '@/lib/export/adapters/brandTracker';
+import { captureElementPng } from '@/lib/export/chartCapture';
+import { downloadCSV } from '@/lib/csvUtils';
 import { LlmAnswerDrawer } from '@/components/llm-mentions/LlmAnswerDrawer';
 import { StatItem } from '@/components/llm-mentions/StatItem';
 import { MentionsTrendChart } from '@/components/llm-mentions/MentionsTrendChart';
@@ -151,6 +155,7 @@ interface AnswersTableProps {
   searchAfterToken: string | undefined;
   loadingMore: boolean;
   onLoadMore: () => void;
+  exportSlot?: React.ReactNode;
 }
 
 function AnswersTable({
@@ -161,6 +166,7 @@ function AnswersTable({
   searchAfterToken,
   loadingMore,
   onLoadMore,
+  exportSlot,
 }: AnswersTableProps) {
   const [selected, setSelected] = useState<LlmSearchRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -231,6 +237,7 @@ function AnswersTable({
                   : `${rows.length} answers found${rows.length > 0 && filtered.length !== rows.length ? `, ${filtered.length} shown` : ''}`}
               </CardDescription>
             </div>
+            {exportSlot && <div className="flex items-center gap-2">{exportSlot}</div>}
           </div>
 
           {enabled && !isLoading && rows.length > 0 && (
@@ -765,12 +772,14 @@ export default function BrandTracker() {
         </div>
       </div>
 
-      <MentionsTrendChart
-        rows={chartRows}
-        totalCount={chartTotal}
-        loading={analysisEnabled && (googleChart.isLoading || chatgptChart.isLoading)}
-        enabled={analysisEnabled}
-      />
+      <div id="brand-tracker-trend-export">
+        <MentionsTrendChart
+          rows={chartRows}
+          totalCount={chartTotal}
+          loading={analysisEnabled && (googleChart.isLoading || chatgptChart.isLoading)}
+          enabled={analysisEnabled}
+        />
+      </div>
 
       <AnswersTable
         rows={searchRows}
@@ -780,6 +789,57 @@ export default function BrandTracker() {
         searchAfterToken={hasMoreToken ? 'more' : undefined}
         loadingMore={loadingMore}
         onLoadMore={handleLoadMore}
+        exportSlot={
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              disabled={!analysisEnabled || searchRows.length === 0}
+              onClick={() =>
+                downloadCSV(
+                  searchRows.map((r) => ({
+                    question: r.question ?? '',
+                    platform: platformLabel(r.platform),
+                    model: r.model_name ?? '',
+                    ai_search_volume: r.ai_search_volume ?? 0,
+                    sources_count: r.sources?.length ?? 0,
+                    last_seen: r.last_response_at ?? '',
+                    answer_excerpt: (r.answer || '').replace(/\s+/g, ' ').trim().slice(0, 300),
+                  })),
+                  `brand-tracker-${activeDomain}-${new Date().toISOString().slice(0, 10)}`
+                )
+              }
+            >
+              <Download className="h-4 w-4" />
+              Download CSV
+            </Button>
+            <ExportMenu
+              surface="brand-tracker"
+              identifier={activeDomain}
+              disabled={!analysisEnabled || kpiLoading || (searchRows.length === 0 && totalMentions === 0)}
+              buildPayload={async () => {
+                const trendPng = await captureElementPng(
+                  document.getElementById('brand-tracker-trend-export')
+                ).catch(() => null);
+                return buildBrandTrackerReport({
+                  domain: activeDomain,
+                  platforms: [
+                    ...(googleActive
+                      ? [{ label: 'Google AIO', mentions: gMentions, impressions: gImpressions, ai_search_volume: gVolume }]
+                      : []),
+                    ...(chatgptActive
+                      ? [{ label: 'ChatGPT', mentions: cMentions, impressions: cImpressions, ai_search_volume: cVolume }]
+                      : []),
+                  ],
+                  citingDomains: uniqueSourceCount,
+                  rows: searchRows,
+                  charts: { trendPng },
+                });
+              }}
+            />
+          </>
+        }
       />
 
       <CompetitorCompare userDomain={activeDomain} enabled={analysisEnabled} />

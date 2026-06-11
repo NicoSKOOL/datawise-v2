@@ -37,6 +37,9 @@ import {
   subscribeKBAutoDraftTasks,
 } from '@/lib/kb-auto-draft-task';
 import { markdownToHtml, htmlToMarkdown, copyAsRichText } from '@/lib/markdown';
+import { copyText } from '@/lib/clipboard';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildContentWriterBriefReport } from '@/lib/export/adapters/contentWriterBrief';
 import { OutputLanguageSelect } from '@/components/OutputLanguageSelect';
 import { getOutputLanguagePreference, normalizeOutputLanguage, type OutputLanguageCode } from '@/lib/output-language';
 import PostEditor from '@/components/content-writer/PostEditor';
@@ -2218,6 +2221,43 @@ function PostComposerView({ postId }: { postId: string }) {
               URL.revokeObjectURL(a.href);
             }}
           ><Download className="h-4 w-4" /> Download .md</Button>
+          <ExportMenu
+            surface="content-writer-brief"
+            identifier={post.title || post.topic || undefined}
+            label="Export brief"
+            disabled={!post.sources_json && !post.outline_json}
+            buildPayload={() => {
+              let sourceItems: SourceItem[] = [];
+              if (post.sources_json) {
+                try {
+                  const parsed = JSON.parse(post.sources_json) as SourcesPayload;
+                  if (parsed.items?.length) sourceItems = parsed.items;
+                  else if (parsed.citations?.length) sourceItems = mergeCitationItems([], parsed.citations);
+                  else sourceItems = parseSources(parsed.text || '');
+                } catch { sourceItems = []; }
+              }
+              let outlineMd = '';
+              if (post.outline_json) {
+                try {
+                  const parsed = JSON.parse(post.outline_json) as OutlinePayload;
+                  outlineMd = parsed.sections?.length
+                    ? serializeOutline(parsed.sections, parsed.preamble)
+                    : (parsed.text || '');
+                } catch { outlineMd = ''; }
+              }
+              return buildContentWriterBriefReport({
+                post: {
+                  title: post.title,
+                  topic: post.topic,
+                  target_keyword: post.target_keyword,
+                  status: post.status,
+                },
+                brief,
+                sources: sourceItems,
+                outlineMd,
+              });
+            }}
+          />
           <Button variant="ghost" size="sm" onClick={handleDelete} className="gap-1 text-destructive">
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -2653,6 +2693,13 @@ function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue 
             onClick={onRerun}
           />
           <Button
+            variant="outline" size="sm" className="gap-1"
+            onClick={async () => {
+              const ok = await copyText(serializeSources(items));
+              toast({ title: ok ? 'Copied' : 'Copy failed', description: ok ? 'Sources copied as Markdown.' : undefined, variant: ok ? 'default' : 'destructive' });
+            }}
+          ><Copy className="h-4 w-4" /> Copy sources as Markdown</Button>
+          <Button
             variant="ghost" size="sm"
             onClick={() => { setItems((prev) => prev.map((it) => ({ ...it, approved: true }))); setDirty(true); }}
           >Select all</Button>
@@ -2980,6 +3027,13 @@ function OutlinePanel({ postId, outlineJson, busy, onSaved, onRerun, onContinue 
             busy={busy}
             onClick={onRerun}
           />
+          <Button
+            variant="outline" size="sm" className="gap-1"
+            onClick={async () => {
+              const ok = await copyText(serializeOutline(sections, preamble));
+              toast({ title: ok ? 'Copied' : 'Copy failed', description: ok ? 'Outline copied as Markdown.' : undefined, variant: ok ? 'default' : 'destructive' });
+            }}
+          ><Copy className="h-4 w-4" /> Copy outline as Markdown</Button>
           <Button variant="ghost" size="sm" onClick={() => addSection('capsule')} className="gap-1">
             <Plus className="h-4 w-4" /> Add section
           </Button>

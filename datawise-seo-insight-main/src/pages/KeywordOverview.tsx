@@ -12,6 +12,8 @@ import { formatKeywordMetricValue } from "@/lib/keyword-metrics";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordOverview } from "@/lib/dataforseo";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { ExportMenu } from "@/components/export/ExportMenu";
+import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
 
 export default function KeywordOverview() {
   const [keyword, setKeyword] = usePersistentState<string>("keyword-overview:keyword", "");
@@ -208,6 +210,33 @@ export default function KeywordOverview() {
             <p className="text-xs text-muted-foreground">competition level</p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="flex justify-end">
+        <ExportMenu
+          surface="keyword-overview"
+          identifier={keyword.trim() || undefined}
+          disabled={results.length === 0}
+          buildPayload={() => {
+            const locationLabel =
+              locationOptions.find((o) => o.value.toString() === location)?.label || undefined;
+            return buildKeywordTableReport({
+              surface: 'Keyword Overview',
+              seed: keyword.trim(),
+              location: locationLabel,
+              rows: results,
+              kpis: metrics
+                ? [
+                    { label: 'Search Volume', value: Number(metrics.search_volume || 0).toLocaleString() },
+                    { label: 'Keyword Difficulty', value: String(metrics.keyword_difficulty ?? '--') },
+                    { label: 'CPC', value: `$${Number(metrics.cpc || 0).toFixed(2)}` },
+                    { label: 'Competition', value: `${Math.round(Number(metrics.competition || 0) * 100)}%` },
+                  ]
+                : undefined,
+              description: `Keyword metrics for "${keyword.trim()}"${locationLabel ? ` in ${locationLabel}` : ''}.`,
+            });
+          }}
+        />
       </div>
 
       <KeywordPlannerDataTable

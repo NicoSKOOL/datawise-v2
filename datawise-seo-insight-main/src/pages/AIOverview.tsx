@@ -11,6 +11,8 @@ import { Brain, Search, ExternalLink, TrendingUp, Eye, Target, Award, BarChart3,
 import ReactMarkdown from 'react-markdown';
 import { useToast } from "@/hooks/use-toast";
 import { fetchGoogleAIMode, fetchChatGPTSearch, fetchPerplexitySearch } from "@/lib/dataforseo";
+import { ExportMenu } from "@/components/export/ExportMenu";
+import { buildAIVisibilityReport } from "@/lib/export/adapters/aiVisibility";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 
 function safeDomainFromUrl(url: string): string {
@@ -583,13 +585,42 @@ export default function AIOverview() {
           {aiModeResults && !loading && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Brain className="h-5 w-5" />
-                  AI Mode Response
-                </CardTitle>
-                <CardDescription>
-                  Google AI Mode generated response for "{keyword}"
-                </CardDescription>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Brain className="h-5 w-5" />
+                      AI Mode Response
+                    </CardTitle>
+                    <CardDescription>
+                      Google AI Mode generated response for "{keyword}"
+                    </CardDescription>
+                  </div>
+                  <ExportMenu
+                    surface="ai-visibility-google"
+                    identifier={keyword}
+                    disabled={!!aiModeResults.empty}
+                    buildPayload={() => {
+                      const cleanBrand = brandDomain.trim().toLowerCase().replace(/^(https?:\/\/)?(www\.)?/, '');
+                      return buildAIVisibilityReport({
+                        engine: 'Google AI Mode',
+                        keyword,
+                        brandDomain: cleanBrand || undefined,
+                        brandCited: aiModeBrandMetrics ? aiModeBrandMetrics.brand_cited : null,
+                        citationCount: aiModeBrandMetrics ? aiModeBrandMetrics.brand_citation_count : null,
+                        citationPosition: aiModeBrandMetrics?.brand_citation_position ?? null,
+                        topCompetitors: aiModeBrandMetrics?.competitor_domains?.map((d) => d.domain) ?? [],
+                        answerText: aiModeResults.content || aiModeResults.markdown || '',
+                        sources: aiModeSources.map((s: { title?: string; url?: string; domain?: string; text?: string }) => ({
+                          title: s.title,
+                          url: s.url,
+                          domain: s.domain,
+                          snippet: s.text,
+                          isBrand: !!cleanBrand && !!s.domain?.toLowerCase().includes(cleanBrand),
+                        })),
+                      });
+                    }}
+                  />
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="bg-muted p-4 rounded-lg prose prose-sm max-w-none dark:prose-invert">
@@ -785,13 +816,34 @@ export default function AIOverview() {
           {chatGptResults && !loading && (chatGptResults.content || chatGptResults.sources?.length > 0) && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Brain className="h-5 w-5" />
-                  ChatGPT Response
-                </CardTitle>
-                <CardDescription>
-                  ChatGPT generated response for "{keyword}"
-                </CardDescription>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Brain className="h-5 w-5" />
+                      ChatGPT Response
+                    </CardTitle>
+                    <CardDescription>
+                      ChatGPT generated response for "{keyword}"
+                    </CardDescription>
+                  </div>
+                  <ExportMenu
+                    surface="ai-visibility-chatgpt"
+                    identifier={keyword}
+                    buildPayload={() =>
+                      buildAIVisibilityReport({
+                        engine: 'ChatGPT Search',
+                        keyword,
+                        brandDomain: brandDomain.trim() || undefined,
+                        brandCited: chatGptMetrics ? !!chatGptMetrics.isBrandCited : null,
+                        citationCount: chatGptMetrics ? chatGptMetrics.citationCount ?? 0 : null,
+                        citationPosition: chatGptMetrics?.citationPosition ?? null,
+                        topCompetitors: chatGptMetrics?.topCompetitors ?? [],
+                        answerText: chatGptResults.content || '',
+                        sources: chatGptResults.sources || [],
+                      })
+                    }
+                  />
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 {chatGptResults.content && (
@@ -999,13 +1051,34 @@ export default function AIOverview() {
           {perplexityResults && !loading && (perplexityResults.content || perplexityResults.sources?.length > 0) && (
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Brain className="h-5 w-5" />
-                  Perplexity Response
-                </CardTitle>
-                <CardDescription>
-                  Perplexity generated response for "{keyword}"
-                </CardDescription>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Brain className="h-5 w-5" />
+                      Perplexity Response
+                    </CardTitle>
+                    <CardDescription>
+                      Perplexity generated response for "{keyword}"
+                    </CardDescription>
+                  </div>
+                  <ExportMenu
+                    surface="ai-visibility-perplexity"
+                    identifier={keyword}
+                    buildPayload={() =>
+                      buildAIVisibilityReport({
+                        engine: 'Perplexity',
+                        keyword,
+                        brandDomain: brandDomain.trim() || undefined,
+                        brandCited: perplexityMetrics ? !!perplexityMetrics.isBrandCited : null,
+                        citationCount: perplexityMetrics ? perplexityMetrics.citationCount ?? 0 : null,
+                        citationPosition: perplexityMetrics?.citationPosition ?? null,
+                        topCompetitors: perplexityMetrics?.topCompetitors ?? [],
+                        answerText: perplexityResults.content || '',
+                        sources: perplexityResults.sources || [],
+                      })
+                    }
+                  />
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 {perplexityResults.content && (

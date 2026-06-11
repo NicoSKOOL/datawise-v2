@@ -10,6 +10,7 @@ import {
   ListPlus,
   Info,
   Sparkles,
+  Download,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,9 @@ import {
   type Subtask,
   type SiteAuditListItem,
 } from '@/lib/site-audit';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildMetaCheckerReport } from '@/lib/export/adapters/metaChecker';
+import { downloadCSV } from '@/lib/csvUtils';
 import { MetaRewriteDialog } from './MetaRewriteDialog';
 import { rewriteMeta, type MetaRewriteIssueType } from '@/lib/meta-rewrite';
 import { BulkRewritesPanel, type BulkRewriteEntry } from './BulkRewritesPanel';
@@ -592,6 +596,44 @@ export function MetaChecker() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  disabled={!results || results.length === 0}
+                  onClick={() => {
+                    if (!results || results.length === 0) return;
+                    downloadCSV(
+                      results.map((r) => ({
+                        url: r.url,
+                        title: r.title ?? '',
+                        title_length: r.title_length ?? 0,
+                        title_status: r.title_status,
+                        description: r.description ?? '',
+                        description_length: r.description_length ?? 0,
+                        description_status: r.description_status,
+                        has_issue: r.has_issue ? 'yes' : 'no',
+                        error: r.error ?? '',
+                      })),
+                      `meta-checker-${new Date().toISOString().slice(0, 10)}`
+                    );
+                  }}
+                >
+                  <Download className="h-4 w-4" />
+                  Download CSV
+                </Button>
+                <ExportMenu
+                  surface="meta-checker"
+                  identifier={selectedProperty ? hostOf(selectedProperty.site_url) : undefined}
+                  disabled={!results || results.length === 0}
+                  buildPayload={() =>
+                    buildMetaCheckerReport({
+                      rows: results || [],
+                      groups: buildIssueGroups(results || []),
+                      siteLabel: selectedProperty ? hostOf(selectedProperty.site_url) : undefined,
+                    })
+                  }
+                />
                 {selectedFixableRows.length > 0 && (
                   <Button
                     onClick={runBulkRewrite}

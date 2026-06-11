@@ -35,6 +35,8 @@ import {
   type Severity,
   type SiteAudit,
 } from '@/lib/site-audit';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildSiteAuditReport } from '@/lib/export/adapters/siteAudit';
 import { ActionKanban } from '@/components/site-audit/ActionKanban';
 import { CategorySection } from '@/components/site-audit/CategorySection';
 import { SEODashboard } from '@/components/site-audit/SEODashboard';
@@ -502,14 +504,22 @@ function AuditDetailView({
           <p className="text-sm text-muted-foreground mt-1">{formatDate(audit.created_at)}</p>
         </div>
 
-        {audit.status === 'completed' && (
-          <div className="flex gap-4 flex-wrap">
-            <MiniScoreBlock label="Performance" score={audit.perf_score} />
-            <MiniScoreBlock label="SEO" score={audit.seo_score} />
-            <MiniScoreBlock label="Accessibility" score={audit.a11y_score} />
-            <MiniScoreBlock label="Best Practices" score={audit.best_practices_score} />
-          </div>
-        )}
+        <div className="flex items-start gap-4 flex-wrap">
+          {audit.status === 'completed' && (
+            <div className="flex gap-4 flex-wrap">
+              <MiniScoreBlock label="Performance" score={audit.perf_score} />
+              <MiniScoreBlock label="SEO" score={audit.seo_score} />
+              <MiniScoreBlock label="Accessibility" score={audit.a11y_score} />
+              <MiniScoreBlock label="Best Practices" score={audit.best_practices_score} />
+            </div>
+          )}
+          <ExportMenu
+            surface="site-audit"
+            identifier={audit.domain}
+            buildPayload={() => buildSiteAuditReport({ audit, findings })}
+            disabled={audit.status !== 'completed'}
+          />
+        </div>
       </div>
 
       {/* RUNNING STATE */}
