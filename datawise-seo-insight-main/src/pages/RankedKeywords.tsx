@@ -10,6 +10,8 @@ import { fetchRankedKeywords } from "@/lib/dataforseo";
 import { useToast } from "@/components/ui/use-toast";
 import { DataTable } from "@/components/DataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
+import { ExportMenu } from "@/components/export/ExportMenu";
+import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
 
 export default function RankedKeywords() {
   const [domain, setDomain] = usePersistentState<string>("competitor:ranked-keywords:domain", "");
@@ -247,7 +249,34 @@ export default function RankedKeywords() {
         </div>
       )}
 
-      <DataTable 
+      <div className="flex justify-end">
+        <ExportMenu
+          surface="ranked-keywords"
+          identifier={domain.trim() || undefined}
+          disabled={results.length === 0}
+          buildPayload={() => {
+            const locationLabel =
+              locationOptions.find((o) => o.value.toString() === location)?.label || undefined;
+            return buildKeywordTableReport({
+              surface: 'Ranked Keywords',
+              seed: domain.trim(),
+              location: locationLabel,
+              rows: results,
+              kpis: metrics
+                ? [
+                    { label: 'Keywords Shown', value: Number(metrics.total_keywords || 0).toLocaleString() },
+                    { label: 'Total Available', value: Number(metrics.total_available || 0).toLocaleString() },
+                    { label: 'Avg Position', value: metrics.avg_position ? String(Math.round(metrics.avg_position)) : '--' },
+                    { label: 'Total Search Volume', value: Number(metrics.total_search_volume || 0).toLocaleString() },
+                  ]
+                : undefined,
+              description: `Keywords ${domain.trim()} ranks for in Google search results${locationLabel ? ` (${locationLabel})` : ''}.`,
+            });
+          }}
+        />
+      </div>
+
+      <DataTable
         data={results}
         title="Ranked Keywords"
         description="Keywords this domain ranks for in search results"
