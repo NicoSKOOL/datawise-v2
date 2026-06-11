@@ -121,3 +121,8 @@ CREATE TABLE IF NOT EXISTS local_rank_history (
   checked_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_local_rank_history_keyword ON local_rank_history(keyword_id, checked_at);
+
+-- White-label export branding (safe to re-run: D1 ignores duplicate columns)
+ALTER TABLE users ADD COLUMN branding_logo_key TEXT;
+ALTER TABLE users ADD COLUMN branding_color TEXT;
+ALTER TABLE users ADD COLUMN branding_name TEXT;
