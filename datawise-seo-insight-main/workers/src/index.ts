@@ -1045,27 +1045,45 @@ async function runDailyGSCSync(env: Env): Promise<void> {
   // (which write nothing) stay eligible and are retried each day at ~zero cost.
   // The manual "Sync" button bypasses this and force-refreshes on demand.
   const STALE_AFTER = "-3 days";
+  // ORDER BY makes the nightly run self-rotating. The due set (~3,400 props
+  // on 2026-06-11) is far larger than one cron window can sync, and without
+  // an ORDER BY the same head of the table synced every night while the same
+  // tail starved forever: 273 active users' properties were stuck on
+  // pre-2026-05-19 data (the single-batchDate format) three weeks after the
+  // per-day fix shipped. Oldest-synced first puts last night's survivors at
+  // the front tonight; never-synced properties (mostly dormant accounts) go
+  // last so they cannot crowd out users who are actually looking at stale
+  // dashboards. kind='gsc' excludes manual/bwt rows that can never GSC-sync
+  // but were occupying sync slots.
   const props = await env.DB.prepare(
     `SELECT p.id, p.user_id
        FROM gsc_properties p
       WHERE p.is_enabled = 1
+        AND p.kind = 'gsc'
         AND (p.last_synced_at IS NULL OR p.last_synced_at < datetime('now', ?))
         AND EXISTS (
           SELECT 1 FROM sessions s
            WHERE s.user_id = p.user_id
              AND s.expires_at > datetime('now')
-        )`
+        )
+      ORDER BY (p.last_synced_at IS NULL), p.last_synced_at ASC`
   ).bind(STALE_AFTER).all<{ id: string; user_id: string }>();
 
   const rows = props.results || [];
-  let synced = 0, skipped = 0, failed = 0;
+  let synced = 0, skipped = 0, failed = 0, processed = 0;
   const concurrency = 4;
+  // Scheduled handlers are killed at the 15-minute wall (and the site-audit
+  // queue runs first in the same invocation). Stop dispatching in time to
+  // finish in-flight syncs and log the summary instead of dying mid-loop.
+  const TIME_BUDGET_MS = 10 * 60 * 1000;
 
   for (let i = 0; i < rows.length; i += concurrency) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) break;
     const batch = rows.slice(i, i + concurrency);
     const results = await Promise.allSettled(
       batch.map(p => syncProperty(env, p.user_id, p.id))
     );
+    processed += batch.length;
     for (const r of results) {
       if (r.status === 'fulfilled') {
         if (r.value.ok) synced++;
@@ -1080,6 +1098,7 @@ async function runDailyGSCSync(env: Env): Promise<void> {
 
   console.log(
     `GSC daily sync done (active + due-for-refresh scope): ${synced} synced, ${skipped} skipped (token), ` +
-    `${failed} failed, ${rows.length} due properties, ${Date.now() - startedAt}ms`
+    `${failed} failed, ${processed}/${rows.length} due properties processed, ${Date.now() - startedAt}ms` +
+    (processed < rows.length ? ` (time budget reached, ${rows.length - processed} roll to next run)` : '')
   );
 }
