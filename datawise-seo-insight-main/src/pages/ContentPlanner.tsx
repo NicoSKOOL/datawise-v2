@@ -46,6 +46,8 @@ import { useProperty } from '@/contexts/PropertyContext';
 import { AddWebsiteDialog } from '@/components/AddWebsiteDialog';
 import { importPlannerKeywordToWriter } from '@/lib/content-writer';
 import { getOutputLanguagePreference } from '@/lib/output-language';
+import { ExportMenu } from '@/components/export/ExportMenu';
+import { buildContentPlannerReport } from '@/lib/export/adapters/contentPlanner';
 
 const DEMO_PREFIX = 'demo-';
 const DEMO_CLUSTER_PREFIX = 'demo-cluster-';
@@ -533,13 +535,33 @@ export default function ContentPlanner() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        {view === 'kanban' && (
-          <PlannerFilters
-            state={filters}
-            availableSources={availableSources}
-            onChange={setFilters}
+        <div className="flex items-center gap-3">
+          {view === 'kanban' && (
+            <PlannerFilters
+              state={filters}
+              availableSources={availableSources}
+              onChange={setFilters}
+            />
+          )}
+          <ExportMenu
+            surface="content-planner"
+            identifier={
+              selectedProperty
+                ? selectedProperty.site_url.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/\/+$/, '')
+                : undefined
+            }
+            disabled={items.length === 0}
+            buildPayload={() =>
+              buildContentPlannerReport({
+                keywords: items,
+                clusters,
+                siteLabel: selectedProperty
+                  ? selectedProperty.site_url.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/\/+$/, '')
+                  : undefined,
+              })
+            }
           />
-        )}
+        </div>
       </div>
 
       {isLoading ? (
