@@ -378,7 +378,10 @@ export default function BrandTracker() {
   // features, then when I returned all of the data has gone"). React Query
   // refetches automatically when the queryKey rehydrates with a non-empty
   // activeDomain.
-  const [activeDomain, setActiveDomain] = usePersistentState<string>('brand-tracker:active-domain', '');
+  const [activeDomainRaw, setActiveDomain] = usePersistentState<string>('brand-tracker:active-domain', '');
+  // Lowercase at read too: persisted values from before the case fix may
+  // still be mixed case, and DFS matches domains case-sensitively.
+  const activeDomain = activeDomainRaw.toLowerCase();
   const [inputDomain, setInputDomain] = useState(activeDomain || defaultDomain || '');
   const [googleActive, setGoogleActive] = usePersistentState<boolean>('brand-tracker:google-active', true);
   const [chatgptActive, setChatgptActive] = usePersistentState<boolean>('brand-tracker:chatgpt-active', false);
@@ -601,11 +604,14 @@ export default function BrandTracker() {
     (googleActive && googleAgg.isLoading) || (chatgptActive && chatgptAgg.isLoading);
 
   const handleAnalyze = () => {
+    // DFS domain matching is case-sensitive: "GrowthToday.co" returns zero
+    // mentions while "growthtoday.co" has data, so always lowercase.
     const cleaned = inputDomain
       .trim()
       .replace(/^https?:\/\//, '')
       .replace(/^www\./, '')
-      .split('/')[0];
+      .split('/')[0]
+      .toLowerCase();
     if (cleaned) setActiveDomain(cleaned);
   };
 
