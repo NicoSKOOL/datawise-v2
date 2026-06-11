@@ -302,6 +302,21 @@ export default function AdminMembers() {
                 Kept {result.preserved_pro} paid pro user(s) on pro access.
               </div>
             )}
+            {(result.preserved_recent ?? 0) > 0 && (
+              <div className="rounded-md bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+                Kept {result.preserved_recent} member(s) added in the last 7 days that this CSV does not include yet.
+              </div>
+            )}
+            {(result.revoked_emails?.length ?? 0) > 0 && (
+              <div className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                <p className="font-medium">Revoked (verify these really left the community):</p>
+                <ul className="mt-1 list-disc pl-4">
+                  {result.revoked_emails.map((email) => (
+                    <li key={email}>{email}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         ),
       });

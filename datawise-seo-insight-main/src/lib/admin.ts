@@ -7,6 +7,8 @@ interface UploadResult {
   revoked: number;
   preserved_pro: number;
   winback_started: number;
+  preserved_recent?: number;
+  revoked_emails?: string[];
 }
 
 interface CrossReferenceResult {

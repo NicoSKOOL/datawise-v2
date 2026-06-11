@@ -24,13 +24,14 @@ interface CommunitySyncResult {
   revoked: number;
   preserved_pro: number;
   winback_started: number;
+  revoked_emails: string[];
 }
 
 function isTruthyFlag(value: number | boolean | null | undefined): boolean {
   return value === true || value === 1;
 }
 
-async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promise<CommunitySyncResult> {
+async function reconcileCommunityAccess(env: Env, memberEmails: Set<string>): Promise<CommunitySyncResult> {
   const { results } = await env.DB.prepare(`
     SELECT id, email, name, subscription_tier, is_community_member, is_admin
     FROM users
@@ -40,6 +41,7 @@ async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promi
   let revoked = 0;
   let preservedPro = 0;
   let winbackStarted = 0;
+  const revokedEmails: string[] = [];
 
   for (const user of results || []) {
     const email = String(user.email || '').trim().toLowerCase();
@@ -48,7 +50,7 @@ async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promi
     const tier = user.subscription_tier || 'free';
     const isCommunityMember = isTruthyFlag(user.is_community_member);
     const isAdminUser = isTruthyFlag(user.is_admin) || email === ADMIN_EMAIL;
-    const inCsv = csvEmails.has(email);
+    const inCsv = memberEmails.has(email);
 
     if (inCsv) {
       if (tier === 'pro') {
@@ -94,10 +96,18 @@ async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promi
       await startWinbackSequence(env, user.id);
       revoked++;
       winbackStarted++;
+      revokedEmails.push(email);
     }
   }
 
-  return { granted, revoked, preserved_pro: preservedPro, winback_started: winbackStarted };
+  // Revocations are high-stakes (a falsely revoked paying member loses access
+  // silently and gets a winback drip — bug b8015485 sat unnoticed for 13 days).
+  // Surface exactly who was revoked so the admin can eyeball the list.
+  if (revokedEmails.length > 0) {
+    console.log('community reconcile revoked:', revokedEmails.join(', '));
+  }
+
+  return { granted, revoked, preserved_pro: preservedPro, winback_started: winbackStarted, revoked_emails: revokedEmails };
 }
 
 // POST /api/admin/upload-members
@@ -129,13 +139,9 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
     return new Response(JSON.stringify({ error: 'CSV must have an Email column' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Clear previous data
-  await env.DB.prepare('DELETE FROM community_members').run();
-
-  // Parse rows and batch insert (D1 supports up to ~100 statements per batch)
-  const BATCH_SIZE = 80;
+  // Parse rows first so the delete step knows which emails the CSV covers.
   let inserted = 0;
-  const statements: D1PreparedStatement[] = [];
+  const insertStatements: D1PreparedStatement[] = [];
   const csvEmails = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
@@ -150,23 +156,48 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
     const ltv = ltvIdx >= 0 ? parseFloat(cols[ltvIdx]?.trim()) || 0 : 0;
     const joinedDate = joinedIdx >= 0 ? cols[joinedIdx]?.trim() || null : null;
 
-    statements.push(
+    insertStatements.push(
       env.DB.prepare(
-        `INSERT OR REPLACE INTO community_members (email, first_name, last_name, tier, ltv, joined_date) VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO community_members (email, first_name, last_name, tier, ltv, joined_date) VALUES (?, ?, ?, ?, ?, ?)`
       ).bind(email, firstName, lastName, tier, ltv, joinedDate)
     );
     inserted++;
   }
 
-  // Execute in batches
-  for (let i = 0; i < statements.length; i += BATCH_SIZE) {
-    const batch = statements.slice(i, i + BATCH_SIZE);
-    await env.DB.batch(batch);
+  // Replace CSV-covered rows, but PRESERVE rows added in the last 7 days that
+  // the CSV does not contain. A Skool CSV is exported before it is uploaded,
+  // so a full wipe destroyed every webhook/manual member added in between and
+  // reconcile then revoked their access (bug b8015485: a paying member was
+  // downgraded by the 2026-05-29 upload and locked out for 13 days).
+  // Genuinely churned members still age out: once their row is older than 7
+  // days and absent from the CSV, the next upload removes and revokes them.
+  // (community_members.email has no UNIQUE constraint; deleting CSV-covered
+  // rows before reinserting is what prevents duplicates.)
+  const BATCH_SIZE = 80;
+  await env.DB.prepare(
+    "DELETE FROM community_members WHERE uploaded_at IS NULL OR uploaded_at < datetime('now', '-7 days')"
+  ).run();
+  const csvEmailList = [...csvEmails];
+  for (let i = 0; i < csvEmailList.length; i += BATCH_SIZE) {
+    const chunk = csvEmailList.slice(i, i + BATCH_SIZE);
+    await env.DB.prepare(
+      `DELETE FROM community_members WHERE lower(email) IN (${chunk.map(() => '?').join(',')})`
+    ).bind(...chunk).run();
   }
 
-  const sync = await reconcileCommunityAccess(env, csvEmails);
+  for (let i = 0; i < insertStatements.length; i += BATCH_SIZE) {
+    await env.DB.batch(insertStatements.slice(i, i + BATCH_SIZE));
+  }
 
-  return new Response(JSON.stringify({ success: true, imported: inserted, ...sync }), {
+  // Reconcile against the table state (CSV emails + preserved recent rows),
+  // not the raw CSV, so recently added members are not revoked.
+  const memberRows = await env.DB.prepare('SELECT lower(email) as email FROM community_members').all<{ email: string }>();
+  const memberEmails = new Set((memberRows.results || []).map((r) => r.email));
+  const preservedRecent = memberEmails.size > 0 ? [...memberEmails].filter((e) => !csvEmails.has(e)).length : 0;
+
+  const sync = await reconcileCommunityAccess(env, memberEmails);
+
+  return new Response(JSON.stringify({ success: true, imported: inserted, preserved_recent: preservedRecent, ...sync }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
