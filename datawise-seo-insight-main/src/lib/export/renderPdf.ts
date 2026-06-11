@@ -1,7 +1,8 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { BRAND_RGB, BRAND_FOOTER, BRAND_NAME } from './brand';
+import { BRAND_RGB, BRAND_FOOTER, BRAND_NAME, derivePalette } from './brand';
 import type { ReportPayload, ReportSection } from './types';
+import type { BrandingConfig } from '../branding';
 
 const PAGE = {
   width: 210,
@@ -13,17 +14,62 @@ const PAGE = {
 
 const CONTENT_WIDTH = PAGE.width - PAGE.marginX * 2;
 
+type Rgb = readonly [number, number, number];
+
+// Colors that may be swapped by white-label branding. Everything else keeps
+// the BRAND_RGB constants. With no branding this resolves to the exact same
+// tuples, so default output is identical to before branding existed.
+interface PdfPalette {
+  /** Brand text, headings, table header fill. Always dark enough for text. */
+  primary: Rgb;
+  /** Lighter variant, used for the info callout accent. */
+  primaryLight: Rgb;
+  /** Decorative top bars. Custom color even when too light for text. */
+  bar: Rgb;
+}
+
+const DEFAULT_PDF_PALETTE: PdfPalette = {
+  primary: BRAND_RGB.primary,
+  primaryLight: BRAND_RGB.primaryLight,
+  bar: BRAND_RGB.primary,
+};
+
+function resolvePdfPalette(branding?: BrandingConfig): PdfPalette {
+  if (!branding?.primaryColor) return DEFAULT_PDF_PALETTE;
+  const custom = derivePalette(branding.primaryColor);
+  if (custom.isLight) {
+    // Too light to carry text or table headers: keep the dark defaults and
+    // use the custom color only for the accent bars.
+    return { ...DEFAULT_PDF_PALETTE, bar: custom.rgb.primary };
+  }
+  return {
+    primary: custom.rgb.primary,
+    primaryLight: custom.rgb.primaryLight,
+    bar: custom.rgb.primary,
+  };
+}
+
 interface Ctx {
   doc: jsPDF;
   y: number;
   payload: ReportPayload;
+  pal: PdfPalette;
+  brandName: string;
+  logoDataUrl?: string;
 }
 
-export async function renderPdf(payload: ReportPayload): Promise<Blob> {
+export async function renderPdf(payload: ReportPayload, branding?: BrandingConfig): Promise<Blob> {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   doc.setFont('helvetica', 'normal');
 
-  const ctx: Ctx = { doc, y: PAGE.marginTop, payload };
+  const ctx: Ctx = {
+    doc,
+    y: PAGE.marginTop,
+    payload,
+    pal: resolvePdfPalette(branding),
+    brandName: branding?.brandName || BRAND_NAME,
+    logoDataUrl: branding?.logoDataUrl,
+  };
 
   renderCover(ctx);
 
@@ -31,20 +77,43 @@ export async function renderPdf(payload: ReportPayload): Promise<Blob> {
     renderSection(ctx, section);
   }
 
-  decoratePages(doc, payload);
+  decoratePages(doc, payload, ctx.pal, ctx.brandName);
 
   return doc.output('blob');
 }
 
+function renderCoverLogo(ctx: Ctx) {
+  if (!ctx.logoDataUrl) return;
+  const { doc } = ctx;
+  try {
+    // Natural aspect ratio from the embedded image, height capped at 14mm.
+    const props = doc.getImageProperties(ctx.logoDataUrl);
+    if (!props.width || !props.height) return;
+    const maxH = 14;
+    const maxW = 60;
+    let h = maxH;
+    let w = (props.width / props.height) * h;
+    if (w > maxW) {
+      h = h * (maxW / w);
+      w = maxW;
+    }
+    doc.addImage(ctx.logoDataUrl, 'PNG', PAGE.width - PAGE.marginX - w, 6, w, h);
+  } catch {
+    // A bad logo must never break the export: render without it.
+  }
+}
+
 function renderCover(ctx: Ctx) {
   const { doc, payload } = ctx;
-  doc.setFillColor(...BRAND_RGB.primary);
+  doc.setFillColor(...ctx.pal.bar);
   doc.rect(0, 0, PAGE.width, 3, 'F');
+
+  renderCoverLogo(ctx);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.setTextColor(...BRAND_RGB.primary);
-  doc.text(BRAND_NAME.toUpperCase(), PAGE.marginX, PAGE.marginTop - 6);
+  doc.setTextColor(...ctx.pal.primary);
+  doc.text(ctx.brandName.toUpperCase(), PAGE.marginX, PAGE.marginTop - 6);
 
   ctx.y = PAGE.marginTop + 2;
 
@@ -123,7 +192,7 @@ function renderHeading(ctx: Ctx, section: { level: 1 | 2 | 3; text: string }) {
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(sizes[section.level]);
-  doc.setTextColor(...BRAND_RGB.primary);
+  doc.setTextColor(...ctx.pal.primary);
   const lines = doc.splitTextToSize(section.text, CONTENT_WIDTH);
   doc.text(lines, PAGE.marginX, ctx.y);
   ctx.y += lines.length * (sizes[section.level] * 0.42) + spacingAfter[section.level];
@@ -229,7 +298,7 @@ function renderTable(
     margin: { left: PAGE.marginX, right: PAGE.marginX },
     styles: { fontSize: 9, cellPadding: 2, textColor: BRAND_RGB.textDark },
     headStyles: {
-      fillColor: BRAND_RGB.primary,
+      fillColor: [...ctx.pal.primary],
       textColor: BRAND_RGB.white,
       fontStyle: 'bold',
     },
@@ -274,7 +343,7 @@ function renderCallout(
 ) {
   const { doc } = ctx;
   const tones = {
-    info: BRAND_RGB.primaryLight,
+    info: ctx.pal.primaryLight,
     warn: BRAND_RGB.accentDown,
     success: BRAND_RGB.accentUp,
   };
@@ -420,18 +489,18 @@ function renderCodeBlock(ctx: Ctx, code: string) {
   doc.setFont('helvetica', 'normal');
 }
 
-function decoratePages(doc: jsPDF, payload: ReportPayload) {
+function decoratePages(doc: jsPDF, payload: ReportPayload, pal: PdfPalette, brandName: string) {
   const pageCount = doc.getNumberOfPages();
   for (let p = 1; p <= pageCount; p++) {
     doc.setPage(p);
     // Top brand bar on every page except cover
     if (p > 1) {
-      doc.setFillColor(...BRAND_RGB.primary);
+      doc.setFillColor(...pal.bar);
       doc.rect(0, 0, PAGE.width, 3, 'F');
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
-      doc.setTextColor(...BRAND_RGB.primary);
-      doc.text(BRAND_NAME.toUpperCase(), PAGE.marginX, 10);
+      doc.setTextColor(...pal.primary);
+      doc.text(brandName.toUpperCase(), PAGE.marginX, 10);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(...BRAND_RGB.textMuted);
       const titleShort = payload.title.length > 60 ? payload.title.slice(0, 57) + '…' : payload.title;
