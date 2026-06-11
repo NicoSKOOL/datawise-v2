@@ -296,18 +296,35 @@ export async function handleGSCPropertyUpdate(request: Request, env: Env, userId
 //
 // Idempotent on purpose: must succeed whether the user has a healthy
 // connection, an orphan state (properties but no connection row, e.g. john's
-// f83f0ecd state), or nothing at all. The 3 DELETEs run atomically via
-// env.DB.batch so partial-state orphaning (the original source of f83f0ecd)
-// cannot recur.
+// f83f0ecd state), or nothing at all.
+//
+// gsc_search_data is deleted in chunks first: D1 caps a single SQL statement
+// at 30 seconds and a one-shot DELETE of hundreds of thousands of rows blows
+// that cap (bug ae38480a, tony: 83 properties / 882k rows -> "Disconnect
+// failed"). The chunk loop is safe to interrupt and retry: rows only ever
+// shrink and the connection/property rows are untouched until the final
+// atomic batch, so partial-state orphaning (f83f0ecd) still cannot recur.
+export const GSC_DISCONNECT_CHUNK = 10000;
+
 export async function handleGSCDisconnect(env: Env, userId: string): Promise<Response> {
   try {
-    await env.DB.batch([
-      env.DB.prepare(
+    // 1000-subrequest worker cap minus headroom; at 10k rows per chunk this
+    // covers ~9M rows, ~10x the largest account seen.
+    const maxChunks = 900;
+    for (let i = 0; i < maxChunks; i++) {
+      const res = await env.DB.prepare(
         `DELETE FROM gsc_search_data
-         WHERE property_id IN (
-           SELECT id FROM gsc_properties WHERE user_id = ? AND kind != 'manual'
+         WHERE id IN (
+           SELECT d.id FROM gsc_search_data d
+           JOIN gsc_properties p ON p.id = d.property_id
+           WHERE p.user_id = ? AND p.kind != 'manual'
+           LIMIT ?
          )`
-      ).bind(userId),
+      ).bind(userId, GSC_DISCONNECT_CHUNK).run();
+      if ((res.meta?.changes ?? 0) < GSC_DISCONNECT_CHUNK) break;
+    }
+
+    await env.DB.batch([
       env.DB.prepare('DELETE FROM gsc_connections WHERE user_id = ?').bind(userId),
       env.DB.prepare("DELETE FROM gsc_properties WHERE user_id = ? AND kind != 'manual'").bind(userId),
     ]);

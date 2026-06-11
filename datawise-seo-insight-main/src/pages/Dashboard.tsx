@@ -133,6 +133,35 @@ function QuickActionsStrip() {
   );
 }
 
+// Shown instead of ConnectGSCPanel when GSC IS connected but the selected
+// website cannot show metrics (manual property, or no sync yet). Telling an
+// already-connected user to "Connect Google Search Console" reads as a broken
+// connection (bug 1027d415).
+function GscDataPendingPanel({ domain, isManual }: { domain: string; isManual: boolean }) {
+  return (
+    <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-transparent">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg">
+          {isManual ? 'This website is not linked to Search Console' : 'No Search Console data synced yet'}
+        </CardTitle>
+        <CardDescription>
+          {isManual
+            ? `${domain || 'This website'} was added without GSC, so there are no click or impression metrics for it. Your Search Console account is connected: switch to one of its properties in the selector above, or verify ${domain || 'this site'} in Search Console and refresh your property list.`
+            : `${domain || 'This property'} is connected but has no synced data yet. Run a sync from Settings to pull in your Search Console metrics.`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button asChild>
+          <Link to="/settings">
+            Open Settings
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConnectGSCPanel({ domain }: { domain: string }) {
   const bullets = [
     'Your real clicks and impressions, trended week over week',
@@ -296,7 +325,11 @@ export default function Dashboard() {
   } else if (!hasGscData) {
     body = (
       <>
-        <ConnectGSCPanel domain={primaryDomain} />
+        {gscConnected ? (
+          <GscDataPendingPanel domain={primaryDomain} isManual={selectedProperty?.kind === 'manual'} />
+        ) : (
+          <ConnectGSCPanel domain={primaryDomain} />
+        )}
         <QuickActionsStrip />
       </>
     );

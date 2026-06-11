@@ -86,12 +86,27 @@ export function PropertyProvider({ children }: { children: React.ReactNode }) {
           const enabled = props.filter((p) => p.is_enabled !== 0);
           const savedId = localStorage.getItem(STORAGE_KEY);
           // Only use saved selection if it's an enabled property
-          const savedValid = savedId && enabled.some((p) => p.id === savedId);
-          if (savedValid) {
-            setSelectedPropertyIdState(savedId);
+          const saved = savedId ? enabled.find((p) => p.id === savedId) : undefined;
+          // A manual property has no GSC metrics, so a manual selection makes
+          // the dashboard show "Connect GSC" even when a connection exists
+          // (bug 1027d415). If the saved selection is a manual row but a GSC
+          // property for the same domain exists, switch to the GSC twin.
+          const gscTwin =
+            saved && saved.kind === 'manual'
+              ? enabled.find(
+                  (p) => p.kind !== 'manual' && cleanDomain(p.site_url).replace(/^www\./, '') === cleanDomain(saved.site_url).replace(/^www\./, '')
+                )
+              : undefined;
+          if (saved && !gscTwin) {
+            setSelectedPropertyIdState(saved.id);
+          } else if (gscTwin) {
+            setSelectedPropertyIdState(gscTwin.id);
+            localStorage.setItem(STORAGE_KEY, gscTwin.id);
           } else if (enabled.length > 0) {
-            setSelectedPropertyIdState(enabled[0].id);
-            localStorage.setItem(STORAGE_KEY, enabled[0].id);
+            // Default pick prefers GSC-linked properties over manual ones.
+            const preferred = enabled.find((p) => p.kind !== 'manual') || enabled[0];
+            setSelectedPropertyIdState(preferred.id);
+            localStorage.setItem(STORAGE_KEY, preferred.id);
           } else {
             // No enabled properties, pick first available
             setSelectedPropertyIdState(props[0].id);
