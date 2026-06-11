@@ -429,6 +429,12 @@ export default function SettingsPage() {
 
   const manualProperties = properties.filter((prop) => prop.kind === 'manual');
   const gscProperties = properties.filter((prop) => prop.kind !== 'manual');
+  // One row per domain for the Websites card: a site verified as both a
+  // Domain property and a URL prefix property stays a single website here.
+  const uniqueGscWebsites = gscProperties.filter((prop, idx) => {
+    const key = cleanSiteUrl(prop.site_url).replace(/^www\./, '');
+    return idx === gscProperties.findIndex((p) => cleanSiteUrl(p.site_url).replace(/^www\./, '') === key);
+  });
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -546,6 +552,32 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* Sites imported through GSC also belong in this list: users who
+            connect via "Add website -> Connect GSC" look for the new site
+            here, not in the Google Search Console card below (bug 18125820,
+            "gohighlevel.ai wont show on websites area"). Deduped by domain so
+            Domain + URL prefix variants don't read as duplicates. */}
+        {uniqueGscWebsites.length > 0 && (
+          <div className="space-y-2">
+            {uniqueGscWebsites.map((prop) => (
+              <div key={prop.id} className="flex items-center gap-3 rounded-lg border p-3">
+                <span
+                  className="h-3 w-3 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: prop.color || '#6366f1' }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-medium">{cleanSiteUrl(prop.site_url)}</p>
+                    <Badge variant="secondary">GSC</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Connected through Google Search Console. Manage syncing in the section below.
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {manualProperties.length > 0 ? (
           <div className="space-y-2">
             {manualProperties.map((prop) => (
@@ -579,11 +611,11 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
-        ) : (
+        ) : uniqueGscWebsites.length === 0 ? (
           <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-            No manual websites yet. Add one for a client, competitor, staging site, or new domain that is not in your GSC account.
+            No websites yet. Add one from Google Search Console, or add one manually for a client, competitor, staging site, or new domain.
           </div>
-        )}
+        ) : null}
       </div>
       <AddWebsiteDialog
         open={addWebsiteOpen}
@@ -653,6 +685,7 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground">
                   Toggle properties on/off for the SEO Assistant dropdown. Assign colors to identify conversations.
                   Click <span className="font-medium">Refresh from Google</span> after adding or verifying a new property variant in Search Console.
+                  A site verified both ways in Search Console shows up twice here: once as a Domain property (covers every subdomain and protocol) and once as a URL prefix property (that exact address only). That is how Google exposes them, not a duplicate.
                 </p>
                 {gscProperties.map((prop) => {
                   const propColor = prop.color || '#6366f1';
@@ -685,9 +718,18 @@ export default function SettingsPage() {
                         </PopoverContent>
                       </Popover>
 
-                      {/* Property info */}
+                      {/* Property info. The type badge matters: Google exposes
+                          a site verified both ways as two properties, and
+                          stripping the sc-domain:/https:// prefixes made them
+                          render as identical rows (bug e7f15a266, "double
+                          listing for all my domains"). */}
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{cleanSiteUrl(prop.site_url)}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium truncate">{cleanSiteUrl(prop.site_url)}</p>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 flex-shrink-0">
+                            {prop.site_url.startsWith('sc-domain:') ? 'Domain' : 'URL prefix'}
+                          </Badge>
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {prop.last_synced_at ? `Last synced: ${new Date(prop.last_synced_at).toLocaleDateString()}` : 'Not synced yet'}
                         </p>
