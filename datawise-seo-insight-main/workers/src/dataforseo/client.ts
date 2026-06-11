@@ -147,7 +147,9 @@ export async function dataforseoRequestCached(
   if (cached) return JSON.parse(cached);
 
   const data = await dataforseoRequest(env, endpoint, body, options.timeoutMs);
-  await env.KV.put(key, JSON.stringify(data), { expirationTtl: ttlSeconds });
+  if (isCacheableDfsResponse(data)) {
+    await env.KV.put(key, JSON.stringify(data), { expirationTtl: ttlSeconds });
+  }
   return data;
 }
 
@@ -166,13 +168,33 @@ export async function dataforseoGetCached(
   if (cached) return JSON.parse(cached);
 
   const data = await dataforseoGet(env, endpoint, options.timeoutMs);
-  await env.KV.put(key, JSON.stringify(data), { expirationTtl: ttlSeconds });
+  if (isCacheableDfsResponse(data)) {
+    await env.KV.put(key, JSON.stringify(data), { expirationTtl: ttlSeconds });
+  }
   return data;
 }
 
 // Helper to extract the standard nested result
 export function extractResult(data: any): any {
   return data?.tasks?.[0]?.result?.[0] ?? null;
+}
+
+// DFS returns HTTP 200 even when the task inside failed (e.g. 40501 invalid
+// domain). Returns the task-level error message, or null if the task is ok.
+export function getTaskError(data: any): string | null {
+  const task = data?.tasks?.[0];
+  if (!task) return 'DataForSEO returned no task';
+  if (task.status_code === 20000) return null;
+  return typeof task.status_message === 'string' && task.status_message
+    ? task.status_message
+    : `DataForSEO task failed with status ${task.status_code}`;
+}
+
+// Only successful task responses may be KV-cached. Caching a transient task
+// failure pins the error for the full TTL (bug 5308c018: Brand Tracker compare
+// showed "no comparison data" for 6h after one bad DFS response).
+export function isCacheableDfsResponse(data: any): boolean {
+  return getTaskError(data) === null;
 }
 
 // Helper to extract items from result

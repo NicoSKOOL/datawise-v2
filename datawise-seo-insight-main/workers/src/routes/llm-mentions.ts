@@ -1,5 +1,5 @@
 import type { Env } from '../index';
-import { dataforseoRequestCached, extractResult } from '../dataforseo/client';
+import { dataforseoRequestCached, extractResult, getTaskError } from '../dataforseo/client';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -28,6 +28,10 @@ export async function handleAggregate(request: Request, env: Env, _userId: strin
       [task],
       { ttlSeconds: 21600 }
     );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
     const result = extractResult(data);
     return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
   } catch (err) {
@@ -59,6 +63,10 @@ export async function handleCrossAggregate(request: Request, env: Env, _userId: 
       [task],
       { ttlSeconds: 21600 }
     );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
     const result = extractResult(data);
     return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
   } catch (err) {
@@ -91,6 +99,10 @@ export async function handleSearch(request: Request, env: Env, _userId: string):
       [task],
       { ttlSeconds: 3600 }
     );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
     const result = extractResult(data);
     return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
   } catch (err) {
@@ -131,6 +143,10 @@ export async function handleTopDomains(request: Request, env: Env, _userId: stri
       [task],
       { ttlSeconds: 21600 }
     );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
     const result = extractResult(data);
     return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
   } catch (err) {
@@ -171,6 +187,10 @@ export async function handleTopPages(request: Request, env: Env, _userId: string
       [task],
       { ttlSeconds: 21600 }
     );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
     const result = extractResult(data);
     return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
   } catch (err) {
@@ -209,6 +229,10 @@ export async function handleKeywordVolume(request: Request, env: Env, _userId: s
       [task],
       { ttlSeconds: 86400 }
     );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
     const result = extractResult(data);
     return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
   } catch (err) {
