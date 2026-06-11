@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Toaster } from '@/components/ui/toaster';
 import { Toaster as Sonner } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PropertyProvider } from './contexts/PropertyContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from '@/components/Layout';
+import { AppErrorBoundary, RouteLoadingFallback } from '@/components/AppErrorBoundary';
 import { OutOfCreditsDialog } from '@/components/OutOfCreditsDialog';
 import { outOfCreditsEvent } from '@/lib/api';
 import { initAttribution } from '@/lib/attribution';
@@ -16,37 +17,51 @@ import { trackPageview } from '@/lib/pageview';
 // Capture first-touch UTM/referrer once at app boot, before any navigation.
 initAttribution();
 
-// Pages
-import Dashboard from './pages/Dashboard';
+// Pages on the login critical path stay eager: they are small (no charts,
+// editors or maps) and an extra chunk round-trip during the OAuth redirect
+// would add latency and a new failure mode.
 import Auth from './pages/Auth';
 import AuthCallback from './pages/AuthCallback';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
-import SEOAssistant from './pages/SEOAssistant';
-import KeywordResearch from './pages/KeywordResearch';
-import CompetitorAnalysis from './pages/CompetitorAnalysis';
-import AIVisibility from './pages/AIVisibility';
-import RankTracking from './pages/RankTracking';
-import ContentTools from './pages/ContentTools';
-import ContentPlanner from './pages/ContentPlanner';
-import ContentWriter from './pages/ContentWriter';
-import SiteAudit from './pages/SiteAudit';
-import Backlinks from './pages/Backlinks';
-import SettingsPage from './pages/SettingsPage';
 import NotFound from './pages/NotFound';
-import Roadmap from './pages/Roadmap';
-import AdminMembers from './pages/AdminMembers';
-import AdminFeedback from './pages/AdminFeedback';
-import AdminPromoCodes from './pages/AdminPromoCodes';
-import AdminAnalytics from './pages/AdminAnalytics';
-import AdminContentWriterPrompts from './pages/AdminContentWriterPrompts';
+
+// Everything behind auth is lazy: each page ships as its own chunk so the
+// entry bundle stays small. Stale-chunk failures after a deploy are handled
+// by AppErrorBoundary (reload once, then show a refresh prompt).
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const SEOAssistant = lazy(() => import('./pages/SEOAssistant'));
+const KeywordResearch = lazy(() => import('./pages/KeywordResearch'));
+const CompetitorAnalysis = lazy(() => import('./pages/CompetitorAnalysis'));
+const AIVisibility = lazy(() => import('./pages/AIVisibility'));
+const RankTracking = lazy(() => import('./pages/RankTracking'));
+const ContentTools = lazy(() => import('./pages/ContentTools'));
+const ContentPlanner = lazy(() => import('./pages/ContentPlanner'));
+const ContentWriter = lazy(() => import('./pages/ContentWriter'));
+const SiteAudit = lazy(() => import('./pages/SiteAudit'));
+const Backlinks = lazy(() => import('./pages/Backlinks'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const Roadmap = lazy(() => import('./pages/Roadmap'));
+const AdminMembers = lazy(() => import('./pages/AdminMembers'));
+const AdminFeedback = lazy(() => import('./pages/AdminFeedback'));
+const AdminPromoCodes = lazy(() => import('./pages/AdminPromoCodes'));
+const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
+const AdminContentWriterPrompts = lazy(() => import('./pages/AdminContentWriterPrompts'));
 
 const queryClient = new QueryClient();
 
 function ProtectedPage({ children }: { children: React.ReactNode }) {
+  // key resets the boundary on navigation so a crash on one page does not
+  // leave the next page stuck on the fallback. Sidebar and header live in
+  // Layout, outside the boundary, so they survive page crashes.
+  const location = useLocation();
   return (
     <ProtectedRoute>
-      <Layout>{children}</Layout>
+      <Layout>
+        <AppErrorBoundary variant="route" key={location.pathname}>
+          <Suspense fallback={<RouteLoadingFallback />}>{children}</Suspense>
+        </AppErrorBoundary>
+      </Layout>
     </ProtectedRoute>
   );
 }
@@ -125,7 +140,8 @@ function DeployRefreshGuard() {
 }
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
+  <AppErrorBoundary variant="app">
+    <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <AuthProvider>
         <PropertyProvider>
@@ -168,7 +184,8 @@ const App = () => (
         </PropertyProvider>
       </AuthProvider>
     </TooltipProvider>
-  </QueryClientProvider>
+    </QueryClientProvider>
+  </AppErrorBoundary>
 );
 
 export default App;
