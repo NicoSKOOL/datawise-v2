@@ -26,7 +26,7 @@ export async function handleAggregate(request: Request, env: Env, _userId: strin
       env,
       '/ai_optimization/llm_mentions/aggregated_metrics/live',
       [task],
-      { ttlSeconds: 21600 }
+      { ttlSeconds: 86400 }
     );
     const taskError = getTaskError(data);
     if (taskError) {
@@ -61,7 +61,7 @@ export async function handleCrossAggregate(request: Request, env: Env, _userId: 
       env,
       '/ai_optimization/llm_mentions/cross_aggregated_metrics/live',
       [task],
-      { ttlSeconds: 21600 }
+      { ttlSeconds: 86400 }
     );
     const taskError = getTaskError(data);
     if (taskError) {
@@ -97,7 +97,9 @@ export async function handleSearch(request: Request, env: Env, _userId: string):
       env,
       '/ai_optimization/llm_mentions/search/live',
       [task],
-      { ttlSeconds: 3600 }
+      // 24h cache: this is the priciest DFS call ($0.10+/req) and brand mentions
+      // shift slowly. Was 1h, which barely cached same-day dashboard re-views.
+      { ttlSeconds: 86400 }
     );
     const taskError = getTaskError(data);
     if (taskError) {
@@ -141,7 +143,7 @@ export async function handleTopDomains(request: Request, env: Env, _userId: stri
       env,
       '/ai_optimization/llm_mentions/top_domains/live',
       [task],
-      { ttlSeconds: 21600 }
+      { ttlSeconds: 86400 }
     );
     const taskError = getTaskError(data);
     if (taskError) {
@@ -185,7 +187,7 @@ export async function handleTopPages(request: Request, env: Env, _userId: string
       env,
       '/ai_optimization/llm_mentions/top_pages/live',
       [task],
-      { ttlSeconds: 21600 }
+      { ttlSeconds: 86400 }
     );
     const taskError = getTaskError(data);
     if (taskError) {

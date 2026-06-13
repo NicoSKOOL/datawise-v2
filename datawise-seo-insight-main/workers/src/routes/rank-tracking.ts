@@ -306,7 +306,10 @@ async function checkRankingsForProject(
         language_code: kw.language_code || 'en',
         device,
         os: device === 'mobile' ? 'android' : 'windows',
-        depth: 100,
+        // depth 20 (2 SERP pages) not 100 (10 pages): rank tracking only needs to
+        // locate the domain on page 1-2; deeper costs ~5x more on the DFS regular
+        // endpoint. Positions past 20 record as NULL ("not ranking"), same as past 100.
+        depth: 20,
       }];
       const data = await dataforseoRequestCached(env, '/serp/google/organic/live/regular', payload, { ttlSeconds: SERP_TTL_SECONDS });
       const task = data?.tasks?.[0];
