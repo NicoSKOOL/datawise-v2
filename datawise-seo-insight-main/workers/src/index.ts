@@ -34,6 +34,7 @@ import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetP
 import { handleDevLogin } from './auth/dev';
 import { isAllowedFrontendOrigin } from './auth/origins';
 import { authMiddleware } from './middleware/auth';
+import { recordRequestActivity } from './activity';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty } from './gsc/sync';
@@ -194,6 +195,12 @@ export default {
     const path = url.pathname;
     const method = request.method;
 
+    // Usage/cost telemetry: timestamp the request and remember the authed user so
+    // addCors (the universal response finalizer) can log one app_events row per
+    // classified action. Logging is fire-and-forget via ctx.waitUntil.
+    const startedAtMs = Date.now();
+    let loggedUser: Awaited<ReturnType<typeof authMiddleware>> = null;
+
     // CORS + security headers.
     // Reflect the request Origin when it matches the shared frontend allowlist.
     const requestOrigin = request.headers.get('Origin') || '';
@@ -219,6 +226,11 @@ export default {
     }
 
     const addCors = (response: Response): Response => {
+      // Log the action once, after the response is finalized. classifyActivity
+      // inside the helper drops unclassified/anonymous routes, so this is cheap.
+      if (loggedUser) {
+        ctx.waitUntil(recordRequestActivity(env, request, loggedUser, response, startedAtMs));
+      }
       const newHeaders = new Headers(response.headers);
       Object.entries(corsHeaders).forEach(([k, v]) => newHeaders.set(k, v));
       return new Response(response.body, {
@@ -312,6 +324,7 @@ export default {
 
       // --- Auth-required routes ---
       const user = await authMiddleware(request, env);
+      loggedUser = user;
       if (path === '/auth/logout' && method === 'POST') {
         if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
         return addCors(await handleLogout(request, env));
