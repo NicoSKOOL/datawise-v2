@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { sendPasswordResetEmail } from '../email/resend';
+import { isBannedEmail } from '../lib/email-normalize';
 
 // --- Password hashing with PBKDF2 (Web Crypto API) ---
 
@@ -78,6 +79,10 @@ export async function handleEmailSignup(request: Request, env: Env): Promise<Res
     return json({ error: 'Email and password are required' }, 400);
   }
 
+  if (await isBannedEmail(env, email)) {
+    return json({ error: 'This account has been suspended for violating our terms of service.' }, 403);
+  }
+
   if (password.length < 6) {
     return json({ error: 'Password must be at least 6 characters' }, 400);
   }
@@ -131,6 +136,10 @@ export async function handleEmailLogin(request: Request, env: Env): Promise<Resp
 
   if (!email || !password) {
     return json({ error: 'Email and password are required' }, 400);
+  }
+
+  if (await isBannedEmail(env, email)) {
+    return json({ error: 'This account has been suspended for violating our terms of service.' }, 403);
   }
 
   const user = await env.DB.prepare(

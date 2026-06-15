@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   subscription_tier TEXT DEFAULT 'free' CHECK (subscription_tier IN ('free', 'pro', 'community')),
   is_community_member INTEGER DEFAULT 0,
   is_admin INTEGER DEFAULT 0,
+  banned INTEGER DEFAULT 0,
   credits_used INTEGER DEFAULT 0,
   credits_exhausted_email_sent INTEGER DEFAULT 0,
   default_location_code INTEGER DEFAULT 2840,
@@ -29,6 +30,14 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_users_signup_utm_source ON users(signup_utm_source);
+
+-- Canonical (alias-collapsed) emails blocked from signup/login. See
+-- lib/email-normalize.ts. Used to stop free-tier abuse via Gmail "+tag" aliases.
+CREATE TABLE IF NOT EXISTS banned_emails (
+  canonical_email TEXT PRIMARY KEY,
+  reason TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
