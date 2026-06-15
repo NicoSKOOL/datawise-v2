@@ -43,6 +43,16 @@ function findLocalPackPosition(items: any[], project: LocalProject) {
   return null;
 }
 
+// DataForSEO's business_data/google/my_business_info/live nests the business
+// object under result[0].items[0]. result[0] itself is just the keyword wrapper
+// (no title/latitude/longitude/description), so reading it directly yields a
+// useless object: the call gets treated as "no data", GBP fields show as
+// missing, and geo-grid centering falls back to a loose name search that can
+// resolve to the wrong location. Always read items[0].
+export function pickMyBusinessInfo(data: any): any | null {
+  return data?.tasks?.[0]?.result?.[0]?.items?.[0] ?? null;
+}
+
 // POST /api/local-seo/business-search
 export async function handleBusinessSearch(request: Request, env: Env): Promise<Response> {
   const { query, location_code = 2840 } = await request.json() as any;
@@ -431,7 +441,7 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
       location_code,
       language_code,
     }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-    const candidate = data?.tasks?.[0]?.result?.[0];
+    const candidate = pickMyBusinessInfo(data);
     if (candidate?.title) business = candidate;
   } catch (err) {
     console.error('my_business_info failed:', err);
@@ -965,7 +975,7 @@ export async function handleLocalKeywordDiscovery(env: Env, userId: string, proj
         location_code: locationCode,
         language_code: 'en',
       }]);
-      gbp = data?.tasks?.[0]?.result?.[0] || null;
+      gbp = pickMyBusinessInfo(data);
       if (gbp) await env.KV.put(gbpKey, JSON.stringify(gbp), { expirationTtl: LOCAL_KEYWORDS_TTL_SECONDS });
     } catch { gbp = null; }
   }
@@ -1157,7 +1167,7 @@ export async function handleResolveGBPUrl(request: Request, env: Env): Promise<R
   }];
 
   const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', payload, { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-  const business = data?.tasks?.[0]?.result?.[0];
+  const business = pickMyBusinessInfo(data);
 
   if (!business) {
     // Fallback: search Maps SERP with business name
@@ -1260,7 +1270,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
         location_code: project.location_code || 2840,
         language_code: 'en',
       }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-      const biz = data?.tasks?.[0]?.result?.[0];
+      const biz = pickMyBusinessInfo(data);
       if (biz?.latitude && biz?.longitude) {
         centerLat = biz.latitude;
         centerLng = biz.longitude;
@@ -1571,7 +1581,7 @@ export async function handleGeoGridInsights(request: Request, env: Env, userId: 
         const gbpData = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
           keyword: gbpKeyword, location_code: locCode, language_code: 'en',
         }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-        const candidate = gbpData?.tasks?.[0]?.result?.[0];
+        const candidate = pickMyBusinessInfo(gbpData);
         if (candidate?.title) biz = candidate;
       } catch { /* fall through to Maps SERP */ }
     }
