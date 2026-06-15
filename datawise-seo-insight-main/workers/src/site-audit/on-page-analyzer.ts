@@ -27,6 +27,7 @@ import type {
   HeadingsAnalysis,
   ImagesAnalysis,
   SchemaAnalysis,
+  CrawledPageSummary,
 } from './seo-analysis';
 import {
   hasStablePoorLcp,
@@ -141,6 +142,102 @@ export function pickHomepage(
     }
   });
   return rootPath || pages[0];
+}
+
+function normalizeComparableUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const path = url.pathname.replace(/\/+$/, '') || '/';
+    return `${url.hostname.replace(/^www\./, '')}${path}`;
+  } catch {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '') || raw;
+  }
+}
+
+function titleStatus(title: string, length: number): CrawledPageSummary['title_status'] {
+  if (!title) return 'missing';
+  if (length < 30) return 'too_short';
+  if (length > 60) return 'too_long';
+  return 'ok';
+}
+
+function descriptionStatus(
+  description: string,
+  length: number
+): CrawledPageSummary['description_status'] {
+  if (!description) return 'missing';
+  if (length < 80) return 'too_short';
+  if (length > 160) return 'too_long';
+  return 'ok';
+}
+
+function h1Status(count: number): CrawledPageSummary['h1_status'] {
+  if (count === 0) return 'missing';
+  if (count > 1) return 'multiple';
+  return 'ok';
+}
+
+// Turns the full crawled `pages` array into a per-page summary so the dashboard
+// can show every crawled page, not just the homepage. The homepage analysis
+// (buildStructuredSEO) only covers one page; this surfaces the rest.
+export function summarizeCrawledPages(
+  pages: OnPagePage[],
+  startUrl: string | null
+): CrawledPageSummary[] {
+  const homepage = pickHomepage(pages, startUrl);
+  const homepageKey = homepage ? normalizeComparableUrl(homepage.url) : null;
+  const seen = new Set<string>();
+  const summaries: CrawledPageSummary[] = [];
+
+  for (const page of pages) {
+    if (!page.url || seen.has(page.url)) continue;
+    seen.add(page.url);
+
+    const meta = page.meta || {};
+    const title = meta.title || '';
+    const titleLen = meta.title_length ?? title.length;
+    const description = meta.description || '';
+    const descriptionLen = meta.description_length ?? description.length;
+    const h1Count = meta.htags?.h1?.length ?? 0;
+    const status = typeof page.status_code === 'number' ? page.status_code : null;
+    const loadMs =
+      typeof page.page_timing?.duration_time === 'number'
+        ? Math.round(page.page_timing.duration_time)
+        : null;
+    const titleState = titleStatus(title, titleLen);
+    const descriptionState = descriptionStatus(description, descriptionLen);
+    const h1State = h1Status(h1Count);
+    const issueCount = [
+      status != null && status >= 400,
+      titleState !== 'ok',
+      descriptionState !== 'ok',
+      h1State !== 'ok',
+      loadMs != null && loadMs > 3000,
+    ].filter(Boolean).length;
+
+    summaries.push({
+      url: page.url,
+      status_code: status,
+      title: title || null,
+      title_length: titleLen,
+      title_status: titleState,
+      description: description || null,
+      description_length: descriptionLen,
+      description_status: descriptionState,
+      h1_count: h1Count,
+      h1_status: h1State,
+      load_ms: loadMs,
+      internal_links_count:
+        typeof meta.internal_links_count === 'number' ? meta.internal_links_count : null,
+      external_links_count:
+        typeof meta.external_links_count === 'number' ? meta.external_links_count : null,
+      images_count: typeof meta.images_count === 'number' ? meta.images_count : null,
+      is_homepage: homepageKey != null && normalizeComparableUrl(page.url) === homepageKey,
+      issue_count: issueCount,
+    });
+  }
+
+  return summaries.sort((a, b) => Number(b.is_homepage) - Number(a.is_homepage));
 }
 
 // Extracts unique schema type names from the DFS microdata response.

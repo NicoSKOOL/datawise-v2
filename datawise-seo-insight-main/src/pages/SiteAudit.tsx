@@ -34,6 +34,7 @@ import {
   type AuditFinding,
   type Severity,
   type SiteAudit,
+  type CrawledPageSummary,
 } from '@/lib/site-audit';
 import { ExportMenu } from '@/components/export/ExportMenu';
 import { buildSiteAuditReport } from '@/lib/export/adapters/siteAudit';
@@ -370,6 +371,7 @@ function AuditDetailView({
 
   const audit = auditQuery.data?.audit;
   const findings = useMemo(() => auditQuery.data?.findings || [], [auditQuery.data]);
+  const crawledPages = audit?.seo_analysis?.crawled_pages || [];
   const retryMutation = useMutation({
     mutationFn: createAudit,
     onSuccess: (newAudit) => {
@@ -627,6 +629,10 @@ function AuditDetailView({
             </TabsContent>
 
             <TabsContent value="findings" className="mt-4 space-y-6">
+              {crawledPages.length > 0 && (
+                <CrawledPagesReport pages={crawledPages} reportedCount={audit.pages_crawled} />
+              )}
+
               {findings.length === 0 && (
                 <div className="rounded-lg border-2 border-dashed p-10 text-center text-sm text-muted-foreground">
                   No issues found. Your site is in great shape!
@@ -775,6 +781,139 @@ function AuditDetailView({
         </>
       )}
     </div>
+  );
+}
+
+function formatLoadTime(ms: number | null): string {
+  if (ms == null) return '—';
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${ms}ms`;
+}
+
+function formatPath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname === '/' ? parsed.hostname : `${parsed.hostname}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+function pageStatusClass(page: CrawledPageSummary): string {
+  if (page.status_code != null && page.status_code >= 400) {
+    return 'border-red-500/30 text-red-600 bg-red-500/5';
+  }
+  if (page.issue_count > 0) {
+    return 'border-amber-500/30 text-amber-700 bg-amber-500/5';
+  }
+  return 'border-green-500/30 text-green-600 bg-green-500/5';
+}
+
+function pageStatusLabel(page: CrawledPageSummary): string {
+  if (page.status_code != null && page.status_code >= 400) return `${page.status_code}`;
+  if (page.issue_count > 0) return `${page.issue_count} issue${page.issue_count === 1 ? '' : 's'}`;
+  return 'OK';
+}
+
+function fieldStatusLabel(status: string, okLabel: string): string {
+  if (status === 'ok') return okLabel;
+  return status.replace('_', ' ');
+}
+
+function CrawledPagesReport({
+  pages,
+  reportedCount,
+}: {
+  pages: CrawledPageSummary[];
+  reportedCount: number;
+}) {
+  const total = Math.max(reportedCount || 0, pages.length);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold">Crawled pages</h3>
+          <p className="text-xs text-muted-foreground">
+            Showing {pages.length} returned page{pages.length === 1 ? '' : 's'}
+            {total > pages.length ? ` from ${total} crawled` : ''}.
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border bg-card">
+        <table className="w-full min-w-[820px] text-sm">
+          <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th className="px-4 py-3 text-left font-medium">Page</th>
+              <th className="px-4 py-3 text-left font-medium">Status</th>
+              <th className="px-4 py-3 text-left font-medium">Title</th>
+              <th className="px-4 py-3 text-left font-medium">Description</th>
+              <th className="px-4 py-3 text-left font-medium">H1</th>
+              <th className="px-4 py-3 text-right font-medium">Load</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {pages.map((page) => (
+              <tr key={page.url} className="align-top">
+                <td className="px-4 py-3">
+                  <a
+                    href={page.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex max-w-[260px] items-center gap-1.5 text-primary hover:underline"
+                    title={page.url}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" />
+                    <span className="truncate">{formatPath(page.url)}</span>
+                  </a>
+                  {page.is_homepage && (
+                    <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Homepage
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <Badge variant="outline" className={pageStatusClass(page)}>
+                    {pageStatusLabel(page)}
+                  </Badge>
+                  {page.status_code != null && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      HTTP {page.status_code}
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <div className="max-w-[220px] truncate" title={page.title || ''}>
+                    {page.title || 'Missing'}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {fieldStatusLabel(page.title_status, `${page.title_length} chars`)}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <div className="max-w-[240px] truncate" title={page.description || ''}>
+                    {page.description || 'Missing'}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {fieldStatusLabel(page.description_status, `${page.description_length} chars`)}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <div>{page.h1_count}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {fieldStatusLabel(page.h1_status, 'ok')}
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-right font-mono tabular-nums">
+                  {formatLoadTime(page.load_ms)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
