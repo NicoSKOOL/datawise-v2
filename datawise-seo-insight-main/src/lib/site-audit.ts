@@ -161,6 +161,25 @@ export interface DataSourceStatus {
   bot_protection_detected: boolean;
 }
 
+export interface CrawledPageSummary {
+  url: string;
+  status_code: number | null;
+  title: string | null;
+  title_length: number;
+  title_status: 'missing' | 'too_short' | 'too_long' | 'ok';
+  description: string | null;
+  description_length: number;
+  description_status: 'missing' | 'too_short' | 'too_long' | 'ok';
+  h1_count: number;
+  h1_status: 'missing' | 'multiple' | 'ok';
+  load_ms: number | null;
+  internal_links_count: number | null;
+  external_links_count: number | null;
+  images_count: number | null;
+  is_homepage: boolean;
+  issue_count: number;
+}
+
 export interface StructuredSEO {
   loading: LoadingSummary;
   perf: PerfBreakdown;
@@ -169,6 +188,7 @@ export interface StructuredSEO {
   headings: HeadingsAnalysis;
   images: ImagesAnalysis;
   schema: SchemaAnalysis;
+  crawled_pages?: CrawledPageSummary[];
   keyword_coverage?: KeywordCoverage | null;
   data_sources?: DataSourceStatus | null;
 }
