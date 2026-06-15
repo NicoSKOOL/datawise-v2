@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { getAllowedFrontendOrigin } from './origins';
+import { isBannedEmail } from '../lib/email-normalize';
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -123,6 +124,12 @@ export async function handleGoogleCallback(request: Request, env: Env): Promise<
   }
 
   const googleUser: GoogleUserInfo = await userInfoResponse.json();
+
+  // Reject banned addresses (and any provider-alias variation) before creating
+  // or signing into an account.
+  if (await isBannedEmail(env, googleUser.email)) {
+    return Response.redirect(`${frontendOrigin}/auth?error=banned`, 302);
+  }
 
   // Upsert user in D1
   // Check by google_id first, then by email (for pre-created/invited users)

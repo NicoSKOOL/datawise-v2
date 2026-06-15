@@ -46,10 +46,14 @@ export async function authMiddleware(request: Request, env: Env): Promise<AuthUs
 
   // Fetch user
   const user = await env.DB.prepare(
-    'SELECT id, google_id, email, name, avatar_url, subscription_tier, is_community_member, is_admin, credits_used, default_location_code, default_language_code FROM users WHERE id = ?'
+    'SELECT id, google_id, email, name, avatar_url, subscription_tier, is_community_member, is_admin, credits_used, default_location_code, default_language_code, banned FROM users WHERE id = ?'
   ).bind(userId).first();
 
   if (!user) return null;
+
+  // Banned users are treated as unauthenticated, so every API route rejects
+  // them. This runs on both the KV fast path and the D1 fallback.
+  if (user.banned) return null;
 
   return {
     id: user.id as string,
