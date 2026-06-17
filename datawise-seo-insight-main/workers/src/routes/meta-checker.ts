@@ -63,6 +63,48 @@ function extractMetaDescription(html: string): string | null {
   return null;
 }
 
+// Remove <svg>…</svg> blocks. SVGs carry their own <title> (accessibility/tooltip
+// text), which must never be mistaken for the page title.
+function stripSvg(html: string): string {
+  return html.replace(/<svg\b[\s\S]*?<\/svg\s*>/gi, ' ');
+}
+
+// Remove HTML comments so commented-out example markup (e.g. docs showing a
+// <title> tag) can't be picked up as real metadata.
+function stripComments(html: string): string {
+  return html.replace(/<!--[\s\S]*?-->/g, ' ');
+}
+
+export interface ParsedMeta {
+  title: string | null;
+  description: string | null;
+}
+
+// Extract <title> + meta description from a page.
+//
+// Primary source is the <head> region. If a tag is absent there we fall back to
+// scanning the whole document (minus <svg> and HTML comments). This handles
+// Next.js 15.2+ "streaming metadata": for non-bot User-Agents Next streams
+// <title>/<meta> into the <body> (after </head>) and React hoists them to <head>
+// client-side. The head-only scan reported those real titles as "missing"
+// (bug 176b0fb6, "26 missing titles" false positive on a Next 16 site).
+export function parseMeta(html: string): ParsedMeta {
+  const headEnd = html.search(/<\/head\s*>/i);
+  const headRegion = headEnd > 0 ? html.slice(0, headEnd + 7) : html;
+
+  let title = extractTitle(headRegion);
+  let description = extractMetaDescription(headRegion);
+
+  if (title === null || description === null) {
+    // Only build the cleaned full-doc view when we actually need a fallback.
+    const full = stripComments(stripSvg(html));
+    if (title === null) title = extractTitle(full);
+    if (description === null) description = extractMetaDescription(full);
+  }
+
+  return { title, description };
+}
+
 function extractH1(html: string): string | null {
   const m = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
   if (!m) return null;
@@ -172,7 +214,9 @@ async function checkOne(url: string): Promise<MetaCheckRow> {
       row.error = `Not HTML (${contentType.split(';')[0] || 'unknown'})`;
       return row;
     }
-    // Cap read at ~512KB — the <head> is always near the top.
+    // Cap read at ~1MB. The <head> is near the top, but Next.js streaming
+    // metadata flushes <title>/<meta> into the <body>, so we need enough of the
+    // document for parseMeta's body fallback (see parseMeta).
     const reader = resp.body?.getReader();
     if (!reader) {
       row.error = 'No response body';
@@ -180,7 +224,7 @@ async function checkOne(url: string): Promise<MetaCheckRow> {
     }
     const chunks: Uint8Array[] = [];
     let total = 0;
-    const MAX_BYTES = 512 * 1024;
+    const MAX_BYTES = 1024 * 1024;
     while (total < MAX_BYTES) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -199,12 +243,7 @@ async function checkOne(url: string): Promise<MetaCheckRow> {
       offset += c.length;
     }
     const html = new TextDecoder('utf-8').decode(buf);
-    // Only scan up to the end of <head> if we can find it.
-    const headEnd = html.search(/<\/head\s*>/i);
-    const scanRegion = headEnd > 0 ? html.slice(0, headEnd + 7) : html;
-
-    const title = extractTitle(scanRegion);
-    const desc = extractMetaDescription(scanRegion);
+    const { title, description: desc } = parseMeta(html);
     row.title = title;
     row.title_length = title ? [...title].length : 0;
     row.description = desc;
@@ -296,8 +335,11 @@ export async function fetchPageContext(url: string): Promise<PageContextFetch> {
     const headEnd = html.search(/<\/head\s*>/i);
     const headRegion = headEnd > 0 ? html.slice(0, headEnd + 7) : html;
 
-    out.title = extractTitle(headRegion);
-    out.description = extractMetaDescription(headRegion);
+    // title/description go through parseMeta so streamed-metadata pages (Next.js
+    // 15.2+) are read correctly; keywords stay head-only (not streamed).
+    const meta = parseMeta(html);
+    out.title = meta.title;
+    out.description = meta.description;
     out.keywords = extractMetaKeywords(headRegion);
     out.h1 = extractH1(html);
     out.h2s = extractH2s(html);
