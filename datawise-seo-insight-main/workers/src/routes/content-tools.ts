@@ -205,10 +205,33 @@ function extractContentArea(html: string): string {
   return bodyMatch ? bodyMatch[1] : html;
 }
 
-function isBlockedPage(html: string): boolean {
+// Detect host-level anti-bot interstitials. Covers Cloudflare challenges and
+// SiteGround Anti-Bot AI (which serves a ~200-byte HTTP 202 page with a
+// meta-refresh to /.well-known/sgcaptcha/ to datacenter IPs, including our
+// Cloudflare Worker egress IPs, while letting residential browsers through).
+// Exported for unit testing.
+export function detectBotChallenge(html: string): boolean {
   const lower = html.substring(0, 5000).toLowerCase();
-  const signals = ['just a moment', 'checking your browser', 'cf-challenge', 'challenge-platform', 'turnstile'];
-  return signals.some(s => lower.includes(s));
+  const signals = [
+    // Cloudflare
+    'just a moment', 'checking your browser', 'cf-challenge', 'challenge-platform', 'turnstile',
+    // SiteGround Anti-Bot AI
+    'sgcaptcha', '/.well-known/sgcaptcha',
+    // Generic
+    'enable javascript and cookies to continue', 'verifying you are human',
+  ];
+  if (signals.some(s => lower.includes(s))) return true;
+  // A tiny page whose only job is a meta-refresh to a captcha/challenge/verify
+  // path is an interstitial, not real content. Length-gated so a normal page
+  // that merely contains a redirect refresh is never misclassified.
+  if (
+    html.length < 1500 &&
+    /<meta[^>]+http-equiv=["']?refresh/i.test(html) &&
+    /captcha|challenge|\/\.well-known\/|\/verify/i.test(html)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +455,14 @@ const FETCH_HEADERS = {
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
+// Shown when a host's anti-bot protection blocks our server-side fetch. See
+// detectBotChallenge: residential browsers and Googlebot get through, but the
+// host challenges our datacenter IP, so we receive an empty interstitial.
+const BLOCKED_FETCH_MSG =
+  "This site's host is blocking our crawler with a bot challenge (SiteGround Anti-Bot, Cloudflare, or similar), so we received an empty page. Allowlist our crawler in your host or security plugin and retry, or paste the content in manually.";
+const BLOCKED_SITEMAP_MSG =
+  "Couldn't read this site's sitemap: the host is challenging our crawler with bot protection (SiteGround Anti-Bot, Cloudflare, or similar). Allowlist our crawler, or paste your page URLs directly below.";
+
 // ---------------------------------------------------------------------------
 // Route Handlers
 // ---------------------------------------------------------------------------
@@ -455,15 +486,20 @@ export async function handleFetchPost(request: Request): Promise<Response> {
 
     const html = await response.text();
 
-    if (html.length < 500) {
-      return json({ error: 'Server returned a near-empty response (likely blocked)' }, 400);
-    }
-
-    if (isBlockedPage(html)) {
-      // Try WordPress REST API fallback
+    // Anti-bot interstitials (SiteGround sgcaptcha, Cloudflare, etc.) are tiny,
+    // so check for a challenge before the length guard. Try the WordPress REST
+    // API in case only the HTML route is challenged, then surface an actionable
+    // message instead of a vague "near-empty response".
+    if (detectBotChallenge(html)) {
       const wpResult = await tryWpApi(url, domain, slug);
       if (wpResult) return json(wpResult);
-      return json({ error: 'Page is blocked by Cloudflare. Try pasting the post content manually.' }, 400);
+      return json({ error: BLOCKED_FETCH_MSG }, 400);
+    }
+
+    if (html.length < 500) {
+      const wpResult = await tryWpApi(url, domain, slug);
+      if (wpResult) return json(wpResult);
+      return json({ error: BLOCKED_FETCH_MSG }, 400);
     }
 
     const contentHtml = extractContentArea(html);
@@ -556,6 +592,10 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
   domain = domain.replace(/\/$/, '');
 
   const sitemapCandidates: string[] = [];
+  // Set when a fetch comes back as an anti-bot interstitial rather than real
+  // content, so we can distinguish "host is blocking us" from "site has no
+  // sitemap" and give the user an actionable message instead of "0 pages".
+  let sawChallenge = false;
 
   // Check robots.txt first
   try {
@@ -564,6 +604,7 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
     });
     if (robotsResp.ok) {
       const text = await robotsResp.text();
+      if (detectBotChallenge(text)) sawChallenge = true;
       for (const line of text.split('\n')) {
         if (line.toLowerCase().startsWith('sitemap:')) {
           const declared = line.split(':').slice(1).join(':').trim();
@@ -601,6 +642,7 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
       if (!resp.ok) continue;
 
       const xml = await resp.text();
+      if (detectBotChallenge(xml)) { sawChallenge = true; continue; }
 
       // Check if this is a sitemap index
       if (xml.includes('<sitemapindex') || xml.includes(':sitemapindex')) {
@@ -626,6 +668,13 @@ export async function handleDiscoverSitemap(request: Request): Promise<Response>
     } catch {
       continue;
     }
+  }
+
+  // Blocked by anti-bot protection (not merely "no sitemap"): tell the user why
+  // so the empty result is actionable. A genuine no-sitemap site still returns
+  // an empty list so they can paste URLs manually.
+  if (pages.length === 0 && sawChallenge) {
+    return json({ error: BLOCKED_SITEMAP_MSG }, 502);
   }
 
   return json({ pages });
@@ -923,12 +972,8 @@ export async function handleFetchServicePage(request: Request): Promise<Response
 
     const html = await response.text();
 
-    if (html.length < 500) {
-      return json({ error: 'Server returned a near-empty response (likely blocked)' }, 400);
-    }
-
-    if (isBlockedPage(html)) {
-      return json({ error: 'Page is blocked by Cloudflare or bot protection. Try a different URL.' }, 400);
+    if (detectBotChallenge(html) || html.length < 500) {
+      return json({ error: BLOCKED_FETCH_MSG }, 400);
     }
 
     const contentHtml = extractContentArea(html);
