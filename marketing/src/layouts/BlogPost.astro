@@ -69,9 +69,12 @@ const formattedDate = date.toLocaleDateString('en-US', {
             <Badge variant="accent" size="sm">{tag}</Badge>
           ))}
         </div>
-        <h1 class="text-3xl sm:text-4xl font-extrabold leading-tight">
+        <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.05] tracking-tight text-[var(--dw-text)]">
           {title}
         </h1>
+        <p class="mt-5 text-lg sm:text-xl text-[var(--dw-text-secondary)] leading-relaxed">
+          {description}
+        </p>
         <div class="mt-4 flex items-center gap-3 text-sm text-[var(--color-text-muted)]">
           <span class="font-medium text-[var(--color-text-secondary)]">{author}</span>
           <span>&middot;</span>
@@ -80,14 +83,14 @@ const formattedDate = date.toLocaleDateString('en-US', {
       </header>
 
       <!-- Content -->
-      <div class="prose max-w-none">
+      <div class="prose prose-lg dark:prose-invert max-w-none">
         <slot />
       </div>
 
       <!-- Author bio -->
-      <div class="mt-12 p-6 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-elevated)] flex gap-4 items-start">
-        <div class="h-12 w-12 rounded-full bg-[var(--color-indigo)] flex items-center justify-center shrink-0">
-          <span class="text-white font-bold text-sm">NG</span>
+      <div class="mt-16 p-6 rounded-xl border border-[var(--dw-border)] bg-[var(--dw-surface-elevated)] flex gap-4 items-start">
+        <div class="h-12 w-12 rounded-full bg-[var(--dw-primary-highlight)] flex items-center justify-center shrink-0">
+          <span class="text-white font-bold text-sm font-[var(--font-headline)]">NG</span>
         </div>
         <div>
           <p class="font-semibold text-[var(--color-text-primary)]">{author}</p>
