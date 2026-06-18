@@ -2,8 +2,9 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Download } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, Search, X } from "lucide-react";
 import { downloadCSV } from "@/lib/csvUtils";
 import { cn, isNumericColumn, getComparisonColor, calculateColumnStats } from "@/lib/utils";
 import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetricBadge";
@@ -29,6 +30,10 @@ export interface DataTableProps {
   enableSorting?: boolean;
   /** Pin the card header (title + toolbar actions) to the top while scrolling the table. */
   stickyHeader?: boolean;
+  /** Show a search box that filters rows across all columns. Defaults to true. */
+  enableFilter?: boolean;
+  /** Placeholder text for the filter input. */
+  filterPlaceholder?: string;
 }
 
 export function DataTable({
@@ -47,18 +52,32 @@ export function DataTable({
   rowActionsHeader = 'Actions',
   enableSorting = true,
   stickyHeader = false,
+  enableFilter = true,
+  filterPlaceholder = 'Filter keywords...',
 }: DataTableProps) {
   const hasSelection = Boolean(getRowId && selectedRowIds && onSelectedRowIdsChange);
   const hasRowActions = Boolean(renderRowActions);
   const [sortState, setSortState] = React.useState<TableSortState | null>(null);
+  const [filterText, setFilterText] = React.useState('');
   const safeData = React.useMemo(() => (Array.isArray(data) ? data : []), [data]);
-  const tableRows = React.useMemo(
+  const sortedRows = React.useMemo(
     () =>
       enableSorting
         ? sortTableRows(safeData as Record<string, unknown>[], sortState)
         : (safeData as Record<string, unknown>[]),
     [enableSorting, safeData, sortState],
   );
+  const filterQuery = filterText.trim().toLowerCase();
+  const tableRows = React.useMemo(() => {
+    if (!enableFilter || !filterQuery) return sortedRows;
+    return sortedRows.filter((row) =>
+      Object.values(row as Record<string, unknown>).some((value) => {
+        if (value == null || React.isValidElement(value)) return false;
+        const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+        return text.toLowerCase().includes(filterQuery);
+      }),
+    );
+  }, [enableFilter, filterQuery, sortedRows]);
 
   if (loading) {
     return (
@@ -170,6 +189,31 @@ export function DataTable({
         </div>
       </CardHeader>
       <CardContent>
+        {enableFilter && (
+          <div className="relative mb-4 max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              value={filterText}
+              onChange={(event) => setFilterText(event.target.value)}
+              placeholder={filterPlaceholder}
+              aria-label="Filter rows"
+              className="pl-9 pr-9"
+            />
+            {filterText && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear filter"
+                onClick={() => setFilterText('')}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -309,11 +353,23 @@ export function DataTable({
                   </TableRow>
                 );
               })}
+              {tableRows.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={columns.length + (hasSelection ? 1 : 0) + (hasRowActions ? 1 : 0)}
+                    className="py-8 text-center text-muted-foreground"
+                  >
+                    No rows match "{filterText}"
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>
         <div className="mt-4 text-sm text-muted-foreground">
-          Showing {safeData.length} results
+          {filterQuery
+            ? `Showing ${tableRows.length} of ${safeData.length} results`
+            : `Showing ${safeData.length} results`}
         </div>
       </CardContent>
     </Card>
