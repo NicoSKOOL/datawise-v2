@@ -181,6 +181,31 @@ export function DataTable({
           {description && <CardDescription>{description}</CardDescription>}
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          {enableFilter && (
+            <div className="relative w-full sm:w-56">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                value={filterText}
+                onChange={(event) => setFilterText(event.target.value)}
+                placeholder={filterPlaceholder}
+                aria-label="Filter rows"
+                className="h-9 pl-9 pr-9"
+              />
+              {filterText && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear filter"
+                  onClick={() => setFilterText('')}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          )}
           {toolbarActions}
           <Button onClick={handleDownloadCSV} variant="outline" size="sm">
             <Download className="h-4 w-4 mr-2" />
@@ -189,31 +214,6 @@ export function DataTable({
         </div>
       </CardHeader>
       <CardContent>
-        {enableFilter && (
-          <div className="relative mb-4 max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              value={filterText}
-              onChange={(event) => setFilterText(event.target.value)}
-              placeholder={filterPlaceholder}
-              aria-label="Filter rows"
-              className="pl-9 pr-9"
-            />
-            {filterText && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear filter"
-                onClick={() => setFilterText('')}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        )}
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
