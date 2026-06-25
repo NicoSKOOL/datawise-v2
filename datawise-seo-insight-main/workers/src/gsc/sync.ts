@@ -128,6 +128,24 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   const totalClicks = dailyRows.reduce((sum, row) => sum + Number(row.clicks || 0), 0);
   const totalImpressions = dailyRows.reduce((sum, row) => sum + Number(row.impressions || 0), 0);
 
+  // A 200-OK Search Analytics response with zero rows must never overwrite good
+  // stored data with nothing. Google returns an empty set for a day or two right
+  // after a site is re-verified or its URL/property changes; the destructive
+  // rewrite below would then DELETE the '__daily_total__' rows the dashboard sums
+  // and re-insert nothing, so every range read "0" until the next sync (bug
+  // fc3660cd: "dashboard showing 0 for all three websites" after a manual
+  // re-sync). Treat an empty daily-totals fetch as transient and leave stored
+  // data untouched. Nothing was deleted yet, so bailing here is fully safe.
+  if (dailyRows.length === 0) {
+    return new Response(JSON.stringify({
+      success: true,
+      mode: 'skipped',
+      reason: 'empty_daily_totals',
+      rows_synced: 0,
+      property: siteUrl,
+    }), { headers: { 'Content-Type': 'application/json' } });
+  }
+
   // --- Pass 2a: Full 90-day query+page aggregate (no date dimension) ---
   // Stored as source='agg90'. Powers the default dashboard, /gsc/queries,
   // and the 90-day range. Paginated, so large sites are no longer capped
