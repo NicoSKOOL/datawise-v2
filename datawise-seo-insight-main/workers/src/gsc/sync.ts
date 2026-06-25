@@ -341,6 +341,24 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     return new Response(JSON.stringify({ error: 'Property not found' }), { status: 404 });
   }
 
+  // Cache the computed dashboard. This endpoint runs ~15 GROUP BY scans over
+  // gsc_search_data (tens of millions of rows) per load, so uncached it was the
+  // single largest source of D1 rows-read (the rangeOpps correlated subquery
+  // alone read ~117M rows/day). GSC data only changes when a sync runs, and
+  // syncProperty bumps last_synced_at, so keying on it makes a fresh sync
+  // invalidate the cache automatically. The TTL is just a backstop for the
+  // daily date('now') window rollover on properties that are not re-synced.
+  // The ownership check above stays live (cheap, indexed) so cross-user reads
+  // can never be served from cache.
+  const GSC_DATA_CACHE_TTL = 6 * 60 * 60; // 6 hours
+  const cacheKey = `gsc_data:v1:${propertyId}:${url.searchParams.get('range') || 'none'}:${String(property.last_synced_at ?? 'never')}`;
+  const cachedBody = await env.KV.get(cacheKey);
+  if (cachedBody) {
+    return new Response(cachedBody, {
+      headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' },
+    });
+  }
+
   // Accurate summaries from daily total rows
   const summary7d = await env.DB.prepare(`
     SELECT SUM(clicks) as total_clicks, SUM(impressions) as total_impressions,
@@ -523,7 +541,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     };
   }
 
-  return new Response(JSON.stringify({
+  const responseBody = JSON.stringify({
     property: property.site_url,
     last_synced: property.last_synced_at,
     daily_trend: dailyTrend.results || [],
@@ -542,7 +560,18 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     top_queries: topQueries.results,
     top_pages: topPages.results,
     opportunities: opportunities.results,
-  }), { headers: { 'Content-Type': 'application/json' } });
+  });
+
+  // Best-effort cache write: never fail the request if KV is unavailable.
+  try {
+    await env.KV.put(cacheKey, responseBody, { expirationTtl: GSC_DATA_CACHE_TTL });
+  } catch (e) {
+    console.error('gsc_data cache put failed:', e);
+  }
+
+  return new Response(responseBody, {
+    headers: { 'Content-Type': 'application/json', 'X-Cache': 'MISS' },
+  });
 }
 
 // GET /gsc/queries?property_id=xxx&filter=all|top10|page2|opportunities&search=...&sort=clicks&order=desc&limit=100&offset=0
