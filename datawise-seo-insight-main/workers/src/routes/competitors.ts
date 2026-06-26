@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
+import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 
 // Competitor / domain rankings drift slower than search volume — 6h KV cache.
 const COMPETITORS_TTL_SECONDS = 21600;
@@ -157,28 +158,105 @@ export async function handleCompetitorsDomain(request: Request, env: Env): Promi
 }
 
 // POST /api/competitors/gap-analysis-ai
-// Lightweight companion endpoint that returns deterministic priority guidance
-// from the same gap-analysis inputs. It avoids blocking the Worker on an LLM
-// while still supporting the frontend route.
+// Generates a strategic SEO analysis (markdown) from already-computed
+// keyword-gap data. BYOK, same pattern as content-tools. This replaces the
+// legacy Supabase `keyword-analysis-ai` edge function that died in the
+// Cloudflare migration: the frontend kept calling supabase.functions.invoke()
+// against a dead backend, so "Generate AI Analysis" always errored
+// (bug bfe5d249, "error getting ai insights").
 export async function handleGapAnalysisAI(request: Request, env: Env): Promise<Response> {
-  const clone = request.clone();
-  const baseResponse = await handleKeywordGapAnalysis(clone, env);
-  if (!baseResponse.ok) return baseResponse;
+  const body = await request.json().catch(() => ({})) as {
+    my_domain?: string;
+    competitor_domain?: string;
+    both_ranking?: any[];
+    gaps?: any[];
+    advantages?: any[];
+    llm_config?: UserLLMConfig;
+  };
 
-  const data = await baseResponse.json() as any;
-  const topGaps = (data.gaps || []).slice(0, 10);
-  return new Response(JSON.stringify({
-    ...data,
-    ai_summary: {
-      headline: topGaps.length
-        ? `Prioritize ${topGaps.length} competitor keywords with visible demand.`
-        : 'No major missing competitor keyword gaps found.',
-      priorities: topGaps.map((item: any) => ({
-        keyword: item.keyword,
-        search_volume: item.search_volume,
-        competitor_position: item.competitor_position,
-        action: 'Create or improve a page that directly targets this query and covers the matching search intent.',
-      })),
-    },
-  }), { headers: { 'Content-Type': 'application/json' } });
+  if (!body.llm_config?.api_key) {
+    return new Response(
+      JSON.stringify({ error: 'Add your OpenRouter API key in Settings to generate AI insights.' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  const myDomain = body.my_domain || 'your site';
+  const competitorDomain = body.competitor_domain || 'the competitor';
+  const gaps = Array.isArray(body.gaps) ? body.gaps : [];
+  const bothRanking = Array.isArray(body.both_ranking) ? body.both_ranking : [];
+  const advantages = Array.isArray(body.advantages) ? body.advantages : [];
+  const num = (v: any) => (typeof v === 'number' ? v.toLocaleString() : '0');
+
+  const prompt = `You are an expert SEO strategist analyzing keyword gap data for competitive analysis.
+
+**Your Domain:** ${myDomain}
+**Competitor:** ${competitorDomain}
+
+**Data Summary:**
+- Shared Keywords (both ranking): ${bothRanking.length}
+- Keyword Gaps (competitor has, you don't): ${gaps.length}
+- Your Advantages (you have, competitor doesn't): ${advantages.length}
+
+**Top Keyword Gaps (Opportunities):**
+${gaps.slice(0, 10).map((k: any, i: number) =>
+  `${i + 1}. "${k.keyword}" - ${num(k.search_volume)} monthly searches, $${(k.cpc || 0).toFixed(2)} CPC, ${Math.round((k.competition || 0) * 100)}% competition`
+).join('\n') || 'No gaps found'}
+
+**Top Shared Keywords (Competitive Overlap):**
+${bothRanking.slice(0, 5).map((k: any, i: number) =>
+  `${i + 1}. "${k.keyword}" - You: #${k.my_position || '?'}, Competitor: #${k.competitor_position || '?'}, ${num(k.search_volume)} searches`
+).join('\n') || 'No shared keywords'}
+
+**Your Unique Advantages:**
+${advantages.slice(0, 5).map((k: any, i: number) =>
+  `${i + 1}. "${k.keyword}" - Position #${k.my_position || '?'}, ${num(k.search_volume)} searches`
+).join('\n') || 'No unique advantages found'}
+
+Please provide a strategic SEO analysis with these sections:
+
+## 🎯 Key Opportunities
+Identify the top 3-5 most actionable keyword opportunities from the gaps data. Focus on keywords with good search volume, manageable competition, and clear commercial intent.
+
+## 📊 Competitive Analysis
+Compare the competitive landscape. What are the competitor's strengths? Where are your advantages? What does the overlap tell us about market positioning?
+
+## 🚀 Priority Recommendations
+Which keywords should be targeted first and why? Consider search volume, competition level, relevance, and existing rankings.
+
+## 💡 Market Insights
+What do the search volumes, CPC values, and competition levels tell us about this market? Are there trends or patterns worth noting?
+
+## ✅ Action Items
+Provide 3-5 specific, actionable next steps to capitalize on these insights.
+
+Keep the analysis strategic, actionable, and focused on business impact.`;
+
+  const messages: ChatMessage[] = [
+    { role: 'system', content: 'You are an expert SEO strategist providing actionable insights based on keyword gap analysis data.' },
+    { role: 'user', content: prompt },
+  ];
+
+  const provider = getLLMProvider(env, body.llm_config);
+  try {
+    const result = await provider.chatComplete(messages, env, body.llm_config, 2048);
+    const analysis = (result.text || '').trim();
+    if (!analysis) {
+      return new Response(
+        JSON.stringify({ error: 'The AI returned an empty analysis. Try again in a moment.' }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return new Response(JSON.stringify({ analysis }), { headers: { 'Content-Type': 'application/json' } });
+  } catch (err) {
+    // The provider throws a descriptive error (bad key 401, out of credits 402,
+    // bad model 404, rate limit). Surface it verbatim; the frontend toasts it.
+    const message = err instanceof Error
+      ? err.message
+      : 'The AI provider could not generate the analysis. Check your API key and credits in Settings.';
+    console.error('Gap analysis AI failed:', message);
+    return new Response(JSON.stringify({ error: message }), {
+      status: 502, headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }

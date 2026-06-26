@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
+import { getLLMConfig } from "@/lib/chat";
 import { toast } from "sonner";
 import ReactMarkdown from 'react-markdown';
 
@@ -26,27 +27,32 @@ export const AIAnalysisSummary = ({
   const [expanded, setExpanded] = useState(true);
 
   const generateAnalysis = async () => {
+    // BYOK: this routes through the user's OpenRouter key (same as the SEO
+    // Assistant and Content tools). Guard up front so users get a clear nudge
+    // instead of a generic failure. The legacy Supabase edge function this
+    // replaced was server-funded but died in the Cloudflare migration.
+    const llmConfig = getLLMConfig();
+    if (!llmConfig) {
+      toast.error('Add your OpenRouter API key in Settings to generate AI insights.');
+      return;
+    }
+
     setLoading(true);
-    
     try {
-      const { data, error } = await supabase.functions.invoke('keyword-analysis-ai', {
+      const data = await api<{ analysis?: string; error?: string }>('/api/competitors/gap-analysis-ai', {
+        method: 'POST',
         body: {
           my_domain: myDomain,
           competitor_domain: competitorDomain,
           both_ranking: bothRanking,
           gaps,
-          advantages
-        }
+          advantages,
+          llm_config: llmConfig,
+        },
       });
 
-      if (error) {
-        console.error('AI analysis error:', error);
-        throw new Error(error.message || 'Failed to generate analysis');
-      }
-
-      if (data?.error) {
-        throw new Error(data.error);
-      }
+      if (data?.error) throw new Error(data.error);
+      if (!data?.analysis) throw new Error('No analysis was generated. Please try again.');
 
       setAnalysis(data.analysis);
       toast.success('AI analysis generated!');
