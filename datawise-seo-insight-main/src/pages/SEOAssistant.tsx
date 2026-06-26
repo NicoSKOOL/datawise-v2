@@ -2,13 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { MessageSquare, Send, Plus, Link2, HelpCircle, Trash2, Pencil, Check, X } from 'lucide-react';
+import { MessageSquare, Send, Plus, Link2, HelpCircle, Trash2, Pencil, Check, X, AlertTriangle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import SparklesIcon from '@/components/icons/sparkles-icon';
 import type { AnimatedIconHandle } from '@/components/icons/types';
 import { useSearchParams } from 'react-router-dom';
-import { sendMessage, getConversations, getConversation, deleteConversation, renameConversation, type Conversation, type ChatMessageData } from '@/lib/chat';
+import { sendMessage, getConversations, getConversation, deleteConversation, renameConversation, getLLMConfig, LLM_CONFIG_EVENT, type Conversation, type ChatMessageData } from '@/lib/chat';
 import { useProperty } from '@/contexts/PropertyContext';
 import { useToast } from '@/hooks/use-toast';
 import { ExportMenu } from '@/components/export/ExportMenu';
@@ -18,6 +18,16 @@ interface UIMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  // When the LLM call fails, we keep the assistant bubble and attach the
+  // reason here instead of deleting it. Previously the bubble was removed on
+  // any error (slice(0,-1)) and the cause shown only in a transient toast, so
+  // a missing/invalid/credit-less BYOK key looked like the assistant silently
+  // ignored the user: the thread showed only their own messages (bug
+  // b0f06dc3, "All AI replies disappear here?").
+  error?: string;
+  // 'no_key' renders an "Add key in Settings" CTA; 'generic' just shows the
+  // provider's error message (out of credits, rate limit, bad model, etc.).
+  errorKind?: 'no_key' | 'generic';
 }
 
 export default function SEOAssistant() {
@@ -26,6 +36,9 @@ export default function SEOAssistant() {
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  // Whether a usable OpenRouter key is configured (BYOK). Drives the no-key
+  // banner so users learn they must add a key BEFORE sending into the void.
+  const [hasLlmKey, setHasLlmKey] = useState<boolean>(() => !!getLLMConfig());
   // Drive the chat's GSC property from the global PropertyContext so the
   // sidebar property selector and the chat agree on context. Two independent
   // selectors caused user confusion when one was set to domain A and the
@@ -97,6 +110,14 @@ export default function SEOAssistant() {
       .catch(() => {});
   }, []);
 
+  // Keep the no-key banner in sync if the user saves a key in Settings within
+  // the same SPA session. saveLLMConfig dispatches LLM_CONFIG_EVENT.
+  useEffect(() => {
+    const refresh = () => setHasLlmKey(!!getLLMConfig());
+    window.addEventListener(LLM_CONFIG_EVENT, refresh);
+    return () => window.removeEventListener(LLM_CONFIG_EVENT, refresh);
+  }, []);
+
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -149,12 +170,31 @@ export default function SEOAssistant() {
       }
     } catch (error: any) {
       const errMsg = error?.message || '';
-      if (errMsg === 'NO_LLM_KEY') {
-        toast({ variant: 'destructive', title: 'API Key Required', description: 'Add your LLM API key in Settings to use the chat.' });
-      } else {
-        toast({ variant: 'destructive', title: 'Error', description: errMsg || 'Failed to get response.' });
-      }
-      setMessages((prev) => prev.slice(0, -1)); // Remove empty assistant message
+      const isNoKey = errMsg === 'NO_LLM_KEY';
+      const description = isNoKey
+        ? 'No OpenRouter API key found. Add your key in Settings to use the SEO Assistant.'
+        : (errMsg || 'The assistant could not reply. Try again in a moment.');
+      // Keep the assistant bubble and attach the reason so the failure stays
+      // visible in the thread (the toast auto-dismisses; the bubble does not).
+      // Any partial streamed text is preserved alongside the error.
+      setMessages((prev) => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last && last.role === 'assistant') {
+          updated[updated.length - 1] = {
+            ...last,
+            error: description,
+            errorKind: isNoKey ? 'no_key' : 'generic',
+          };
+        }
+        return updated;
+      });
+      if (isNoKey) setHasLlmKey(false);
+      toast({
+        variant: 'destructive',
+        title: isNoKey ? 'API Key Required' : 'Assistant error',
+        description,
+      });
     } finally {
       setLoading(false);
     }
@@ -387,6 +427,23 @@ export default function SEOAssistant() {
             />
           </div>
         )}
+        {/* No-key banner: the assistant is BYOK. Surface this up front so
+            users add a key instead of sending messages that silently fail. */}
+        {!hasLlmKey && (
+          <div className="mx-4 mt-4 flex items-start gap-3 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm dark:border-amber-500/30 dark:bg-amber-950/30">
+            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-amber-900 dark:text-amber-200">Add your OpenRouter API key to use the SEO Assistant</p>
+              <p className="mt-0.5 text-amber-800/80 dark:text-amber-200/70">The assistant is bring-your-own-key. Without a valid OpenRouter inference key with credits, your messages won't get a reply.</p>
+            </div>
+            <Button variant="outline" size="sm" className="h-8 flex-shrink-0 gap-2" asChild>
+              <a href="/settings">
+                <Link2 className="h-3.5 w-3.5" />
+                Add key
+              </a>
+            </Button>
+          </div>
+        )}
         {/* Messages */}
         <ScrollArea className="flex-1 p-4">
           {messages.length === 0 ? (
@@ -415,20 +472,40 @@ export default function SEOAssistant() {
                     className={`max-w-[85%] rounded-2xl px-4 py-3 ${
                       msg.role === 'user'
                         ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
+                        : msg.error
+                          ? 'border border-destructive/40 bg-destructive/10 text-foreground'
+                          : 'bg-muted'
                     }`}
                   >
                     {msg.role === 'assistant' ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none [&_table]:text-xs [&_table]:w-full [&_table]:border-collapse [&_th]:px-2 [&_th]:py-1.5 [&_td]:px-2 [&_td]:py-1.5 [&_th]:border [&_th]:border-gray-300 [&_td]:border [&_td]:border-gray-300 [&_th]:bg-gray-100 [&_th]:font-semibold [&_th]:text-left dark:[&_th]:border-gray-600 dark:[&_td]:border-gray-600 dark:[&_th]:bg-gray-800 [&_table]:rounded-lg [&_table]:overflow-hidden">
-                        {msg.content ? (
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                        ) : (
+                      <>
+                        {msg.content && (
+                          <div className="prose prose-sm dark:prose-invert max-w-none [&_table]:text-xs [&_table]:w-full [&_table]:border-collapse [&_th]:px-2 [&_th]:py-1.5 [&_td]:px-2 [&_td]:py-1.5 [&_th]:border [&_th]:border-gray-300 [&_td]:border [&_td]:border-gray-300 [&_th]:bg-gray-100 [&_th]:font-semibold [&_th]:text-left dark:[&_th]:border-gray-600 dark:[&_td]:border-gray-600 dark:[&_th]:bg-gray-800 [&_table]:rounded-lg [&_table]:overflow-hidden">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                          </div>
+                        )}
+                        {msg.error ? (
+                          <div className={`flex items-start gap-2 ${msg.content ? 'mt-2 pt-2 border-t border-destructive/20' : ''}`}>
+                            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-destructive" />
+                            <div className="space-y-2 min-w-0">
+                              <p className="text-sm text-foreground">{msg.error}</p>
+                              {msg.errorKind === 'no_key' && (
+                                <Button variant="outline" size="sm" className="gap-2 h-7" asChild>
+                                  <a href="/settings">
+                                    <Link2 className="h-3.5 w-3.5" />
+                                    Add key in Settings
+                                  </a>
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        ) : !msg.content ? (
                           <div className="flex items-center gap-2 py-1 text-muted-foreground">
                             <SparklesIcon ref={sparklesRef} size={18} className="text-primary" />
                             <span className="text-sm">Thinking...</span>
                           </div>
-                        )}
-                      </div>
+                        ) : null}
+                      </>
                     ) : (
                       <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                     )}
