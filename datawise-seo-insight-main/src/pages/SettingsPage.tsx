@@ -328,17 +328,36 @@ export default function SettingsPage() {
       const clicks = result.total_clicks ?? 0;
       const impressions = result.total_impressions ?? 0;
       if (clicks === 0 && impressions === 0) {
-        toast({
-          variant: 'destructive',
-          title: 'No data found',
-          description: `Google returned ${result.rows_synced} rows but every day is 0 clicks / 0 impressions. Likely the wrong property variant — try the sc-domain or www variant.`,
-        });
+        // Zero clicks/impressions is not a failure: new or low-traffic sites
+        // simply have nothing in Search Console yet. Show a neutral, accurate
+        // message. Only URL-prefix properties benefit from "try another variant"
+        // advice — a Domain (sc-domain:) property already covers every variant,
+        // so telling those users to switch variants is wrong (bug: Angela's
+        // sc-domain properties showed "try the sc-domain or www variant").
+        const rows = result.rows_synced ?? 0;
+        const siteUrl = result.property || properties.find((p) => p.id === propertyId)?.site_url || 'this property';
+        const isDomainProperty = siteUrl.startsWith('sc-domain:');
+        let description: string;
+        if (rows === 0) {
+          description = `Google Search Console has no data for ${siteUrl} yet. That is normal for a new site — data starts appearing a few days after Google records its first impressions.`;
+        } else if (isDomainProperty) {
+          description = `Google returned data for ${siteUrl}, but every day has 0 clicks and 0 impressions. This is a Domain property, so it already covers every URL variant (www, non-www, http, https, subdomains) — there is no other variant to switch to. The site just has no Search traffic in this period yet.`;
+        } else {
+          description = `Google returned data for ${siteUrl}, but every day has 0 clicks and 0 impressions. If you expect traffic, it may be recorded under a different property variant — try the Domain (sc-domain) property, or the www / non-www version, in Search Console.`;
+        }
+        toast({ title: 'No Search activity yet', description });
       } else {
         toast({ title: 'Sync Complete', description: `${clicks.toLocaleString()} clicks · ${impressions.toLocaleString()} impressions over 90 days from ${result.property}` });
       }
       loadGSCStatus();
     } catch {
-      toast({ variant: 'destructive', title: 'Sync Failed', description: 'Could not sync GSC data. Try reconnecting.' });
+      // A thrown error here is a server/API failure, not an auth problem: an
+      // expired session would have redirected to login before reaching this
+      // catch. So this is almost always a temporary Google API error (often rate
+      // limits when syncing several sites back-to-back), not something a
+      // reconnect fixes. Guide the user to retry first (bug: Angela saw "Try
+      // reconnecting" on a perfectly healthy connection).
+      toast({ variant: 'destructive', title: 'Sync failed', description: "Google's Search Console API returned an error. This is usually temporary (for example, rate limits when syncing several sites at once). Wait a moment and click Sync again. If it keeps failing, reconnect GSC." });
     } finally {
       setSyncing(null);
     }
