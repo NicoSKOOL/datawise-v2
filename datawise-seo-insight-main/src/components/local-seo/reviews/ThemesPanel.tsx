@@ -74,7 +74,11 @@ export default function ThemesPanel({ themes, reviews, loading, error, activeThe
         </div>
       </div>
 
-      {loading && (
+      {/* Trend is derived client-side from review ratings + dates; it must not
+          be gated behind the themes LLM call (which can fail/still be loading). */}
+      {view === 'trend' && <SentimentTrend reviews={reviews} />}
+
+      {view === 'themes' && loading && (
         <div className="space-y-2">
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-5/6" />
@@ -84,16 +88,14 @@ export default function ThemesPanel({ themes, reviews, loading, error, activeThe
         </div>
       )}
 
-      {!loading && error && (
+      {view === 'themes' && !loading && error && (
         <div className="flex items-center gap-2 text-xs text-red-600">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      {!loading && !error && view === 'trend' && <SentimentTrend reviews={reviews} />}
-
-      {!loading && !error && view === 'themes' && themes && (
+      {view === 'themes' && !loading && !error && themes && (
         <>
           <p className="text-sm">{themes.summary}</p>
 

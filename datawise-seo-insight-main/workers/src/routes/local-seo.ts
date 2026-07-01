@@ -10,6 +10,7 @@ import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/pro
 import {
   zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
   ratingDistributionFallback, computeVelocity, computeReviewsHash, validateReviewThemes,
+  extractJsonObject,
   type AggregatedCompetitor,
 } from './local-reviews-analysis';
 
@@ -499,7 +500,7 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
     url: business.url || null,
     category: business.category || null,
     additional_categories: business.additional_categories || [],
-    rating: business.rating?.value ?? business.rating ?? null,
+    rating: typeof business.rating === 'number' ? business.rating : (business.rating?.value ?? null),
     rating_distribution: business.rating_distribution ?? null,
     reviews_count: business.rating?.votes_count ?? business.reviews_count ?? null,
     is_claimed: business.is_claimed ?? null,
@@ -812,13 +813,10 @@ Rules:
   const provider = getLLMProvider(env, llm_config);
 
   try {
-    const result = await provider.chatComplete(messages, env, llm_config, 4096);
-    let raw = result.text.trim();
-    if (raw.startsWith('```')) {
-      raw = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    }
-    let parsed: unknown = null;
-    try { parsed = JSON.parse(raw); } catch { /* validated below */ }
+    // Reasoning models (e.g. DeepSeek V4) can spend a chunk of the budget on
+    // hidden reasoning; give the JSON output room so it is not truncated.
+    const result = await provider.chatComplete(messages, env, llm_config, 8192);
+    const parsed = extractJsonObject(result.text);
     const validated = validateReviewThemes(parsed, reviews.length);
     if (!validated) {
       return json({ error: 'The model returned an unreadable response. Use Refresh themes to retry.' }, 502);
@@ -1611,7 +1609,7 @@ export async function handleGeoGridInsights(request: Request, env: Env, userId: 
     }
 
     if (biz) {
-      const rating = biz.rating?.value ?? biz.rating ?? null;
+      const rating = typeof biz.rating === 'number' ? biz.rating : (biz.rating?.value ?? null);
       const reviewsCount = biz.rating?.votes_count ?? biz.reviews_count ?? null;
       const categories = [biz.category, ...(biz.additional_categories || [])].filter(Boolean);
       const hasDescription = !!(biz.description && biz.description !== biz.address);
