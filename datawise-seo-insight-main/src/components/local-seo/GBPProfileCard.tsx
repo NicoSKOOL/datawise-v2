@@ -177,8 +177,8 @@ export default function GBPProfileCard({ placeId, businessName, locationCode }: 
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Rating */}
-        {profile.rating != null && (
+        {/* Rating (guard against non-number payloads, e.g. a raw DataForSEO rating object) */}
+        {typeof profile.rating === 'number' && (
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1">
               <Star className="h-5 w-5 text-yellow-500 fill-yellow-500" />

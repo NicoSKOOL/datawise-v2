@@ -499,7 +499,7 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
     url: business.url || null,
     category: business.category || null,
     additional_categories: business.additional_categories || [],
-    rating: business.rating?.value ?? business.rating ?? null,
+    rating: typeof business.rating === 'number' ? business.rating : (business.rating?.value ?? null),
     rating_distribution: business.rating_distribution ?? null,
     reviews_count: business.rating?.votes_count ?? business.reviews_count ?? null,
     is_claimed: business.is_claimed ?? null,
@@ -1611,7 +1611,7 @@ export async function handleGeoGridInsights(request: Request, env: Env, userId: 
     }
 
     if (biz) {
-      const rating = biz.rating?.value ?? biz.rating ?? null;
+      const rating = typeof biz.rating === 'number' ? biz.rating : (biz.rating?.value ?? null);
       const reviewsCount = biz.rating?.votes_count ?? biz.reviews_count ?? null;
       const categories = [biz.category, ...(biz.additional_categories || [])].filter(Boolean);
       const hasDescription = !!(biz.description && biz.description !== biz.address);
