@@ -85,7 +85,7 @@ function volumeOf(row: Record<string, unknown>): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function filterKeywordRows<T extends Record<string, unknown>>(
+export function filterKeywordRows<T extends object>(
   rows: T[],
   state: KeywordFilterState,
   opts?: { brandTokens?: string[] },
@@ -101,7 +101,8 @@ export function filterKeywordRows<T extends Record<string, unknown>>(
     (token) => new RegExp(`\\b${escapeRegExp(token)}\\b`, 'i'),
   );
 
-  return rows.filter((row) => {
+  return rows.filter((item) => {
+    const row = item as Record<string, unknown>;
     const keyword = keywordOf(row);
     if (!keyword) return false;
 

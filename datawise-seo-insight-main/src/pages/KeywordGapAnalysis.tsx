@@ -50,24 +50,6 @@ const KeywordGapAnalysis = () => {
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'matrix'>('cards');
   const [filters, setFilters] = useState<KeywordFilterState>(emptyKeywordFilterState);
 
-  const brandTokens = useMemo(
-    () => deriveBrandTokens([results?.my_domain, results?.competitor_domain]),
-    [results?.my_domain, results?.competitor_domain],
-  );
-
-  const filteredGaps = useMemo(
-    () => filterKeywordRows(processedGaps, filters, { brandTokens }),
-    [processedGaps, filters, brandTokens],
-  );
-  const filteredBothRanking = useMemo(
-    () => filterKeywordRows(processedBothRanking, filters, { brandTokens }),
-    [processedBothRanking, filters, brandTokens],
-  );
-  const filteredAdvantages = useMemo(
-    () => filterKeywordRows(processedAdvantages, filters, { brandTokens }),
-    [processedAdvantages, filters, brandTokens],
-  );
-
   // Calculate opportunity score for each keyword
   const calculateOpportunityScore = (keyword: KeywordData): number => {
     const volumeScore = Math.min(keyword.search_volume / 1000, 100);
@@ -123,9 +105,27 @@ const KeywordGapAnalysis = () => {
     [results?.both_ranking]
   );
   
-  const processedAdvantages = useMemo(() => 
-    results?.advantages ? processKeywords(results.advantages) : [], 
+  const processedAdvantages = useMemo(() =>
+    results?.advantages ? processKeywords(results.advantages) : [],
     [results?.advantages]
+  );
+
+  const brandTokens = useMemo(
+    () => deriveBrandTokens([results?.my_domain, results?.competitor_domain]),
+    [results?.my_domain, results?.competitor_domain],
+  );
+
+  const filteredGaps = useMemo(
+    () => filterKeywordRows(processedGaps, filters, { brandTokens }),
+    [processedGaps, filters, brandTokens],
+  );
+  const filteredBothRanking = useMemo(
+    () => filterKeywordRows(processedBothRanking, filters, { brandTokens }),
+    [processedBothRanking, filters, brandTokens],
+  );
+  const filteredAdvantages = useMemo(
+    () => filterKeywordRows(processedAdvantages, filters, { brandTokens }),
+    [processedAdvantages, filters, brandTokens],
   );
 
   const handleAnalyze = async () => {
