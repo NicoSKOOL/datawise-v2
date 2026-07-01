@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, refreshGSCProperties, deleteManualProperty, type GSCProperty } from '@/lib/gsc';
 import { connectBWT, getBWTProperties, disconnectBWT } from '@/lib/bwt';
-import { getStoredLLMConfig, saveLLMConfig, clearLLMConfig, type LLMConfig } from '@/lib/chat';
+import { getStoredLLMConfig, saveLLMConfig, clearLLMConfig, canPersistLLMConfig, type LLMConfig } from '@/lib/chat';
 import { DEFAULT_OPENROUTER_MODEL, OPENROUTER_MODELS, OPENROUTER_PROVIDER_GROUPS, isApprovedOpenRouterModel } from '@/lib/ai-models';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { api } from '@/lib/api';
@@ -95,6 +95,8 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
   const [llmSaved, setLlmSaved] = useState(false);
   const [keyCheck, setKeyCheck] = useState<{ status: 'idle' | 'checking' | 'ok' | 'bad' | 'unknown'; message: string }>({ status: 'idle', message: '' });
+  // False in iOS Private Browsing / in-app browsers where the key won't persist.
+  const [storageBlocked, setStorageBlocked] = useState(false);
 
   // User defaults (location/language)
   const [defaultLocation, setDefaultLocation] = useState(String(user?.default_location_code ?? 2840));
@@ -130,6 +132,7 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
+    setStorageBlocked(!canPersistLLMConfig());
     const config = getStoredLLMConfig();
     if (config?.provider && config.provider !== 'openrouter') {
       setLegacyProvider(config.provider);
@@ -162,7 +165,19 @@ export default function SettingsPage() {
       api_key: key,
       model: isApprovedOpenRouterModel(llmModel) ? llmModel : DEFAULT_OPENROUTER_MODEL,
     };
-    saveLLMConfig(config);
+    const persisted = saveLLMConfig(config);
+    if (!persisted) {
+      // The write threw or was silently dropped: iOS Private Browsing, or the
+      // page is running inside an in-app browser (opened from another app).
+      // Without this branch the key just "disappears" and the user re-enters it
+      // forever (bug 702e4f26).
+      setStorageBlocked(true);
+      setLlmSaved(false);
+      setKeyCheck({ status: 'idle', message: '' });
+      toast({ variant: 'destructive', title: "Couldn't save your key", description: 'This browser is blocking local storage. See the note above the key field.' });
+      return;
+    }
+    setStorageBlocked(false);
     setLegacyProvider(null);
     setLlmSaved(true);
     toast({ title: 'Saved', description: 'OpenRouter configuration saved locally. Verifying key...' });
@@ -869,6 +884,11 @@ export default function SettingsPage() {
         </p>
 
         <div className="space-y-3">
+          {storageBlocked && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+              <span className="font-medium">This browser will not save your key.</span> It is blocking local storage, which happens in Private/Incognito browsing or an in-app browser (when you open DataWise from a link inside another app such as email or a community feed). Open <code className="text-[11px]">datawiseseo.com</code> directly in Safari or Chrome (not Private mode), then enter your key here. Otherwise it will keep disappearing.
+            </div>
+          )}
           {legacyProvider && (
             <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
               Your browser still has an old {legacyProvider} key saved. The app now routes user-facing AI through OpenRouter only, so reconnect with an OpenRouter key.
