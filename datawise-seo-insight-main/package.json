@@ -12,7 +12,7 @@
     "deploy:pages:staging": "VITE_API_URL=https://datawise-api.nico-510.workers.dev node scripts/deploy-pages-staging.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run src"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -113,6 +113,6 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
-    "vitest": "^4.1.9"
+    "vitest": "^3.2.6"
   }
 }
