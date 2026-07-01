@@ -267,6 +267,40 @@ function collectNestedTypes(fields: any[], set: Set<string>): void {
   }
 }
 
+// Detects when the crawler received a bot-protection / anti-bot challenge stub
+// instead of the real homepage. Anti-bot gates (Cloudflare, DDoS-Guard, custom
+// proof-of-work walls) serve a tiny JS interstitial with an empty <head>, so
+// DataForSEO reports no title / description / h1 for content the live page
+// actually has, and the audit fires false "Missing title / meta description"
+// criticals (bug 488cb637: homesellingplus.com returned HTTP 218 "this is fine"
+// + a ~2.8KB PoW stub that a real browser solves but the crawler cannot).
+//
+// Conservative on purpose: only when the homepage has NO title, NO description
+// and NO h1 (a real page virtually always has at least one) AND it looks like a
+// challenge, either by a non-standard 2xx/3xx status (218/202/226…, not a normal
+// 200/redirect) or a content-less stub (no internal links + tiny payload). 4xx/5xx
+// homepages are real errors handled by the route-level crawl diagnostics, not here.
+export function isLikelyBotChallenge(homepage: OnPagePage | null): boolean {
+  if (!homepage) return false;
+  const meta = homepage.meta || {};
+  const hasTitle = !!(meta.title && meta.title.trim());
+  const hasDescription = !!(meta.description && meta.description.trim());
+  const h1Count = meta.htags?.h1?.length ?? 0;
+  if (hasTitle || hasDescription || h1Count > 0) return false;
+
+  const status = typeof homepage.status_code === 'number' ? homepage.status_code : null;
+  const NORMAL_STATUSES = new Set([200, 301, 302, 304, 307, 308]);
+  const weirdSuccessStatus =
+    status != null && status >= 200 && status < 400 && !NORMAL_STATUSES.has(status);
+
+  const internalLinks = meta.internal_links_count ?? 0;
+  const size = homepage.size ?? homepage.encoded_size ?? null;
+  const emptyStub =
+    (status === 200 || status === null) && internalLinks === 0 && size != null && size <= 15000;
+
+  return weirdSuccessStatus || emptyStub;
+}
+
 // ---------- Main entry ----------
 export function analyzeOnPage(
   summary: OnPageSummary,
@@ -283,10 +317,29 @@ export function analyzeOnPage(
   const timing = homepage?.page_timing || {};
   const checks = homepage?.checks || {};
 
+  // When the crawler only reached a bot-protection challenge stub, the empty
+  // <head> would otherwise fire false "missing title / meta / h1 / schema"
+  // findings. Suppress those (they describe the challenge page, not the real
+  // site) and surface one accurate diagnostic instead. See isLikelyBotChallenge.
+  const botChallenge = isLikelyBotChallenge(homepage);
+  if (botChallenge) {
+    push(findings, items, {
+      code: 'bot_protection_partial_crawl',
+      category: 'technical',
+      severity: 'high',
+      title: 'Audit limited: your site is behind a bot-protection challenge',
+      description:
+        'Our crawler received an anti-bot challenge page instead of your real homepage, so it could not read your title, meta description, headings, or content. The results below reflect only what was accessible, not the live page a normal browser sees.',
+      how_to_fix:
+        'Temporarily allowlist the DataForSEO crawler (by user-agent or IP) or exempt it from the bot challenge, then re-run the audit for accurate results. On Cloudflare, add a WAF skip rule for the DataForSEO crawler.',
+      impact: 'high_impact',
+    });
+  }
+
   // --- Title checks ---
   const title = meta.title || '';
   const titleLen = meta.title_length ?? title.length;
-  if (!title) {
+  if (!title && !botChallenge) {
     push(findings, items, {
       code: 'missing_title',
       category: 'meta',
@@ -324,7 +377,7 @@ export function analyzeOnPage(
   // --- Meta description checks ---
   const desc = meta.description || '';
   const descLen = meta.description_length ?? desc.length;
-  if (!desc) {
+  if (!desc && !botChallenge) {
     push(findings, items, {
       code: 'missing_meta_description',
       category: 'meta',
@@ -350,7 +403,7 @@ export function analyzeOnPage(
 
   // --- H1 checks ---
   const h1s = meta.htags?.h1 || [];
-  if (h1s.length === 0) {
+  if (h1s.length === 0 && !botChallenge) {
     push(findings, items, {
       code: 'missing_h1',
       category: 'content',
@@ -527,7 +580,7 @@ export function analyzeOnPage(
 
   // --- Schema / micromarkup ---
   const hasSchema = checks.has_micromarkup === true;
-  if (!hasSchema) {
+  if (!hasSchema && !botChallenge) {
     push(findings, items, {
       code: 'no_schema',
       category: 'seo',
@@ -871,7 +924,7 @@ export function buildStructuredSEO(
       content_parsing_ok: true,
       serp_ok: false,
       lighthouse_ok: (performanceSummary?.successful_sample_count ?? 0) > 0,
-      bot_protection_detected: false,
+      bot_protection_detected: isLikelyBotChallenge(homepage),
     },
   };
 }

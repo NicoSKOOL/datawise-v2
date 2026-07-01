@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { summarizeCrawledPages } from './on-page-analyzer';
+import { summarizeCrawledPages, analyzeOnPage, isLikelyBotChallenge } from './on-page-analyzer';
 import type { OnPagePage } from '../dataforseo/on-page';
 
 // Regression test for the "Site Audit only analyzing the homepage" bug:
@@ -118,5 +118,96 @@ describe('summarizeCrawledPages', () => {
     expect(services.h1_status).toBe('multiple');
     expect(services.description_status).toBe('ok');
     expect(services.issue_count).toBe(2);
+  });
+});
+
+// Regression for bug 488cb637: sites behind an anti-bot challenge (e.g.
+// homesellingplus.com returned HTTP 218 + a proof-of-work stub) serve the
+// crawler an empty <head>, so the audit wrongly reported "Missing page title /
+// meta description" for pages that actually have them.
+describe('isLikelyBotChallenge', () => {
+  it('detects an HTTP 218 proof-of-work challenge stub', () => {
+    const stub: OnPagePage = {
+      url: 'https://homesellingplus.com/',
+      status_code: 218,
+      size: 2791,
+      meta: { htags: { h1: [] }, internal_links_count: 0 },
+    };
+    expect(isLikelyBotChallenge(stub)).toBe(true);
+  });
+
+  it('detects a content-less 200 stub (no links, tiny payload)', () => {
+    const stub: OnPagePage = {
+      url: 'https://x.com/',
+      status_code: 200,
+      size: 1200,
+      meta: { htags: { h1: [] }, internal_links_count: 0 },
+    };
+    expect(isLikelyBotChallenge(stub)).toBe(true);
+  });
+
+  it('does not flag a normal homepage that has a title', () => {
+    const real: OnPagePage = {
+      url: 'https://x.com/',
+      status_code: 200,
+      size: 40000,
+      meta: { title: 'Real Home', description: 'd', htags: { h1: ['Home'] }, internal_links_count: 20 },
+    };
+    expect(isLikelyBotChallenge(real)).toBe(false);
+  });
+
+  it('does not flag a 404 homepage (real error, handled by route diagnostics)', () => {
+    const notFound: OnPagePage = {
+      url: 'https://x.com/',
+      status_code: 404,
+      size: 500,
+      meta: { htags: { h1: [] }, internal_links_count: 0 },
+    };
+    expect(isLikelyBotChallenge(notFound)).toBe(false);
+  });
+
+  it('does not flag a real 200 page with content links even if it has no title', () => {
+    const realNoTitle: OnPagePage = {
+      url: 'https://x.com/',
+      status_code: 200,
+      size: 40000,
+      meta: { htags: { h1: ['Welcome'] }, internal_links_count: 15 },
+    };
+    expect(isLikelyBotChallenge(realNoTitle)).toBe(false);
+  });
+});
+
+describe('analyzeOnPage bot-challenge handling', () => {
+  const emptySummary = { domain_info: { checks: {} }, page_metrics: {} } as any;
+  const codesFor = (pages: OnPagePage[]) =>
+    analyzeOnPage(emptySummary, pages, [], null, pages[0]?.url ?? null).findings.map((f) => f.code);
+
+  it('suppresses false missing-title/meta/h1/schema and emits one diagnostic on a 218 stub', () => {
+    const codes = codesFor([
+      {
+        url: 'https://homesellingplus.com/',
+        status_code: 218,
+        size: 2791,
+        meta: { htags: { h1: [] }, internal_links_count: 0 },
+      },
+    ]);
+    expect(codes).toContain('bot_protection_partial_crawl');
+    expect(codes).not.toContain('missing_title');
+    expect(codes).not.toContain('missing_meta_description');
+    expect(codes).not.toContain('missing_h1');
+    expect(codes).not.toContain('no_schema');
+  });
+
+  it('still flags a real missing title when the page is not a challenge', () => {
+    const codes = codesFor([
+      {
+        url: 'https://real.com/',
+        status_code: 200,
+        size: 50000,
+        meta: { description: 'has a description', htags: { h1: ['Hi'] }, internal_links_count: 12 },
+      },
+    ]);
+    expect(codes).not.toContain('bot_protection_partial_crawl');
+    expect(codes).toContain('missing_title');
   });
 });
