@@ -34,6 +34,45 @@ export const DOC_LABELS: Record<DocType, string> = {
 
 const SHARED_INTERVIEW_PREFIX = `You are running a structured interview inside the DataWise app. You will not produce a downloadable file: the user clicks a "Finalize" button when ready, and at that point a separate finalize call will ask you to emit the final structured document. Until then, run the interview one question at a time, wait for the user's answer, and probe for specifics.`;
 
+// Universal conduct rules appended to EVERY interview system prompt at request
+// time (see handleInterview). Fixes the "won't take no for an answer" loop
+// (bug ae77a909): the model re-asked the same "misconception?" question 20+
+// times while the user answered "no" and even ignored an explicit "output the
+// final document" request. These rules override any conflicting probing
+// instruction in the per-doc prompt above.
+export const INTERVIEW_CONDUCT_RULES = `
+
+INTERVIEW CONDUCT (follow strictly — these override any conflicting instruction above):
+- NEVER re-ask a question the user has already answered or declined. Before asking anything, scan the conversation so far: if you already asked it (even reworded), do not ask it again.
+- Treat "no", "none", "not sure", "I don't know", "nothing", "n/a", or a repeat of a previous answer as a FINAL answer. Record it as "none / not provided" for that field and move on to the NEXT question immediately.
+- Ask at most ONE short follow-up on any single point. After that, move on regardless of how complete the answer is. It is always acceptable to leave a field blank — missing details are fine and are not a reason to keep probing.
+- Keep momentum. When a topic is covered (or the user has nothing to add), transition to the next offer or the next section instead of circling back.
+- If the user asks to finish, finalize, wrap up, move on, skip, stop, or pastes an "output the final document" style instruction: STOP interviewing immediately. Briefly acknowledge, give a one-line recap of what you have, and tell them to click the Finalize button. Do NOT ask another question.
+- Always reply with a short, visible message to the user (your next question, or an acknowledgement). Never send an empty response.`;
+
+// Fallback shown to the user if the model returns an empty reply twice in a row
+// (reasoning models can spend their whole token budget on hidden reasoning).
+export const INTERVIEW_BLANK_FALLBACK = "Sorry, I lost my train of thought there. Could you rephrase your last message, or click Finalize if you're ready to generate the document?";
+
+// Append the universal conduct rules to a resolved interview system prompt.
+export function withInterviewConductRules(systemPrompt: string): string {
+  return `${systemPrompt}${INTERVIEW_CONDUCT_RULES}`;
+}
+
+// Pick the interview reply to persist/return: prefer the first attempt, fall
+// back to a retry, and finally to a friendly fallback so the UI never renders
+// an empty assistant bubble.
+export function resolveInterviewReply(
+  primary: string | null | undefined,
+  retry?: string | null | undefined,
+): string {
+  const p = (primary || '').trim();
+  if (p) return p;
+  const r = (retry || '').trim();
+  if (r) return r;
+  return INTERVIEW_BLANK_FALLBACK;
+}
+
 export const SITEMAP_PROMPT = `${SHARED_INTERVIEW_PREFIX}
 
 You are helping the user extract a structured page list from their website so a downstream blog-writing AI can suggest accurate internal links.

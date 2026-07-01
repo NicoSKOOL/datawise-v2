@@ -16,6 +16,7 @@ import {
   DOC_TYPES, DOC_LABELS, INTERVIEW_PROMPTS, FINALIZE_PROMPTS,
   AUTO_DRAFT_DOC_TYPES, KB_AUTO_DRAFT_PROMPTS, WEBSITE_PAGES_DISCOVERY_PROMPT,
   buildPostStepSystemPrompt, buildPostStepUserMessage, withScrapedPagesContext,
+  withInterviewConductRules, resolveInterviewReply,
   type AutoDraftDocType, type DocType, type PostStep, type KBContext,
 } from '../content-writer/prompts';
 import {
@@ -1314,21 +1315,46 @@ export async function handleInterview(
     systemPrompt = withScrapedPagesContext(systemPrompt, scraped);
   }
 
+  // Load the MOST RECENT 50 messages (not the oldest) in chronological order.
+  // The old `ORDER BY created_at ASC LIMIT 50` returned the OLDEST 50, so once
+  // an interview passed 50 messages the model stopped seeing the user's current
+  // answer and every recent turn — it re-ran from stale early context and
+  // re-asked already-answered questions (bug ae77a909; the reported interview
+  // went pathological at ~message 52, right as it crossed the 50-msg window).
+  // rowid tiebreaks messages that share a same-second created_at.
   const history = await env.DB.prepare(
-    `SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 50`
+    `SELECT role, content FROM (
+       SELECT role, content, created_at, rowid FROM chat_messages
+       WHERE conversation_id = ?
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT 50
+     ) ORDER BY created_at ASC, rowid ASC`
   ).bind(convId).all<{ role: 'user' | 'assistant' | 'system'; content: string }>();
 
   const messages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: withInterviewConductRules(systemPrompt) },
     ...((history.results || []) as ChatMessage[]),
   ];
 
   const llmConfig = resolveContentWriterLLMConfig(body.llm_config);
   const provider = getLLMProvider(env, llmConfig);
+  const INTERVIEW_MAX_TOKENS = 4096;
   let reply: string;
   try {
-    const res = await provider.chatComplete(messages, env, llmConfig, 2048);
-    reply = res.text;
+    const res = await provider.chatComplete(messages, env, llmConfig, INTERVIEW_MAX_TOKENS);
+    let retryText: string | null = null;
+    if (!(res.text || '').trim()) {
+      // Reasoning models can spend the whole token budget on hidden reasoning
+      // and return empty content (the user saw blank bubbles and typed "?").
+      // Retry once with an explicit nudge before falling back.
+      const retryMessages: ChatMessage[] = [
+        ...messages,
+        { role: 'system', content: 'Your previous reply was empty. Respond now with a short, direct message to the user: your next interview question or a brief acknowledgement. Keep it under 3 sentences.' },
+      ];
+      const retryRes = await provider.chatComplete(retryMessages, env, llmConfig, INTERVIEW_MAX_TOKENS);
+      retryText = retryRes.text;
+    }
+    reply = resolveInterviewReply(res.text, retryText);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'LLM provider error';
     return json({ error: msg }, 502);
