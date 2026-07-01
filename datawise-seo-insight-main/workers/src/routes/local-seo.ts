@@ -10,6 +10,7 @@ import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/pro
 import {
   zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
   ratingDistributionFallback, computeVelocity, computeReviewsHash, validateReviewThemes,
+  extractJsonObject,
   type AggregatedCompetitor,
 } from './local-reviews-analysis';
 
@@ -812,13 +813,10 @@ Rules:
   const provider = getLLMProvider(env, llm_config);
 
   try {
-    const result = await provider.chatComplete(messages, env, llm_config, 4096);
-    let raw = result.text.trim();
-    if (raw.startsWith('```')) {
-      raw = raw.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    }
-    let parsed: unknown = null;
-    try { parsed = JSON.parse(raw); } catch { /* validated below */ }
+    // Reasoning models (e.g. DeepSeek V4) can spend a chunk of the budget on
+    // hidden reasoning; give the JSON output room so it is not truncated.
+    const result = await provider.chatComplete(messages, env, llm_config, 8192);
+    const parsed = extractJsonObject(result.text);
     const validated = validateReviewThemes(parsed, reviews.length);
     if (!validated) {
       return json({ error: 'The model returned an unreadable response. Use Refresh themes to retry.' }, 502);

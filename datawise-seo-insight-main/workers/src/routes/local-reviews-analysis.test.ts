@@ -8,6 +8,7 @@ import {
   computeReviewsHash,
   computeVelocity,
   validateReviewThemes,
+  extractJsonObject,
   type GeoGridPointResult,
 } from './local-reviews-analysis';
 
@@ -176,13 +177,64 @@ describe('validateReviewThemes', () => {
     expect(validateReviewThemes({ summary: 'x' }, 5)).toBeNull();
     expect(validateReviewThemes({ summary: 'x', themes: [{ theme: 1, sentiment: 'positive' }] }, 5)).toBeNull();
   });
-  it('rejects invalid sentiments and caps at 8 themes', () => {
-    const bad = { summary: 'x', themes: [{ theme: 'a', sentiment: 'angry', quotes: [], review_indexes: [] }] };
-    expect(validateReviewThemes(bad, 5)).toBeNull();
+  it('normalizes neutral and unknown sentiments to mixed instead of rejecting', () => {
+    const out = validateReviewThemes({
+      summary: 'x',
+      themes: [
+        { theme: 'a', sentiment: 'neutral', mention_count: 1, quotes: [], review_indexes: [0] },
+        { theme: 'b', sentiment: 'ANGRY', mention_count: 1, quotes: [], review_indexes: [0] },
+        { theme: 'c', sentiment: 'Positive', mention_count: 1, quotes: [], review_indexes: [0] },
+      ],
+    }, 5)!;
+    expect(out).not.toBeNull();
+    expect(out.themes.map((t) => t.sentiment)).toEqual(['mixed', 'mixed', 'positive']);
+  });
+  it('keeps valid themes and drops malformed ones instead of failing the whole set', () => {
+    const out = validateReviewThemes({
+      summary: 'x',
+      themes: [
+        { theme: 'good', sentiment: 'positive', mention_count: 2, quotes: [], review_indexes: [0] },
+        { theme: 123, sentiment: 'positive' },
+        'not an object',
+      ],
+    }, 5)!;
+    expect(out.themes.map((t) => t.theme)).toEqual(['good']);
+  });
+  it('tolerates a missing summary', () => {
+    const out = validateReviewThemes({
+      themes: [{ theme: 'a', sentiment: 'positive', mention_count: 1, quotes: [], review_indexes: [0] }],
+    }, 5)!;
+    expect(out.summary).toBe('');
+    expect(out.themes.length).toBe(1);
+  });
+  it('returns null when no usable themes remain', () => {
+    expect(validateReviewThemes({ summary: 'x', themes: [] }, 5)).toBeNull();
+    expect(validateReviewThemes({ summary: 'x', themes: [{ theme: '', sentiment: 'positive' }] }, 5)).toBeNull();
+  });
+  it('caps at 8 themes', () => {
     const many = {
       summary: 'x',
       themes: Array.from({ length: 12 }, (_, i) => ({ theme: `t${i}`, sentiment: 'mixed', mention_count: 1, quotes: [], review_indexes: [0] })),
     };
     expect(validateReviewThemes(many, 5)!.themes.length).toBe(8);
+  });
+});
+
+describe('extractJsonObject', () => {
+  it('parses clean JSON', () => {
+    expect(extractJsonObject('{"a":1}')).toEqual({ a: 1 });
+  });
+  it('strips code fences', () => {
+    expect(extractJsonObject('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+  });
+  it('extracts a JSON object embedded in prose', () => {
+    expect(extractJsonObject('Here is the result:\n{"a":1}\nHope that helps')).toEqual({ a: 1 });
+  });
+  it('tolerates trailing commas', () => {
+    expect(extractJsonObject('{"a":1,"b":[1,2,],}')).toEqual({ a: 1, b: [1, 2] });
+  });
+  it('returns null when there is no JSON', () => {
+    expect(extractJsonObject('no json here')).toBeNull();
+    expect(extractJsonObject('')).toBeNull();
   });
 });

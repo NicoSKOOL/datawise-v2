@@ -176,23 +176,58 @@ export interface ReviewThemeResult {
   review_indexes: number[];
 }
 
-// Strict validation of the LLM JSON. Returns null when the payload is
-// unusable (caller responds 502 with a retry hint). Out-of-range
-// review_indexes are dropped, quotes capped at 2, themes capped at 8.
+// LLM output that may arrive wrapped in code fences, prefaced with prose, or
+// carrying trailing commas. Best-effort extraction of the first JSON object so
+// a minor formatting deviation does not blank the whole panel. Returns the
+// parsed value, or null if nothing parseable is found.
+export function extractJsonObject(raw: string): unknown | null {
+  if (typeof raw !== 'string') return null;
+  let cleaned = raw.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+  }
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  const candidates: string[] = [];
+  if (start >= 0 && end > start) candidates.push(cleaned.slice(start, end + 1));
+  candidates.push(cleaned);
+  const relax = (s: string) => s.replace(/,\s*([}\]])/g, '$1'); // trailing commas
+  for (const c of candidates) {
+    try { return JSON.parse(c); } catch { /* try next */ }
+    try { return JSON.parse(relax(c)); } catch { /* try next */ }
+  }
+  return null;
+}
+
+// Models label sentiment freely ("neutral", "Positive", "mixed/neutral"). Map
+// everything onto the three buckets the UI understands instead of rejecting
+// the whole response over one stray label (the reason themes went blank for
+// DeepSeek/OpenRouter users).
+function normalizeSentiment(s: unknown): 'positive' | 'negative' | 'mixed' {
+  const v = typeof s === 'string' ? s.trim().toLowerCase() : '';
+  if (v === 'positive' || v === 'negative' || v === 'mixed') return v;
+  if (v.startsWith('pos')) return 'positive';
+  if (v.startsWith('neg')) return 'negative';
+  return 'mixed'; // neutral, mixed/neutral, unknown -> mixed
+}
+
+// Tolerant validation of the LLM JSON. Returns null only when nothing usable
+// remains (caller responds 502 with a retry hint). Individual malformed themes
+// are dropped rather than failing the whole set; sentiments are normalized; a
+// missing summary is tolerated. Out-of-range review_indexes are dropped,
+// quotes capped at 2, themes capped at 8.
 export function validateReviewThemes(
   raw: unknown,
   reviewCount: number
 ): { summary: string; themes: ReviewThemeResult[] } | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as { summary?: unknown; themes?: unknown };
-  if (typeof obj.summary !== 'string' || !Array.isArray(obj.themes)) return null;
+  if (!Array.isArray(obj.themes)) return null;
 
   const themes: ReviewThemeResult[] = [];
   for (const t of obj.themes as Array<Record<string, unknown>>) {
-    if (!t || typeof t !== 'object') return null;
-    if (typeof t.theme !== 'string' || !['positive', 'negative', 'mixed'].includes(t.sentiment as string)) {
-      return null;
-    }
+    if (!t || typeof t !== 'object') continue;
+    if (typeof t.theme !== 'string' || !t.theme.trim()) continue;
     const indexes = Array.isArray(t.review_indexes)
       ? (t.review_indexes as unknown[]).filter(
           (i): i is number => typeof i === 'number' && Number.isInteger(i) && i >= 0 && i < reviewCount
@@ -202,13 +237,14 @@ export function validateReviewThemes(
       ? (t.quotes as unknown[]).filter((q): q is string => typeof q === 'string').slice(0, 2)
       : [];
     themes.push({
-      theme: t.theme,
-      sentiment: t.sentiment as 'positive' | 'negative' | 'mixed',
+      theme: t.theme.trim(),
+      sentiment: normalizeSentiment(t.sentiment),
       mention_count: typeof t.mention_count === 'number' ? t.mention_count : indexes.length,
       quotes,
       review_indexes: indexes,
     });
   }
   if (themes.length === 0) return null;
-  return { summary: obj.summary, themes: themes.slice(0, 8) };
+  const summary = typeof obj.summary === 'string' ? obj.summary : '';
+  return { summary, themes: themes.slice(0, 8) };
 }
