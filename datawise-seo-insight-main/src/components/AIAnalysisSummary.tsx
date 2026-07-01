@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import { toast } from "sonner";
 import ReactMarkdown from 'react-markdown';
 
@@ -29,26 +29,22 @@ export const AIAnalysisSummary = ({
     setLoading(true);
     
     try {
-      const { data, error } = await supabase.functions.invoke('keyword-analysis-ai', {
+      const data = await api<{ analysis?: string; error?: string }>('/api/competitors/gap-analysis-ai', {
+        method: 'POST',
         body: {
           my_domain: myDomain,
           competitor_domain: competitorDomain,
           both_ranking: bothRanking,
           gaps,
-          advantages
-        }
+          advantages,
+        },
       });
-
-      if (error) {
-        console.error('AI analysis error:', error);
-        throw new Error(error.message || 'Failed to generate analysis');
-      }
 
       if (data?.error) {
         throw new Error(data.error);
       }
 
-      setAnalysis(data.analysis);
+      setAnalysis(data.analysis || '');
       toast.success('AI analysis generated!');
     } catch (error: any) {
       console.error('Error generating AI analysis:', error);
