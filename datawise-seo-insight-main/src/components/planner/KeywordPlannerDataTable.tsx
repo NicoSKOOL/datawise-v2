@@ -99,8 +99,8 @@ export function KeywordPlannerDataTable({
       {saveMutation.isPending
         ? 'Saving...'
         : selectedItems.length > 0
-        ? `Save selected (${selectedItems.length})`
-        : 'Save selected'}
+        ? `Save to planner (${selectedItems.length})`
+        : 'Save to planner'}
     </Button>
   );
 
