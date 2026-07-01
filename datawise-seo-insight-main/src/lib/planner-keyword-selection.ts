@@ -2,10 +2,25 @@ import type { PlannerIntent, PlannerItemInput } from './planner';
 
 type KeywordRow = Record<string, unknown>;
 
+const PLANNER_INTENTS: PlannerIntent[] = [
+  'transactional',
+  'informational',
+  'commercial',
+  'navigational',
+  'fan_out',
+];
+
+export function toPlannerIntent(value: unknown): PlannerIntent | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase() as PlannerIntent;
+  return PLANNER_INTENTS.includes(normalized) ? normalized : undefined;
+}
+
 interface BuildPlannerItemOptions {
   source: string;
   intent?: PlannerIntent;
   sourceContext?: unknown;
+  getRowIntent?: (row: Record<string, unknown>) => PlannerIntent | undefined;
 }
 
 function nullableNumber(value: unknown): number | null {
@@ -66,7 +81,7 @@ export function buildPlannerItem(
 
   return {
     keyword,
-    intent: options.intent,
+    intent: options.getRowIntent?.(row) ?? options.intent,
     source: options.source,
     search_volume: nullableNumber(row.search_volume),
     keyword_difficulty: nullableNumber(row.keyword_difficulty),
