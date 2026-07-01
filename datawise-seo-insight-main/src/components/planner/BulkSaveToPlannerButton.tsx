@@ -62,8 +62,8 @@ export function BulkSaveToPlannerButton({
       {saveMutation.isPending
         ? 'Saving...'
         : items.length > 0
-        ? `Save selected (${items.length})`
-        : 'Save selected'}
+        ? `Save to planner (${items.length})`
+        : 'Save to planner'}
     </Button>
   );
 }
