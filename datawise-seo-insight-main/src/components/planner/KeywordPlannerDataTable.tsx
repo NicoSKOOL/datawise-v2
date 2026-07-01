@@ -22,6 +22,7 @@ interface KeywordPlannerDataTableProps {
   source: string;
   sourceContext?: unknown;
   defaultIntent?: PlannerIntent;
+  getRowIntent?: (row: Record<string, unknown>) => PlannerIntent | undefined;
 }
 
 export function KeywordPlannerDataTable({
@@ -33,6 +34,7 @@ export function KeywordPlannerDataTable({
   source,
   sourceContext,
   defaultIntent = 'informational',
+  getRowIntent,
 }: KeywordPlannerDataTableProps) {
   const queryClient = useQueryClient();
   const { selectedPropertyId } = useProperty();
@@ -52,8 +54,9 @@ export function KeywordPlannerDataTable({
       source,
       intent: defaultIntent,
       sourceContext,
+      getRowIntent,
     }),
-    [data, defaultIntent, selectedKeywordKeys, source, sourceContext],
+    [data, defaultIntent, getRowIntent, selectedKeywordKeys, source, sourceContext],
   );
 
   const saveMutation = useMutation({
@@ -122,6 +125,7 @@ export function KeywordPlannerDataTable({
           source,
           intent: defaultIntent,
           sourceContext,
+          getRowIntent,
         });
 
         if (!item) return null;
@@ -137,7 +141,7 @@ export function KeywordPlannerDataTable({
               cpc: item.cpc,
               competition: item.competition,
             }}
-            defaultIntent={defaultIntent}
+            defaultIntent={item.intent ?? defaultIntent}
           />
         );
       }}

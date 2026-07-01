@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TrendingUp } from "lucide-react";
 import { fetchRankedKeywords } from "@/lib/dataforseo";
 import { useToast } from "@/components/ui/use-toast";
-import { DataTable } from "@/components/DataTable";
+import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
+import { KeywordFilterBar } from "@/components/KeywordFilterBar";
+import {
+  deriveBrandTokens,
+  emptyKeywordFilterState,
+  filterKeywordRows,
+  type KeywordFilterState,
+} from "@/lib/keyword-filters";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
@@ -23,6 +30,15 @@ export default function RankedKeywords() {
   const [metrics, setMetrics] = usePersistentState<any>("competitor:ranked-keywords:metrics", null);
   const [totalAvailable, setTotalAvailable] = usePersistentState<number>("competitor:ranked-keywords:total", 0);
   const { toast } = useToast();
+
+  const [filters, setFilters] = useState<KeywordFilterState>(emptyKeywordFilterState);
+
+  const brandTokens = useMemo(() => deriveBrandTokens([domain]), [domain]);
+
+  const filteredResults = useMemo(
+    () => filterKeywordRows(results, filters, { brandTokens }),
+    [results, filters, brandTokens],
+  );
 
   const limitOptions = [
     { value: "10", label: "10 keywords" },
@@ -249,6 +265,16 @@ export default function RankedKeywords() {
         </div>
       )}
 
+      {results.length > 0 && (
+        <KeywordFilterBar
+          state={filters}
+          onChange={setFilters}
+          totalCount={results.length}
+          filteredCount={filteredResults.length}
+          brandLabel={domain.trim() || undefined}
+        />
+      )}
+
       <div className="flex justify-end">
         <ExportMenu
           surface="ranked-keywords"
@@ -261,7 +287,7 @@ export default function RankedKeywords() {
               surface: 'Ranked Keywords',
               seed: domain.trim(),
               location: locationLabel,
-              rows: results,
+              rows: filteredResults,
               kpis: metrics
                 ? [
                     { label: 'Keywords Shown', value: Number(metrics.total_keywords || 0).toLocaleString() },
@@ -276,11 +302,18 @@ export default function RankedKeywords() {
         />
       </div>
 
-      <DataTable
-        data={results}
+      <KeywordPlannerDataTable
+        data={filteredResults}
         title="Ranked Keywords"
         description="Keywords this domain ranks for in search results"
         loading={loading}
+        metricMode="keyword-research"
+        source="ranked-keywords"
+        sourceContext={{
+          target_domain: domain.trim(),
+          location_code: parseInt(location),
+          language_code: language,
+        }}
       />
     </div>
   );

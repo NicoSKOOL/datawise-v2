@@ -8,13 +8,21 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fetchKeywordGapAnalysis } from "@/lib/dataforseo";
 import { toast } from "sonner";
 import { Loader2, TrendingDown, Target, Award, LayoutGrid, Table as TableIcon, Grid3x3 } from "lucide-react";
-import { DataTable } from "@/components/DataTable";
 import { KeywordClusteredView } from "@/components/KeywordClusteredView";
 import { OpportunityMatrix } from "@/components/OpportunityMatrix";
 import { AIAnalysisSummary } from "@/components/AIAnalysisSummary";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { buildKeywordGapReport } from "@/lib/export/adapters/keywordGap";
+import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
+import { KeywordFilterBar } from "@/components/KeywordFilterBar";
+import {
+  deriveBrandTokens,
+  emptyKeywordFilterState,
+  filterKeywordRows,
+  type KeywordFilterState,
+} from "@/lib/keyword-filters";
+import { toPlannerIntent } from "@/lib/planner-keyword-selection";
 
 interface KeywordData {
   keyword: string;
@@ -40,6 +48,7 @@ const KeywordGapAnalysis = () => {
   const [results, setResults] = usePersistentState<any>("competitor:gap:results", null);
   const [activeTab, setActiveTab] = useState("gaps");
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'matrix'>('cards');
+  const [filters, setFilters] = useState<KeywordFilterState>(emptyKeywordFilterState);
 
   // Calculate opportunity score for each keyword
   const calculateOpportunityScore = (keyword: KeywordData): number => {
@@ -96,9 +105,27 @@ const KeywordGapAnalysis = () => {
     [results?.both_ranking]
   );
   
-  const processedAdvantages = useMemo(() => 
-    results?.advantages ? processKeywords(results.advantages) : [], 
+  const processedAdvantages = useMemo(() =>
+    results?.advantages ? processKeywords(results.advantages) : [],
     [results?.advantages]
+  );
+
+  const brandTokens = useMemo(
+    () => deriveBrandTokens([results?.my_domain, results?.competitor_domain]),
+    [results?.my_domain, results?.competitor_domain],
+  );
+
+  const filteredGaps = useMemo(
+    () => filterKeywordRows(processedGaps, filters, { brandTokens }),
+    [processedGaps, filters, brandTokens],
+  );
+  const filteredBothRanking = useMemo(
+    () => filterKeywordRows(processedBothRanking, filters, { brandTokens }),
+    [processedBothRanking, filters, brandTokens],
+  );
+  const filteredAdvantages = useMemo(
+    () => filterKeywordRows(processedAdvantages, filters, { brandTokens }),
+    [processedAdvantages, filters, brandTokens],
   );
 
   const handleAnalyze = async () => {
@@ -136,32 +163,23 @@ const KeywordGapAnalysis = () => {
     }
   };
 
-  // Format data for table view
-  const formatTableData = (keywords: ProcessedKeywordData[], type: 'gaps' | 'both' | 'advantages') => {
-    return keywords.map(kw => {
-      const base = {
-        Keyword: kw.keyword,
-        "Search Volume": kw.search_volume.toLocaleString(),
-        "CPC": `$${kw.cpc.toFixed(2)}`,
-        "Competition": `${Math.round(kw.competition * 100)}%`,
-        "Opportunity Score": Math.round(kw.opportunity_score),
-        "Priority": kw.priority_level.replace('-', ' '),
-        "Intent": kw.intent,
-      };
-
-      if (type === 'gaps') {
-        return { ...base, "Competitor Position": kw.competitor_position || 'N/A' };
-      } else if (type === 'both') {
-        return { 
-          ...base, 
-          "Your Position": kw.my_position || 'N/A',
-          "Competitor Position": kw.competitor_position || 'N/A'
-        };
-      } else {
-        return { ...base, "Your Position": kw.my_position || 'N/A' };
-      }
-    });
-  };
+  const toPlannerTableRows = (
+    keywords: ProcessedKeywordData[],
+    type: 'gaps' | 'both' | 'advantages',
+  ) =>
+    keywords.map((kw) => ({
+      keyword: kw.keyword,
+      search_volume: kw.search_volume,
+      cpc: kw.cpc,
+      competition: kw.competition,
+      opportunity_score: Math.round(kw.opportunity_score),
+      priority: kw.priority_level.replace('-', ' '),
+      intent: kw.intent,
+      ...(type !== 'gaps' ? { your_position: kw.my_position ?? 'N/A' } : {}),
+      ...(type !== 'advantages'
+        ? { competitor_position: kw.competitor_position ?? 'N/A' }
+        : {}),
+    }));
 
   return (
     <div className="container mx-auto py-8 space-y-8">
@@ -301,9 +319,9 @@ const KeywordGapAnalysis = () => {
                 buildKeywordGapReport({
                   myDomain: results.my_domain,
                   competitorDomain: results.competitor_domain,
-                  gaps: processedGaps,
-                  bothRanking: processedBothRanking,
-                  advantages: processedAdvantages,
+                  gaps: filteredGaps,
+                  bothRanking: filteredBothRanking,
+                  advantages: filteredAdvantages,
                 })
               }
             />
@@ -349,22 +367,49 @@ const KeywordGapAnalysis = () => {
               </Button>
             </div>
 
+            <div className="mt-4">
+              <KeywordFilterBar
+                state={filters}
+                onChange={setFilters}
+                totalCount={
+                  processedGaps.length +
+                  processedBothRanking.length +
+                  processedAdvantages.length
+                }
+                filteredCount={
+                  filteredGaps.length +
+                  filteredBothRanking.length +
+                  filteredAdvantages.length
+                }
+                intentOptions={['Commercial', 'Informational', 'Navigational']}
+                brandLabel={`${results.my_domain}, ${results.competitor_domain}`}
+              />
+            </div>
+
             <TabsContent value="gaps" className="mt-6">
               <div className="mb-6 p-4 bg-muted/50 rounded-lg border">
                 <p className="text-lg font-medium text-foreground">
                   Keywords <span className="text-primary font-semibold">{results.competitor_domain}</span> ranks for and <span className="text-primary font-semibold">{results.my_domain}</span> does not
                 </p>
               </div>
-              {viewMode === 'cards' && <KeywordClusteredView keywords={processedGaps} />}
+              {viewMode === 'cards' && <KeywordClusteredView keywords={filteredGaps} />}
               {viewMode === 'table' && (
-                <DataTable
-                  data={formatTableData(processedGaps, 'gaps')}
+                <KeywordPlannerDataTable
+                  data={toPlannerTableRows(filteredGaps, 'gaps')}
                   title="Keyword Gap Opportunities"
                   description="Keywords your competitor ranks for, but you don't"
                   loading={false}
+                  metricMode="keyword-research"
+                  source="keyword-gap"
+                  sourceContext={{
+                    my_domain: results.my_domain,
+                    competitor_domain: results.competitor_domain,
+                    tab: 'gaps',
+                  }}
+                  getRowIntent={(row) => toPlannerIntent(row.intent)}
                 />
               )}
-              {viewMode === 'matrix' && <OpportunityMatrix keywords={processedGaps} />}
+              {viewMode === 'matrix' && <OpportunityMatrix keywords={filteredGaps} />}
             </TabsContent>
 
             <TabsContent value="both" className="mt-6">
@@ -373,16 +418,24 @@ const KeywordGapAnalysis = () => {
                   Keywords both <span className="text-primary font-semibold">{results.my_domain}</span> and <span className="text-primary font-semibold">{results.competitor_domain}</span> rank for
                 </p>
               </div>
-              {viewMode === 'cards' && <KeywordClusteredView keywords={processedBothRanking} />}
+              {viewMode === 'cards' && <KeywordClusteredView keywords={filteredBothRanking} />}
               {viewMode === 'table' && (
-                <DataTable
-                  data={formatTableData(processedBothRanking, 'both')}
+                <KeywordPlannerDataTable
+                  data={toPlannerTableRows(filteredBothRanking, 'both')}
                   title="Shared Keywords"
                   description="Keywords where both domains rank"
                   loading={false}
+                  metricMode="keyword-research"
+                  source="keyword-gap"
+                  sourceContext={{
+                    my_domain: results.my_domain,
+                    competitor_domain: results.competitor_domain,
+                    tab: 'both',
+                  }}
+                  getRowIntent={(row) => toPlannerIntent(row.intent)}
                 />
               )}
-              {viewMode === 'matrix' && <OpportunityMatrix keywords={processedBothRanking} />}
+              {viewMode === 'matrix' && <OpportunityMatrix keywords={filteredBothRanking} />}
             </TabsContent>
 
             <TabsContent value="advantages" className="mt-6">
@@ -391,16 +444,24 @@ const KeywordGapAnalysis = () => {
                   Keywords <span className="text-primary font-semibold">{results.my_domain}</span> ranks for and <span className="text-primary font-semibold">{results.competitor_domain}</span> does not
                 </p>
               </div>
-              {viewMode === 'cards' && <KeywordClusteredView keywords={processedAdvantages} />}
+              {viewMode === 'cards' && <KeywordClusteredView keywords={filteredAdvantages} />}
               {viewMode === 'table' && (
-                <DataTable
-                  data={formatTableData(processedAdvantages, 'advantages')}
+                <KeywordPlannerDataTable
+                  data={toPlannerTableRows(filteredAdvantages, 'advantages')}
                   title="Your Unique Advantages"
                   description="Keywords only you rank for"
                   loading={false}
+                  metricMode="keyword-research"
+                  source="keyword-gap"
+                  sourceContext={{
+                    my_domain: results.my_domain,
+                    competitor_domain: results.competitor_domain,
+                    tab: 'advantages',
+                  }}
+                  getRowIntent={(row) => toPlannerIntent(row.intent)}
                 />
               )}
-              {viewMode === 'matrix' && <OpportunityMatrix keywords={processedAdvantages} />}
+              {viewMode === 'matrix' && <OpportunityMatrix keywords={filteredAdvantages} />}
             </TabsContent>
           </Tabs>
         </>
