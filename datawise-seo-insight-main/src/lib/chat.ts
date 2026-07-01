@@ -66,13 +66,44 @@ export function getLLMConfig(): LLMConfig | null {
 // listeners can refresh without a page reload.
 export const LLM_CONFIG_EVENT = 'datawise:llm-config-changed';
 
-export function saveLLMConfig(config: LLMConfig): void {
-  localStorage.setItem(LLM_CONFIG_KEY, JSON.stringify({
+// Returns true only when the config was actually persisted. iOS Safari/Chrome
+// Private Browsing throws on setItem, and in-app browsers (link opened from
+// another app) / ITP can accept the write but silently drop it, so a plain
+// setItem is not enough to know the key will survive the next read. We
+// read-back verify and catch throws so the caller can surface an actionable
+// error instead of the key "disappearing" (bug 702e4f26 — iPad user re-entered
+// the key twice and it never stuck).
+export function saveLLMConfig(config: LLMConfig): boolean {
+  const payload = JSON.stringify({
     provider: 'openrouter',
     api_key: config.api_key,
     model: isApprovedOpenRouterModel(config.model) ? config.model : DEFAULT_OPENROUTER_MODEL,
-  }));
+  });
+  let persisted = false;
+  try {
+    localStorage.setItem(LLM_CONFIG_KEY, payload);
+    persisted = localStorage.getItem(LLM_CONFIG_KEY) === payload;
+  } catch {
+    persisted = false;
+  }
   window.dispatchEvent(new Event(LLM_CONFIG_EVENT));
+  return persisted;
+}
+
+// True when this browser can durably persist the BYOK key. False in iOS
+// Private Browsing / restricted in-app browsers where localStorage writes
+// throw or are dropped. Used to warn the user before they waste time entering
+// a key that won't survive.
+export function canPersistLLMConfig(): boolean {
+  const probe = '__datawise_ls_probe__';
+  try {
+    localStorage.setItem(probe, '1');
+    const ok = localStorage.getItem(probe) === '1';
+    localStorage.removeItem(probe);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 export function clearLLMConfig(): void {
