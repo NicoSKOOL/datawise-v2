@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   AI_OUTCOME_COLORS,
-  type AIEngine, type AIShareOfVoiceRow, type AITrackedQuery, type AITrendPoint,
+  type AIEngine, type AIShareOfVoiceRow, type AITrendPoint,
 } from '@/lib/ai-tracking';
 
 function shortDate(value: string): string {
@@ -153,60 +153,6 @@ export function ShareOfVoiceCard({ share }: { share: AIShareOfVoiceRow[] }) {
             You are not on this leaderboard yet: AI answers for your queries cite these domains instead of you.
           </p>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// --- What to do next ------------------------------------------------------
-
-const ACTION_ACCENT: Record<string, string> = { high: '#C97A1E', medium: '#D9A021', low: '#AAB5B3' };
-const ACTION_PILL: Record<string, { bg: string; fg: string }> = {
-  high: { bg: '#F9EDE0', fg: '#C97A1E' },
-  medium: { bg: '#FAF3DF', fg: '#A67A12' },
-  low: { bg: '#F1F4F2', fg: '#5A6968' },
-};
-const PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
-
-export function ActionsCard({ queries }: { queries: AITrackedQuery[] }) {
-  const actions = useMemo(() =>
-    queries
-      .filter(q => q.recommendation)
-      .map(q => ({ query: q.query_text, ...q.recommendation! }))
-      .sort((a, b) => (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3))
-      .slice(0, 3),
-  [queries]);
-
-  if (!actions.length) return null;
-
-  return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 p-5">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">What to do next</div>
-          <p className="mt-0.5 text-xs text-muted-foreground">Generated from your latest check</p>
-        </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          {actions.map((action, i) => (
-            <div
-              key={`${action.query}-${i}`}
-              className="flex flex-col gap-1.5 rounded-r-lg bg-secondary/40 py-3 pl-3.5 pr-3.5"
-              style={{ borderLeft: `3px solid ${ACTION_ACCENT[action.priority] ?? '#AAB5B3'}` }}
-            >
-              <div className="flex items-start gap-2">
-                <span
-                  className="mt-0.5 rounded-full px-2 py-px text-[9px] font-bold uppercase tracking-wide"
-                  style={{ background: ACTION_PILL[action.priority]?.bg, color: ACTION_PILL[action.priority]?.fg }}
-                >
-                  {action.priority}
-                </span>
-                <span className="text-xs font-bold leading-snug">{action.title}</span>
-              </div>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">{action.body}</p>
-              <div className="mt-auto text-[11px] text-muted-foreground/70">"{action.query}"</div>
-            </div>
-          ))}
-        </div>
       </CardContent>
     </Card>
   );

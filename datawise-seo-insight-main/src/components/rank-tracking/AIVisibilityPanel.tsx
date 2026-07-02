@@ -15,7 +15,7 @@ import {
 import EngineLogo from './ai/EngineLogo';
 import KpiRail from './ai/KpiRail';
 import AnswerStatusMatrix from './ai/AnswerStatusMatrix';
-import { TrendMiniCard, ShareOfVoiceCard, ActionsCard, nextMondayCheck } from './ai/RightRail';
+import { TrendMiniCard, ShareOfVoiceCard, nextMondayCheck } from './ai/RightRail';
 import CitedTermsTab from './ai/CitedTermsTab';
 
 function getErrorMessage(error: unknown) {
@@ -341,8 +341,6 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
               <ShareOfVoiceCard share={report?.share_of_voice || []} />
             </div>
           </div>
-
-          <ActionsCard queries={queries} />
 
           <Card>
             <CardContent className="flex flex-col gap-3 p-5">
