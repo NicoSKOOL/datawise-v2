@@ -1,4 +1,5 @@
 import { useState } from "react";
+import TrackQueryInline from "@/components/ai-visibility/TrackQueryInline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -522,6 +523,8 @@ export default function AIOverview() {
             </Card>
           )}
 
+          {aiModeBrandMetrics && !loading && <TrackQueryInline query={keyword} />}
+
           {aiModeBrandMetrics && !loading && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Card>
@@ -740,6 +743,8 @@ export default function AIOverview() {
               </CardContent>
             </Card>
           )}
+
+          {chatGptMetrics && !loading && <TrackQueryInline query={keyword} />}
 
           {chatGptMetrics && !loading && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -975,6 +980,8 @@ export default function AIOverview() {
               </CardContent>
             </Card>
           )}
+
+          {perplexityMetrics && !loading && <TrackQueryInline query={keyword} />}
 
           {perplexityMetrics && !loading && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

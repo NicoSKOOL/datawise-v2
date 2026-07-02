@@ -107,7 +107,8 @@ const mainNavItems: NavItem[] = [
     url: '/ai-visibility',
     icon: Eye,
     subItems: [
-      { label: 'AI Search Tracker', tab: 'ai-overview' },
+      { label: 'Performance', tab: 'performance' },
+      { label: 'Instant Check', tab: 'ai-overview' },
       { label: 'Brand Tracker', tab: 'brand-tracker' },
     ],
   },
