@@ -55,9 +55,17 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
     'INSERT INTO chat_messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)'
   ).bind(userMsgId, convId, 'user', message).run();
 
-  // Build message history
+  // Build message history: the MOST RECENT 50 messages, in chronological
+  // order. A plain ASC LIMIT keeps the oldest 50 and silently drops the
+  // newest turns once a conversation grows past 50 (same bug as the
+  // Content Writer interview loop, fixed in PR #77).
   const history = await env.DB.prepare(
-    'SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 50'
+    `SELECT role, content FROM (
+       SELECT role, content, created_at, rowid FROM chat_messages
+       WHERE conversation_id = ?
+       ORDER BY created_at DESC, rowid DESC
+       LIMIT 50
+     ) ORDER BY created_at ASC, rowid ASC`
   ).bind(convId).all();
 
   // Build the combined system prompt with GSC data inline

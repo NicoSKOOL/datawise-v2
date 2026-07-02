@@ -1,0 +1,84 @@
+name: PR Checks
+
+# Merge gate for PRs into `production`. Runs everything that can catch a broken
+# change BEFORE it reaches the deploy workflows: typecheck (vite build never
+# runs tsc), unit tests, and the same bundle guard the production deploy uses,
+# in check-only mode (build, guard, no upload).
+#
+# All four legs were verified green against production HEAD before this
+# workflow was added, so a red run always means the PR broke something.
+
+on:
+  pull_request:
+    branches:
+      - production
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App typecheck, tests, and bundle guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VITE_API_URL: https://datawise-api.nico-510.workers.dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: datawise-seo-insight-main/package-lock.json
+
+      - name: Install dependencies
+        working-directory: datawise-seo-insight-main
+        # --legacy-peer-deps: the lockfile was generated this way; an
+        # unresolved peer (@lobehub/icons -> @lobehub/ui) otherwise breaks
+        # `npm ci` on a clean runner. Same as the deploy workflows.
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        working-directory: datawise-seo-insight-main
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        working-directory: datawise-seo-insight-main
+        run: npm test
+
+      - name: Build + bundle guard (check only, no deploy)
+        working-directory: datawise-seo-insight-main
+        run: npm run deploy:pages:check
+
+  worker:
+    name: Worker typecheck and tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: datawise-seo-insight-main/workers/package-lock.json
+
+      - name: Install dependencies
+        working-directory: datawise-seo-insight-main/workers
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: datawise-seo-insight-main/workers
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        working-directory: datawise-seo-insight-main/workers
+        run: npx vitest run
