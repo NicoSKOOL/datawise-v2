@@ -181,27 +181,32 @@ export function ActionsCard({ queries }: { queries: AITrackedQuery[] }) {
 
   return (
     <Card>
-      <CardContent className="flex flex-col gap-2.5 p-5">
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">What to do next</div>
-        {actions.map((action, i) => (
-          <div
-            key={`${action.query}-${i}`}
-            className="flex flex-col gap-1 rounded-r-lg bg-secondary/40 py-2.5 pl-3 pr-3"
-            style={{ borderLeft: `3px solid ${ACTION_ACCENT[action.priority] ?? '#AAB5B3'}` }}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className="rounded-full px-2 py-px text-[9px] font-bold uppercase tracking-wide"
-                style={{ background: ACTION_PILL[action.priority]?.bg, color: ACTION_PILL[action.priority]?.fg }}
-              >
-                {action.priority}
-              </span>
-              <span className="text-xs font-bold">{action.title}</span>
+      <CardContent className="flex flex-col gap-3 p-5">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">What to do next</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">Generated from your latest check</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {actions.map((action, i) => (
+            <div
+              key={`${action.query}-${i}`}
+              className="flex flex-col gap-1.5 rounded-r-lg bg-secondary/40 py-3 pl-3.5 pr-3.5"
+              style={{ borderLeft: `3px solid ${ACTION_ACCENT[action.priority] ?? '#AAB5B3'}` }}
+            >
+              <div className="flex items-start gap-2">
+                <span
+                  className="mt-0.5 rounded-full px-2 py-px text-[9px] font-bold uppercase tracking-wide"
+                  style={{ background: ACTION_PILL[action.priority]?.bg, color: ACTION_PILL[action.priority]?.fg }}
+                >
+                  {action.priority}
+                </span>
+                <span className="text-xs font-bold leading-snug">{action.title}</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-muted-foreground">{action.body}</p>
+              <div className="mt-auto text-[11px] text-muted-foreground/70">"{action.query}"</div>
             </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">{action.body}</p>
-            <div className="text-[11px] text-muted-foreground/70">"{action.query}"</div>
-          </div>
-        ))}
+          ))}
+        </div>
       </CardContent>
     </Card>
   );

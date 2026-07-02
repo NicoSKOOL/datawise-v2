@@ -339,9 +339,10 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
             <div className="flex flex-col gap-3">
               <TrendMiniCard trend={report?.trend || []} engines={enabledEngines} period={period} onPeriodChange={setPeriod} />
               <ShareOfVoiceCard share={report?.share_of_voice || []} />
-              <ActionsCard queries={queries} />
             </div>
           </div>
+
+          <ActionsCard queries={queries} />
 
           <Card>
             <CardContent className="flex flex-col gap-3 p-5">
