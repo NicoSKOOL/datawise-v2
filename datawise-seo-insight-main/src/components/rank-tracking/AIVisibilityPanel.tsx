@@ -37,6 +37,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
   const [newQuery, setNewQuery] = useState('');
   const [brandTermsInput, setBrandTermsInput] = useState('');
   const [activeTab, setActiveTab] = useState<'tracked' | 'cited'>('tracked');
+  const [period, setPeriod] = useState<7 | 30 | 90>(90);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -45,7 +46,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
       setData(tracking);
       setBrandTermsInput(tracking.settings.brand_terms.join(', '));
       if (tracking.settings.enabled) {
-        const r = await fetchAIReport(project.id, 90);
+        const r = await fetchAIReport(project.id, period);
         setReport(r);
       }
     } catch (err: unknown) {
@@ -53,7 +54,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
     } finally {
       setLoading(false);
     }
-  }, [project.id, toast]);
+  }, [project.id, period, toast]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -208,6 +209,21 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
 
       {settings.enabled && (
         <CardContent className="space-y-6">
+          <div className="flex items-center justify-end gap-1">
+            <span className="mr-1 text-xs text-muted-foreground">Trend range</span>
+            {([7, 30, 90] as const).map(days => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setPeriod(days)}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  period === days ? 'bg-[#005232] text-white' : 'bg-secondary text-foreground hover:bg-secondary/70'
+                }`}
+              >
+                {days}d
+              </button>
+            ))}
+          </div>
           <VerdictStrip queries={queries} trend={report?.trend || []} engines={enabledEngines} />
 
           <div className="flex gap-2">

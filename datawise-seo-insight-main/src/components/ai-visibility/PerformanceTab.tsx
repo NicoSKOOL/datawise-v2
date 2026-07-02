@@ -1,35 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
-import { RefreshCw, TrendingUp } from 'lucide-react';
-import { fetchRankProjects, fetchProjectKeywords } from '@/lib/dataforseo';
+import { RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
+import { useProperty } from '@/contexts/PropertyContext';
+import { fetchRankProjects, createRankProject, fetchProjectKeywords } from '@/lib/dataforseo';
 import type { Project, TrackedKeyword } from '@/types/rank-tracking';
 import AIVisibilityPanel from '@/components/rank-tracking/AIVisibilityPanel';
 
-const LAST_PROJECT_KEY = 'datawise:ai-visibility:last-project';
+function cleanDomain(value: string): string {
+  return value.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/^www\./, '').replace(/\/+$/, '').toLowerCase();
+}
 
-// The Performance tab is the persistent AI-search report: pick a project,
-// see the tracked score/trends/share-of-voice, manage tracked queries. It
-// reuses the same panel as Rank Tracking so the two surfaces never drift.
+// The Performance tab is the persistent AI-search report for the site picked
+// in the top site selector: same site everywhere in the app. Tracking data
+// lives on the rank-tracking project whose domain matches that site; if none
+// exists yet, one click creates it.
 export default function PerformanceTab() {
+  const { selectedProperty, primaryDomain } = useProperty();
   const [projects, setProjects] = useState<Project[] | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
     try {
-      const list = await fetchRankProjects() as Project[];
-      setProjects(list);
-      if (list.length > 0) {
-        const remembered = localStorage.getItem(LAST_PROJECT_KEY);
-        const initial = list.find(p => p.id === remembered) ?? list[0];
-        setSelectedId(initial.id);
-      }
+      setProjects(await fetchRankProjects() as Project[]);
     } catch (err) {
       setProjects([]);
       toast({
@@ -42,27 +38,57 @@ export default function PerformanceTab() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const selected = useMemo(
-    () => projects?.find(p => p.id === selectedId) ?? null,
-    [projects, selectedId],
-  );
+  const project = useMemo(() => {
+    if (!projects || !primaryDomain) return null;
+    const wanted = cleanDomain(primaryDomain);
+    return projects.find(p => cleanDomain(p.domain) === wanted) ?? null;
+  }, [projects, primaryDomain]);
 
   // Tracked keywords feed the panel's "quick add from tracked keywords" chips.
   useEffect(() => {
-    if (!selected) { setKeywords([]); return; }
+    if (!project) { setKeywords([]); return; }
     let cancelled = false;
-    fetchProjectKeywords(selected.id)
+    fetchProjectKeywords(project.id)
       .then((rows) => {
         if (!cancelled) setKeywords(((rows as TrackedKeyword[]) || []).map(k => k.keyword));
       })
       .catch(() => { if (!cancelled) setKeywords([]); });
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [project]);
 
-  const selectProject = (id: string) => {
-    setSelectedId(id);
-    try { localStorage.setItem(LAST_PROJECT_KEY, id); } catch { /* private mode */ }
+  const setUpTracking = async () => {
+    if (!primaryDomain) return;
+    setCreating(true);
+    try {
+      await createRankProject({ name: primaryDomain, domain: primaryDomain });
+      await load();
+      toast({ title: 'Tracking project created', description: `AI visibility tracking is ready for ${primaryDomain}. Add the queries you want checked weekly.` });
+    } catch (err) {
+      toast({
+        title: 'Could not create the project',
+        description: err instanceof Error ? err.message : 'Try again in a moment.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCreating(false);
+    }
   };
+
+  if (!selectedProperty) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+          <TrendingUp className="h-8 w-8 text-muted-foreground" />
+          <div>
+            <p className="font-semibold">Pick a website to see its AI search performance</p>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              Use the site selector at the top of the sidebar. This report follows whichever website is selected there.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (projects === null) {
     return (
@@ -74,19 +100,19 @@ export default function PerformanceTab() {
     );
   }
 
-  if (projects.length === 0) {
+  if (!project) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-          <TrendingUp className="h-8 w-8 text-muted-foreground" />
+          <Sparkles className="h-8 w-8 text-muted-foreground" />
           <div>
-            <p className="font-semibold">Track how AI search answers cite your site</p>
+            <p className="font-semibold">Start tracking AI search visibility for {primaryDomain}</p>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              AI visibility tracking runs on a rank-tracking project. Create one with your domain, then come back here to add the queries you want checked every week.
+              One click sets up the tracking project. Then add the queries you care about, and they are checked every Monday across Google AI Mode, ChatGPT, and Perplexity.
             </p>
           </div>
-          <Button asChild>
-            <Link to="/rank-tracking?tab=tracked">Create a project in Rank Tracking</Link>
+          <Button onClick={setUpTracking} disabled={creating}>
+            {creating ? 'Setting up…' : `Set up AI tracking for ${primaryDomain}`}
           </Button>
         </CardContent>
       </Card>
@@ -94,32 +120,10 @@ export default function PerformanceTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-end gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Project</Label>
-          <Select value={selectedId ?? undefined} onValueChange={selectProject}>
-            <SelectTrigger className="w-72">
-              <SelectValue placeholder="Choose a project" />
-            </SelectTrigger>
-            <SelectContent>
-              {projects.map(project => (
-                <SelectItem key={project.id} value={project.id}>
-                  {project.name} · {project.domain}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-
-      {selected && (
-        <AIVisibilityPanel
-          key={selected.id}
-          project={{ id: selected.id, domain: selected.domain }}
-          trackedKeywords={keywords}
-        />
-      )}
-    </div>
+    <AIVisibilityPanel
+      key={project.id}
+      project={{ id: project.id, domain: project.domain }}
+      trackedKeywords={keywords}
+    />
   );
 }
