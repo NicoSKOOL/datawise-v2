@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,7 +6,7 @@ import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
-import { RefreshCw, Plus, Sparkles } from 'lucide-react';
+import { RefreshCw, Plus, Sparkles, Settings2 } from 'lucide-react';
 import {
   fetchAITracking, updateAISettings, addAIQueries, deleteAIQuery, runAICheck, fetchAIReport,
   AI_ENGINE_LABELS,
@@ -21,6 +21,19 @@ const ENGINE_ORDER: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong.';
+}
+
+// checked_at is a UTC "YYYY-MM-DD HH:MM:SS" string from D1.
+function timeAgo(sqlUtc: string): string {
+  const ts = new Date(sqlUtc.replace(' ', 'T') + (sqlUtc.endsWith('Z') ? '' : 'Z')).getTime();
+  if (Number.isNaN(ts)) return sqlUtc;
+  const mins = Math.max(0, Math.round((Date.now() - ts) / 60_000));
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins} minutes ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
 interface AIVisibilityPanelProps {
@@ -38,6 +51,8 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
   const [brandTermsInput, setBrandTermsInput] = useState('');
   const [activeTab, setActiveTab] = useState<'tracked' | 'cited'>('tracked');
   const [period, setPeriod] = useState<7 | 30 | 90>(90);
+  const [showSettings, setShowSettings] = useState(false);
+  const autoCheckRan = useRef(false);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -76,12 +91,25 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
     [queries],
   );
 
+  // Latest check timestamp across every query and engine. Null means this
+  // project has never been checked (fresh setup waiting for its first data).
+  const lastCheckedAt = useMemo(() => {
+    let latest: string | null = null;
+    for (const q of queries) {
+      for (const result of Object.values(q.engines)) {
+        if (result?.checked_at && (!latest || result.checked_at > latest)) latest = result.checked_at;
+      }
+    }
+    return latest;
+  }, [queries]);
+  const hasAnyChecks = lastCheckedAt !== null;
+
   const setEnabled = async (enabled: boolean) => {
     setSaving(true);
     try {
       setData(await updateAISettings(project.id, { enabled }));
       if (enabled) {
-        toast({ title: 'AI tracking enabled', description: 'Queries are checked automatically every Monday. Run a manual check to get your first data now.' });
+        toast({ title: 'AI tracking enabled', description: 'Queries are checked automatically every Monday. Your first check runs as soon as you have queries tracked.' });
       }
     } catch (err: unknown) {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
@@ -156,12 +184,12 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
     }
   };
 
-  const checkNow = async () => {
+  const checkNow = useCallback(async (firstRun = false) => {
     setChecking(true);
     try {
       const summary = await runAICheck(project.id);
       toast({
-        title: 'AI check complete',
+        title: firstRun ? 'First AI check complete' : 'AI check complete',
         description: `${summary.checks} checks: ${summary.cited} cited, ${summary.mentioned} mentioned${summary.skipped_fresh ? ` (${summary.skipped_fresh} skipped, checked within 24h)` : ''}.`,
       });
       await load();
@@ -170,7 +198,18 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
     } finally {
       setChecking(false);
     }
-  };
+  }, [project.id, load, toast]);
+
+  // First-visit data push: a project with tracked queries but no checks yet
+  // would otherwise show an empty report until the Monday cron. Run the first
+  // check automatically, once per mount; the server skips anything checked in
+  // the last 24h, so this never double-spends.
+  useEffect(() => {
+    if (loading || checking || autoCheckRan.current) return;
+    if (!settings?.enabled || queries.length === 0 || hasAnyChecks) return;
+    autoCheckRan.current = true;
+    void checkNow(true);
+  }, [loading, checking, settings?.enabled, queries.length, hasAnyChecks, checkNow]);
 
   if (loading) {
     return (
@@ -186,29 +225,59 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-start justify-between space-y-0">
-        <div>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Sparkles className="h-4 w-4 text-primary" />
-            AI Search Visibility
-          </CardTitle>
-          <CardDescription className="mt-1">
-            Track whether AI answers cite {project.domain} for your key queries. Checked automatically every Monday across {settings.engines.map(e => AI_ENGINE_LABELS[e]).join(', ')}.
-          </CardDescription>
-        </div>
-        <div className="flex items-center gap-3">
-          {settings.enabled && (
-            <Button size="sm" onClick={checkNow} disabled={checking || queries.length === 0}>
-              <RefreshCw className={`h-4 w-4 mr-2 ${checking ? 'animate-spin' : ''}`} />
-              {checking ? 'Checking…' : 'Check now'}
-            </Button>
-          )}
-          <Switch checked={settings.enabled} onCheckedChange={setEnabled} disabled={saving} />
+      <CardHeader className="space-y-0">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Sparkles className="h-4 w-4 text-primary" />
+              AI Search Visibility
+            </CardTitle>
+            <CardDescription className="mt-1">
+              Track whether AI answers cite {project.domain} for your key queries across {settings.engines.map(e => AI_ENGINE_LABELS[e]).join(', ')}.
+            </CardDescription>
+            {settings.enabled && (
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {lastCheckedAt ? `Last checked ${timeAgo(lastCheckedAt)}` : 'Never checked yet'} · runs automatically every Monday, or check manually anytime (results under 24h old are not re-checked).
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {settings.enabled && (
+              <>
+                <Button size="sm" onClick={() => checkNow()} disabled={checking || queries.length === 0}>
+                  <RefreshCw className={`h-4 w-4 mr-2 ${checking ? 'animate-spin' : ''}`} />
+                  {checking ? 'Checking…' : 'Check now'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowSettings(s => !s)}
+                  aria-label="Tracking settings"
+                  className={showSettings ? 'bg-secondary' : ''}
+                >
+                  <Settings2 className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+            <Switch checked={settings.enabled} onCheckedChange={setEnabled} disabled={saving} />
+          </div>
         </div>
       </CardHeader>
 
       {settings.enabled && (
         <CardContent className="space-y-6">
+          {checking && !hasAnyChecks && (
+            <div className="flex items-start gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
+              <RefreshCw className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin text-primary" />
+              <div className="text-sm">
+                <p className="font-medium">Running your first AI check…</p>
+                <p className="text-muted-foreground">
+                  Asking {enabledEngines.map(e => AI_ENGINE_LABELS[e]).join(', ')} your {queries.length} tracked {queries.length === 1 ? 'query' : 'queries'} and recording who gets cited. This can take a minute or two; the report fills in when it finishes.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-1">
             <span className="mr-1 text-xs text-muted-foreground">Trend range</span>
             {([7, 30, 90] as const).map(days => (
@@ -257,7 +326,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
 
               {queries.length === 0 && (
                 <p className="text-sm text-muted-foreground">
-                  Add up to {settings.max_queries} queries to start tracking. Use your tracked keywords or phrase questions the way customers ask AI assistants.
+                  Add up to {settings.max_queries} queries to start tracking, phrased the way customers ask AI assistants. Your first check runs automatically as soon as you add them.
                 </p>
               )}
 
@@ -304,6 +373,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
 
           <ShareOfVoiceFooter share={report?.share_of_voice || []} domain={project.domain} />
 
+          {showSettings && (
           <div className="grid gap-4 md:grid-cols-2 border-t pt-4">
             <div className="space-y-2">
               <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Brand terms (for mention detection)</Label>
@@ -332,6 +402,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
               </div>
             </div>
           </div>
+          )}
         </CardContent>
       )}
     </Card>
