@@ -803,7 +803,20 @@ export async function resyncPurgedProperties(env: Env, userId: string): Promise<
         LIMIT 3`
     ).bind(userId).all<{ id: string }>();
     for (const p of props.results || []) {
-      await syncProperty(env, userId, p.id);
+      const res = await syncProperty(env, userId, p.id);
+      if (res.ok) {
+        const body = await res.json().catch(() => null) as { mode?: string } | null;
+        if (body?.mode === 'skipped') {
+          // Google returned no Search Analytics data, so there is nothing to
+          // restore. handleGSCSync bails before its success UPDATE in that
+          // case, which would leave purged_at set and re-fire this futile
+          // full sync on every dashboard load. Clear the marker; the nightly
+          // cron still retries the property normally.
+          await env.DB.prepare(
+            'UPDATE gsc_properties SET purged_at = NULL WHERE id = ?'
+          ).bind(p.id).run();
+        }
+      }
     }
   } catch (err) {
     console.error('resyncPurgedProperties failed:', err);
