@@ -302,9 +302,11 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
     await env.DB.batch(stmts);
   }
 
-  // Update last_synced_at
+  // Update last_synced_at. A successful sync also clears purged_at: the
+  // property has live data again, so it re-enters the normal lifecycle
+  // (and becomes purge-eligible again only after another 60 days dormant).
   await env.DB.prepare(
-    'UPDATE gsc_properties SET last_synced_at = datetime("now") WHERE id = ?'
+    'UPDATE gsc_properties SET last_synced_at = datetime("now"), purged_at = NULL WHERE id = ?'
   ).bind(property_id).run();
 
   const totalRows = dailyRows.length + query7dRows.length + aggRows.length + perDayRows.length;
@@ -709,6 +711,116 @@ export async function syncProperty(env: Env, userId: string, propertyId: string)
     console.error(`GSC sync failed for property ${propertyId}: ${response.status}`);
   }
   return response;
+}
+
+// ---------------------------------------------------------------------------
+// Dormant-account storage purge
+// ---------------------------------------------------------------------------
+// gsc_search_data is a CACHE of Google Search Analytics (Google retains ~16
+// months upstream), so rows for accounts that stopped logging in are pure
+// dead weight: nothing reads them (the daily cron already skips owners with
+// no live session), but they hold gigabytes toward D1's 10 GB hard cap,
+// which took the whole app down on 2026-06-25 when it was hit.
+//
+// Purge lifecycle:
+// - A property is purge-eligible when its owner has created no session in
+//   60 days (double the 30-day session lifetime), it has data
+//   (last_synced_at set), and it was not already purged (purged_at NULL).
+// - Purge chunk-deletes its gsc_search_data rows (one-shot DELETEs of large
+//   properties blow D1's 30s statement cap, see handleGSCDisconnect), then
+//   stamps purged_at and clears last_synced_at.
+// - When the user returns: resyncPurgedProperties (fired from the
+//   /gsc/properties dashboard load) re-syncs up to 3 purged properties in
+//   the background, and the nightly cron picks up the rest (their new
+//   session makes them eligible again). A successful sync clears purged_at.
+// Interrupting mid-property is safe: rows only shrink, purged_at stays NULL,
+// and the next run finishes the job.
+
+const GSC_PURGE_DORMANT_AFTER = '-60 days';
+export const GSC_PURGE_CHUNK = 10000;
+const GSC_PURGE_MAX_PROPS_PER_RUN = 40;
+// Bounds rows written per run (chunks * chunk size); the purge self-drains
+// across runs of the 6h cron rather than spiking one invocation.
+const GSC_PURGE_MAX_CHUNKS_PER_RUN = 150;
+const GSC_PURGE_TIME_BUDGET_MS = 3 * 60 * 1000;
+
+export async function purgeDormantGSCData(env: Env): Promise<{ properties: number; rows: number }> {
+  const startedAt = Date.now();
+  const candidates = await env.DB.prepare(
+    `SELECT p.id FROM gsc_properties p
+      WHERE p.kind = 'gsc'
+        AND p.purged_at IS NULL
+        AND p.last_synced_at IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM sessions s
+           WHERE s.user_id = p.user_id
+             AND s.created_at > datetime('now', ?)
+        )
+      LIMIT ?`
+  ).bind(GSC_PURGE_DORMANT_AFTER, GSC_PURGE_MAX_PROPS_PER_RUN).all<{ id: string }>();
+
+  let properties = 0;
+  let rows = 0;
+  let chunks = 0;
+  for (const prop of candidates.results || []) {
+    let complete = true;
+    for (;;) {
+      if (chunks >= GSC_PURGE_MAX_CHUNKS_PER_RUN || Date.now() - startedAt > GSC_PURGE_TIME_BUDGET_MS) {
+        complete = false;
+        break;
+      }
+      const res = await env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE id IN (
+           SELECT id FROM gsc_search_data WHERE property_id = ? LIMIT ?
+         )`
+      ).bind(prop.id, GSC_PURGE_CHUNK).run();
+      chunks++;
+      const changed = res.meta?.changes ?? 0;
+      rows += changed;
+      if (changed < GSC_PURGE_CHUNK) break;
+    }
+    if (!complete) break;
+    await env.DB.prepare(
+      `UPDATE gsc_properties SET purged_at = datetime('now'), last_synced_at = NULL WHERE id = ?`
+    ).bind(prop.id).run();
+    properties++;
+  }
+  return { properties, rows };
+}
+
+// Background repopulation for a returning user, fired (fire-and-forget) from
+// the GET /gsc/properties dashboard load. Syncs up to 3 purged properties;
+// the nightly cron covers any remainder now that the user has a live session.
+// KV lock stops parallel page loads from stampeding duplicate syncs.
+export async function resyncPurgedProperties(env: Env, userId: string): Promise<void> {
+  try {
+    const lockKey = `gsc_resync_purged:${userId}`;
+    if (await env.KV.get(lockKey)) return;
+    await env.KV.put(lockKey, '1', { expirationTtl: 300 });
+    const props = await env.DB.prepare(
+      `SELECT id FROM gsc_properties
+        WHERE user_id = ? AND kind = 'gsc' AND is_enabled = 1 AND purged_at IS NOT NULL
+        LIMIT 3`
+    ).bind(userId).all<{ id: string }>();
+    for (const p of props.results || []) {
+      const res = await syncProperty(env, userId, p.id);
+      if (res.ok) {
+        const body = await res.json().catch(() => null) as { mode?: string } | null;
+        if (body?.mode === 'skipped') {
+          // Google returned no Search Analytics data, so there is nothing to
+          // restore. handleGSCSync bails before its success UPDATE in that
+          // case, which would leave purged_at set and re-fire this futile
+          // full sync on every dashboard load. Clear the marker; the nightly
+          // cron still retries the property normally.
+          await env.DB.prepare(
+            'UPDATE gsc_properties SET purged_at = NULL WHERE id = ?'
+          ).bind(p.id).run();
+        }
+      }
+    }
+  } catch (err) {
+    console.error('resyncPurgedProperties failed:', err);
+  }
 }
 
 // GET /gsc/sitemaps?property_id=xxx

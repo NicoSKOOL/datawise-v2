@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS gsc_properties (
   is_enabled INTEGER DEFAULT 1,
   kind TEXT NOT NULL DEFAULT 'gsc',
   site_group_id TEXT,
+  purged_at TEXT,
   UNIQUE(user_id, site_url)
 );
 
@@ -638,3 +639,36 @@ CREATE TABLE IF NOT EXISTS content_writer_prompt_versions (
 
 CREATE INDEX IF NOT EXISTS idx_cwpv_prompt_version
   ON content_writer_prompt_versions(prompt_key, version DESC);
+
+-- Request-level usage telemetry, written by src/activity.ts for every
+-- classified authenticated request. Pruned on the 6h cron (90d product,
+-- 365d admin/security/auth).
+CREATE TABLE IF NOT EXISTS app_events (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  event_name TEXT NOT NULL,
+  event_category TEXT NOT NULL CHECK (event_category IN ('product','admin','security','auth')),
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  session_id TEXT,
+  request_id TEXT,
+  feature TEXT NOT NULL,
+  action TEXT NOT NULL,
+  route TEXT,
+  method TEXT,
+  status_code INTEGER,
+  outcome TEXT CHECK (outcome IN ('success','blocked','error')),
+  resource_type TEXT,
+  resource_id TEXT,
+  property_id TEXT,
+  credit_cost INTEGER DEFAULT 0,
+  duration_ms INTEGER,
+  error_code TEXT,
+  metadata_json TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_events_created_at ON app_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_app_events_user_created ON app_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_events_feature_created ON app_events(feature, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_events_name_created ON app_events(event_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_events_category_created ON app_events(event_category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_events_outcome_created ON app_events(outcome, created_at DESC);
