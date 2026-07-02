@@ -1,39 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
-import { RefreshCw, Plus, Sparkles, Settings2 } from 'lucide-react';
+import { RefreshCw, Sparkles, Settings2 } from 'lucide-react';
 import {
   fetchAITracking, updateAISettings, addAIQueries, deleteAIQuery, runAICheck, fetchAIReport,
-  AI_ENGINE_LABELS,
+  AI_ENGINE_LABELS, AI_ENGINE_COLORS, AI_ENGINE_ORDER,
   type AIEngine, type AITrackingData, type AIReport,
 } from '@/lib/ai-tracking';
-import VerdictStrip from './ai/VerdictStrip';
-import QueryCard from './ai/QueryCard';
+import KpiRail from './ai/KpiRail';
+import AnswerStatusMatrix from './ai/AnswerStatusMatrix';
+import { TrendMiniCard, ShareOfVoiceCard, ActionsCard, nextMondayCheck } from './ai/RightRail';
 import CitedTermsTab from './ai/CitedTermsTab';
-import ShareOfVoiceFooter from './ai/ShareOfVoiceFooter';
-
-const ENGINE_ORDER: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
-// checked_at is a UTC "YYYY-MM-DD HH:MM:SS" string from D1.
-function timeAgo(sqlUtc: string): string {
-  const ts = new Date(sqlUtc.replace(' ', 'T') + (sqlUtc.endsWith('Z') ? '' : 'Z')).getTime();
-  if (Number.isNaN(ts)) return sqlUtc;
-  const mins = Math.max(0, Math.round((Date.now() - ts) / 60_000));
-  if (mins < 2) return 'just now';
-  if (mins < 60) return `${mins} minutes ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
-  const days = Math.round(hours / 24);
-  return days === 1 ? 'yesterday' : `${days} days ago`;
+// D1 UTC "YYYY-MM-DD HH:MM:SS" -> "Mon, Jun 29 · 06:04 UTC"
+function formatCheckStamp(sqlUtc: string): string {
+  const d = new Date(sqlUtc.replace(' ', 'T') + (sqlUtc.endsWith('Z') ? '' : 'Z'));
+  if (Number.isNaN(d.getTime())) return sqlUtc;
+  const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+  return `${date} · ${time} UTC`;
 }
 
 interface AIVisibilityPanelProps {
@@ -47,9 +41,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [newQuery, setNewQuery] = useState('');
   const [brandTermsInput, setBrandTermsInput] = useState('');
-  const [activeTab, setActiveTab] = useState<'tracked' | 'cited'>('tracked');
   const [period, setPeriod] = useState<7 | 30 | 90>(90);
   const [showSettings, setShowSettings] = useState(false);
   const autoCheckRan = useRef(false);
@@ -75,9 +67,8 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
 
   const settings = data?.settings;
   const queries = useMemo(() => data?.queries || [], [data]);
-  const atCap = settings ? queries.length >= settings.max_queries : false;
   const enabledEngines = useMemo(
-    () => ENGINE_ORDER.filter(e => settings?.engines.includes(e)),
+    () => AI_ENGINE_ORDER.filter(e => settings?.engines.includes(e)),
     [settings],
   );
 
@@ -156,7 +147,6 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
       if (result.added === 0 && result.remaining === 0) {
         toast({ title: 'Query limit reached', description: `Max ${settings?.max_queries} tracked AI queries per project.`, variant: 'destructive' });
       }
-      setNewQuery('');
       await load();
     } catch (err: unknown) {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
@@ -224,48 +214,51 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
   if (!settings) return null;
 
   return (
-    <Card>
-      <CardHeader className="space-y-0">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Sparkles className="h-4 w-4 text-primary" />
-              AI Search Visibility
-            </CardTitle>
-            <CardDescription className="mt-1">
-              Track whether AI answers cite {project.domain} for your key queries across {settings.engines.map(e => AI_ENGINE_LABELS[e]).join(', ')}.
-            </CardDescription>
-            {settings.enabled && (
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {lastCheckedAt ? `Last checked ${timeAgo(lastCheckedAt)}` : 'Never checked yet'} · runs automatically every Monday, or check manually anytime (results under 24h old are not re-checked).
-              </p>
-            )}
+    <div className="space-y-3">
+      {/* Header row */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-base font-semibold">
+            <Sparkles className="h-4 w-4 text-primary" />
+            AI Search Visibility
           </div>
-          <div className="flex items-center gap-2">
-            {settings.enabled && (
-              <>
-                <Button size="sm" onClick={() => checkNow()} disabled={checking || queries.length === 0}>
-                  <RefreshCw className={`h-4 w-4 mr-2 ${checking ? 'animate-spin' : ''}`} />
-                  {checking ? 'Checking…' : 'Check now'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowSettings(s => !s)}
-                  aria-label="Tracking settings"
-                  className={showSettings ? 'bg-secondary' : ''}
-                >
-                  <Settings2 className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-            <Switch checked={settings.enabled} onCheckedChange={setEnabled} disabled={saving} />
-          </div>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Tracking how AI assistants answer your customers' questions for <span className="font-semibold text-foreground">{project.domain}</span>
+          </p>
         </div>
-      </CardHeader>
+        <div className="flex items-center gap-3">
+          {settings.enabled && (
+            <div className="hidden flex-col items-end gap-0.5 sm:flex">
+              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#1F7A43]" />
+                {lastCheckedAt ? `Checked ${formatCheckStamp(lastCheckedAt)}` : 'Never checked yet'}
+              </div>
+              <div className="text-[11px] text-muted-foreground">Next auto-check {nextMondayCheck()} · 06:00 UTC</div>
+            </div>
+          )}
+          {settings.enabled && (
+            <>
+              <Button size="sm" className="rounded-full" onClick={() => checkNow()} disabled={checking || queries.length === 0}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
+                {checking ? 'Checking…' : 'Check now · 1 credit'}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowSettings(s => !s)}
+                aria-label="Tracking settings"
+                className={showSettings ? 'bg-secondary' : ''}
+              >
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+          <Switch checked={settings.enabled} onCheckedChange={setEnabled} disabled={saving} />
+        </div>
+      </div>
 
       {settings.enabled && (
-        <CardContent className="space-y-6">
+        <>
           {checking && !hasAnyChecks && (
             <div className="flex items-start gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
               <RefreshCw className="mt-0.5 h-4 w-4 flex-shrink-0 animate-spin text-primary" />
@@ -278,133 +271,94 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-1">
-            <span className="mr-1 text-xs text-muted-foreground">Trend range</span>
-            {([7, 30, 90] as const).map(days => (
-              <button
-                key={days}
-                type="button"
-                onClick={() => setPeriod(days)}
-                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                  period === days ? 'bg-[#005232] text-white' : 'bg-secondary text-foreground hover:bg-secondary/70'
-                }`}
-              >
-                {days}d
-              </button>
-            ))}
-          </div>
-          <VerdictStrip queries={queries} trend={report?.trend || []} engines={enabledEngines} />
-
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className={`rounded-lg px-4 py-1.5 text-sm font-semibold ${activeTab === 'tracked' ? 'bg-[#005232] text-white' : 'bg-secondary text-foreground'}`}
-              onClick={() => setActiveTab('tracked')}
-            >
-              Tracked queries ({queries.length})
-            </button>
-            <button
-              type="button"
-              className={`rounded-lg px-4 py-1.5 text-sm font-semibold ${activeTab === 'cited' ? 'bg-[#005232] text-white' : 'bg-secondary text-foreground'}`}
-              onClick={() => setActiveTab('cited')}
-            >
-              Terms you're cited for
-            </button>
-          </div>
-
-          {activeTab === 'tracked' && (
-            <div className="space-y-3">
-              {queries.map(query => (
-                <QueryCard
-                  key={query.id}
-                  query={query}
-                  engines={enabledEngines}
-                  projectDomain={project.domain}
-                  onDelete={removeQuery}
-                />
-              ))}
-
-              {queries.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Add up to {settings.max_queries} queries to start tracking, phrased the way customers ask AI assistants. Your first check runs automatically as soon as you add them.
-                </p>
-              )}
-
-              {!atCap && (
+          {showSettings && (
+            <Card>
+              <CardContent className="grid gap-4 p-4 md:grid-cols-2">
                 <div className="space-y-2">
+                  <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Brand terms (for mention detection)</Label>
                   <div className="flex gap-2">
                     <Input
-                      value={newQuery}
-                      onChange={(e) => setNewQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') void addQueries([newQuery]); }}
-                      placeholder='Add a keyword or a natural-language prompt, e.g. "best rank tracking tool for small agencies"'
+                      value={brandTermsInput}
+                      onChange={(e) => setBrandTermsInput(e.target.value)}
+                      placeholder="e.g. DataWise, datawiseseo"
                     />
-                    <Button variant="secondary" onClick={() => addQueries([newQuery])} disabled={!newQuery.trim()}>
-                      <Plus className="h-4 w-4 mr-1" /> Add
-                    </Button>
+                    <Button variant="secondary" onClick={saveBrandTerms} disabled={saving}>Save</Button>
                   </div>
-                  {quickAddOptions.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-xs text-muted-foreground mr-1">From tracked keywords:</span>
-                      {quickAddOptions.map(kw => (
-                        <button
-                          key={kw}
-                          type="button"
-                          onClick={() => addQueries([kw])}
-                          className="text-xs px-2 py-0.5 rounded-full border bg-secondary/50 hover:bg-secondary transition-colors"
-                        >
-                          + {kw}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
-              )}
-            </div>
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Engines</Label>
+                  <div className="flex h-10 items-center gap-5">
+                    {AI_ENGINE_ORDER.map(engine => (
+                      <label key={engine} className="flex cursor-pointer items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={settings.engines.includes(engine)}
+                          onCheckedChange={(on) => toggleEngine(engine, on === true)}
+                          disabled={saving}
+                        />
+                        {AI_ENGINE_LABELS[engine]}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
-          {activeTab === 'cited' && (
-            <CitedTermsTab
-              domain={project.domain}
-              trackedQueryTexts={trackedQueryTexts}
-              onTrack={trackDiscoveredQuery}
+          {/* Brand terms + engines strip */}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground/80">Brand terms</span>
+            {settings.brand_terms.length > 0 ? settings.brand_terms.map(term => (
+              <span key={term} className="rounded-full border bg-card px-2.5 py-0.5 text-foreground/80">{term}</span>
+            )) : (
+              <span className="italic">using defaults from your domain</span>
+            )}
+            <button type="button" className="font-semibold text-[#1F7A43] hover:text-[#166337]" onClick={() => setShowSettings(true)}>Edit</button>
+            <span className="mx-1 h-4 w-px bg-border" />
+            <span className="font-semibold text-foreground/80">Engines</span>
+            {enabledEngines.map(engine => (
+              <span key={engine} className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: AI_ENGINE_COLORS[engine] }} />
+                {AI_ENGINE_LABELS[engine]}
+              </span>
+            ))}
+          </div>
+
+          <KpiRail queries={queries} engines={enabledEngines} trend={report?.trend || []} />
+
+          <div className="grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+            <AnswerStatusMatrix
+              queries={queries}
+              engines={enabledEngines}
+              projectDomain={project.domain}
+              maxQueries={settings.max_queries}
+              quickAddOptions={quickAddOptions}
+              onAdd={addQueries}
+              onDelete={removeQuery}
             />
-          )}
-
-          <ShareOfVoiceFooter share={report?.share_of_voice || []} domain={project.domain} />
-
-          {showSettings && (
-          <div className="grid gap-4 md:grid-cols-2 border-t pt-4">
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Brand terms (for mention detection)</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={brandTermsInput}
-                  onChange={(e) => setBrandTermsInput(e.target.value)}
-                  placeholder="e.g. DataWise, datawiseseo"
-                />
-                <Button variant="secondary" onClick={saveBrandTerms} disabled={saving}>Save</Button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Engines</Label>
-              <div className="flex items-center gap-5 h-10">
-                {ENGINE_ORDER.map(engine => (
-                  <label key={engine} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Checkbox
-                      checked={settings.engines.includes(engine)}
-                      onCheckedChange={(on) => toggleEngine(engine, on === true)}
-                      disabled={saving}
-                    />
-                    {AI_ENGINE_LABELS[engine]}
-                  </label>
-                ))}
-              </div>
+            <div className="flex flex-col gap-3">
+              <TrendMiniCard trend={report?.trend || []} engines={enabledEngines} period={period} onPeriodChange={setPeriod} />
+              <ShareOfVoiceCard share={report?.share_of_voice || []} />
+              <ActionsCard queries={queries} />
             </div>
           </div>
-          )}
-        </CardContent>
+
+          <Card>
+            <CardContent className="flex flex-col gap-3 p-5">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Terms you're cited for</div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Prompts from the historical LLM index that already cite {project.domain}, ones you are not tracking yet. The index runs days to weeks behind, so a fresh check can differ.
+                </p>
+              </div>
+              <CitedTermsTab
+                domain={project.domain}
+                trackedQueryTexts={trackedQueryTexts}
+                onTrack={trackDiscoveredQuery}
+              />
+            </CardContent>
+          </Card>
+        </>
       )}
-    </Card>
+    </div>
   );
 }

@@ -10,6 +10,28 @@ export const AI_ENGINE_LABELS: Record<AIEngine, string> = {
   perplexity: 'Perplexity',
 };
 
+export const AI_ENGINE_SHORT_LABELS: Record<AIEngine, string> = {
+  google_ai_mode: 'Google AI',
+  chatgpt: 'ChatGPT',
+  perplexity: 'Perplexity',
+};
+
+// Fixed engine colors (never cycled, never reordered); validated palette.
+export const AI_ENGINE_COLORS: Record<AIEngine, string> = {
+  google_ai_mode: '#1F7A43',
+  chatgpt: '#2563EB',
+  perplexity: '#D97706',
+};
+
+export const AI_ENGINE_ORDER: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
+
+// Answer-outcome ramp: dark to light equals strong to no visibility.
+export const AI_OUTCOME_COLORS = {
+  cited: '#1F7A43',
+  mentioned: '#8FC5A6',
+  absent: '#EDF1EE',
+} as const;
+
 export type AICheckStatus = 'cited' | 'mentioned' | 'absent' | 'no_answer' | 'error';
 
 export interface AICitation {
