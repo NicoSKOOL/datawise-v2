@@ -9,9 +9,10 @@ import { useToast } from '@/components/ui/use-toast';
 import { RefreshCw, Sparkles, Settings2 } from 'lucide-react';
 import {
   fetchAITracking, updateAISettings, addAIQueries, deleteAIQuery, runAICheck, fetchAIReport,
-  AI_ENGINE_LABELS, AI_ENGINE_COLORS, AI_ENGINE_ORDER,
+  AI_ENGINE_LABELS, AI_ENGINE_ORDER,
   type AIEngine, type AITrackingData, type AIReport,
 } from '@/lib/ai-tracking';
+import EngineLogo from './ai/EngineLogo';
 import KpiRail from './ai/KpiRail';
 import AnswerStatusMatrix from './ai/AnswerStatusMatrix';
 import { TrendMiniCard, ShareOfVoiceCard, ActionsCard, nextMondayCheck } from './ai/RightRail';
@@ -317,7 +318,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
             <span className="font-semibold text-foreground/80">Engines</span>
             {enabledEngines.map(engine => (
               <span key={engine} className="inline-flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full" style={{ background: AI_ENGINE_COLORS[engine] }} />
+                <EngineLogo engine={engine} className="h-3.5 w-3.5" />
                 {AI_ENGINE_LABELS[engine]}
               </span>
             ))}

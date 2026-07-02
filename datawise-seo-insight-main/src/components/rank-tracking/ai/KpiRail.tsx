@@ -5,6 +5,7 @@ import {
   AI_ENGINE_SHORT_LABELS, AI_ENGINE_ORDER,
   type AIEngine, type AITrackedQuery, type AITrendPoint,
 } from '@/lib/ai-tracking';
+import EngineLogo from './EngineLogo';
 
 interface KpiRailProps {
   queries: AITrackedQuery[];
@@ -120,7 +121,10 @@ export default function KpiRail({ queries, engines, trend }: KpiRailProps) {
           <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Best engine</div>
           {stats.best && stats.best.hit > 0 ? (
             <>
-              <div className="text-[22px] font-extrabold leading-tight tracking-tight">{AI_ENGINE_SHORT_LABELS[stats.best.engine]}</div>
+              <div className="flex items-center gap-2 text-[22px] font-extrabold leading-tight tracking-tight">
+                <EngineLogo engine={stats.best.engine} className="h-5 w-5" />
+                {AI_ENGINE_SHORT_LABELS[stats.best.engine]}
+              </div>
               <div className="text-xs text-muted-foreground">
                 {stats.best.hit} of {stats.best.total}
                 {stats.worst ? ` · ${AI_ENGINE_SHORT_LABELS[stats.worst.engine]} weakest` : ''}

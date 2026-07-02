@@ -5,9 +5,10 @@ import { Input } from '@/components/ui/input';
 import { ChevronRight, Plus, Trash2 } from 'lucide-react';
 import {
   fetchAIAnswer,
-  AI_ENGINE_LABELS, AI_ENGINE_SHORT_LABELS, AI_ENGINE_COLORS, AI_ENGINE_ORDER, AI_OUTCOME_COLORS,
+  AI_ENGINE_SHORT_LABELS, AI_ENGINE_ORDER, AI_OUTCOME_COLORS,
   type AIEngine, type AIEngineResult, type AITrackedQuery,
 } from '@/lib/ai-tracking';
+import EngineLogo from './EngineLogo';
 
 interface AnswerStatusMatrixProps {
   queries: AITrackedQuery[];
@@ -93,7 +94,7 @@ function EngineDetail({ engine, result, projectDomain }: { engine: AIEngine; res
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex items-center gap-1.5 text-xs font-bold">
-        <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: AI_ENGINE_COLORS[engine] }} />
+        <EngineLogo engine={engine} className="h-3.5 w-3.5" />
         {AI_ENGINE_SHORT_LABELS[engine]}
         {meta && (
           <span className="font-semibold" style={{ color: meta.fg }}>
@@ -202,7 +203,7 @@ export default function AnswerStatusMatrix({
             <div />
             {orderedEngines.map(engine => (
               <div key={engine} className="flex flex-col items-center gap-1 text-[11px] font-bold">
-                <span className="h-2 w-2 rounded-full" style={{ background: AI_ENGINE_COLORS[engine] }} />
+                <EngineLogo engine={engine} className="h-4 w-4" />
                 {AI_ENGINE_SHORT_LABELS[engine]}
               </div>
             ))}
