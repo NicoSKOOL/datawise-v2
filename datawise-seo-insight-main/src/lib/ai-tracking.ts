@@ -10,6 +10,28 @@ export const AI_ENGINE_LABELS: Record<AIEngine, string> = {
   perplexity: 'Perplexity',
 };
 
+export const AI_ENGINE_SHORT_LABELS: Record<AIEngine, string> = {
+  google_ai_mode: 'Google AI',
+  chatgpt: 'ChatGPT',
+  perplexity: 'Perplexity',
+};
+
+// Fixed engine colors (never cycled, never reordered); validated palette.
+export const AI_ENGINE_COLORS: Record<AIEngine, string> = {
+  google_ai_mode: '#1F7A43',
+  chatgpt: '#2563EB',
+  perplexity: '#D97706',
+};
+
+export const AI_ENGINE_ORDER: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
+
+// Answer-outcome ramp: dark to light equals strong to no visibility.
+export const AI_OUTCOME_COLORS = {
+  cited: '#1F7A43',
+  mentioned: '#8FC5A6',
+  absent: '#EDF1EE',
+} as const;
+
 export type AICheckStatus = 'cited' | 'mentioned' | 'absent' | 'no_answer' | 'error';
 
 export interface AICitation {
@@ -108,4 +130,25 @@ export async function fetchAIReport(projectId: string, period = 90) {
 
 export async function fetchAIAnswer(checkId: number) {
   return api(`/api/rank-tracking/ai/checks/${checkId}/answer`) as Promise<{ answer_text: string | null }>;
+}
+
+// --- Project selection ------------------------------------------------------
+
+export function cleanTrackingDomain(value: string): string {
+  return value.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/^www\./, '').replace(/\/+$/, '').toLowerCase();
+}
+
+// A user can have several rank-tracking projects on the same domain. When the
+// AI Performance tab (or the Track dialog) has to pick one, prefer the project
+// that is actually set up for AI tracking: tracking enabled beats disabled,
+// configured brand terms beat defaults, and the oldest project (the original,
+// not an accidental duplicate) wins ties.
+export function rankProjectsForAITracking<T extends { created_at: string; ai_tracking_enabled?: number; ai_brand_terms?: string | null }>(projects: T[]): T[] {
+  return [...projects].sort((a, b) => {
+    const enabled = (b.ai_tracking_enabled ? 1 : 0) - (a.ai_tracking_enabled ? 1 : 0);
+    if (enabled !== 0) return enabled;
+    const configured = (b.ai_brand_terms ? 1 : 0) - (a.ai_brand_terms ? 1 : 0);
+    if (configured !== 0) return configured;
+    return a.created_at.localeCompare(b.created_at);
+  });
 }

@@ -30,6 +30,8 @@ import { buildBrandTrackerReport } from '@/lib/export/adapters/brandTracker';
 import { captureElementPng } from '@/lib/export/chartCapture';
 import { downloadCSV } from '@/lib/csvUtils';
 import { LlmAnswerDrawer } from '@/components/llm-mentions/LlmAnswerDrawer';
+import TrackQueryDialog from '@/components/ai-visibility/TrackQueryDialog';
+import { useProperty } from '@/contexts/PropertyContext';
 import { StatItem } from '@/components/llm-mentions/StatItem';
 import { MentionsTrendChart } from '@/components/llm-mentions/MentionsTrendChart';
 import { CompetitorCompare } from '@/components/llm-mentions/CompetitorCompare';
@@ -170,6 +172,8 @@ function AnswersTable({
 }: AnswersTableProps) {
   const [selected, setSelected] = useState<LlmSearchRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [trackQuery, setTrackQuery] = useState<string | null>(null);
+  const { primaryDomain } = useProperty();
 
   const [search, setSearch] = useState('');
   const [platformFilter, setPlatformFilter] = useState<string>('all');
@@ -304,6 +308,7 @@ function AnswersTable({
                       <TableHead className="w-[120px]">Platform</TableHead>
                       <TableHead className="w-[80px]">Sources</TableHead>
                       <TableHead className="w-[90px]">Last seen</TableHead>
+                      <TableHead className="w-[70px]"><span className="sr-only">Track</span></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -348,6 +353,18 @@ function AnswersTable({
                           <TableCell className="text-xs text-muted-foreground">
                             {date || '—'}
                           </TableCell>
+                          <TableCell>
+                            {row.question ? (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs"
+                                onClick={(e) => { e.stopPropagation(); setTrackQuery(row.question || null); }}
+                              >
+                                Track
+                              </Button>
+                            ) : null}
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -366,6 +383,12 @@ function AnswersTable({
           )}
         </CardContent>
       </Card>
+
+      <TrackQueryDialog
+        query={trackQuery}
+        onOpenChange={(open) => { if (!open) setTrackQuery(null); }}
+        defaultDomain={primaryDomain || undefined}
+      />
 
       <LlmAnswerDrawer
         open={drawerOpen}
