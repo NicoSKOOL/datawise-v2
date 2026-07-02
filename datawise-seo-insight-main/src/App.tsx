@@ -46,6 +46,7 @@ const AdminMembers = lazy(() => import('./pages/AdminMembers'));
 const AdminFeedback = lazy(() => import('./pages/AdminFeedback'));
 const AdminPromoCodes = lazy(() => import('./pages/AdminPromoCodes'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
+const AdminActivity = lazy(() => import('./pages/AdminActivity'));
 const AdminContentWriterPrompts = lazy(() => import('./pages/AdminContentWriterPrompts'));
 
 const queryClient = new QueryClient();
@@ -176,6 +177,7 @@ const App = () => (
             <Route path="/admin/feedback" element={<ProtectedPage><AdminFeedback /></ProtectedPage>} />
             <Route path="/admin/promo-codes" element={<ProtectedPage><AdminPromoCodes /></ProtectedPage>} />
             <Route path="/admin/analytics" element={<ProtectedPage><AdminAnalytics /></ProtectedPage>} />
+            <Route path="/admin/activity" element={<ProtectedPage><AdminActivity /></ProtectedPage>} />
             <Route path="/admin/content-writer-prompts" element={<ProtectedPage><AdminContentWriterPrompts /></ProtectedPage>} />
 
             <Route path="*" element={<NotFound />} />

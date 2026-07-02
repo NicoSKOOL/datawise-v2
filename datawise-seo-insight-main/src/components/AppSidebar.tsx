@@ -18,6 +18,7 @@ import {
   Ticket,
   ChevronRight,
   BarChart3,
+  Activity,
   Plus,
   Trash2,
   Loader2,
@@ -477,6 +478,21 @@ export function AppSidebar() {
                     >
                       <BarChart3 className="h-4 w-4 flex-shrink-0" />
                       <span>Analytics</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink
+                      to="/admin/activity"
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                          isActive ? activeClass : inactiveClass
+                        }`
+                      }
+                    >
+                      <Activity className="h-4 w-4 flex-shrink-0" />
+                      <span>Activity</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
