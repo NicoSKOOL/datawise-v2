@@ -96,9 +96,10 @@ export function TrendMiniCard({ trend, engines, period, onPeriodChange }: TrendM
                     className="flex min-w-0 flex-1 flex-col justify-end"
                     title={`${shortDate(row.date)}: ${row.cited} cited, ${row.mentioned} mentioned, ${row.absent} absent of ${row.total}`}
                   >
-                    <div style={{ height: row.cited * scale, background: AI_OUTCOME_COLORS.cited, borderRadius: '2px 2px 0 0' }} />
+                    {/* Baseline-anchored: cited (dark) grows up from the bottom. */}
+                    <div style={{ height: row.absent * scale, background: AI_OUTCOME_COLORS.absent, borderRadius: '2px 2px 0 0' }} />
                     <div style={{ height: row.mentioned * scale, background: AI_OUTCOME_COLORS.mentioned }} />
-                    <div style={{ height: row.absent * scale, background: AI_OUTCOME_COLORS.absent }} />
+                    <div style={{ height: row.cited * scale, background: AI_OUTCOME_COLORS.cited }} />
                   </div>
                 );
               })}
