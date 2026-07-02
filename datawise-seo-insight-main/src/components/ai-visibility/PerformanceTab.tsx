@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
 import { RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
 import { useProperty } from '@/contexts/PropertyContext';
 import { fetchRankProjects, createRankProject, fetchProjectKeywords } from '@/lib/dataforseo';
+import { cleanTrackingDomain as cleanDomain, rankProjectsForAITracking } from '@/lib/ai-tracking';
 import type { Project, TrackedKeyword } from '@/types/rank-tracking';
 import AIVisibilityPanel from '@/components/rank-tracking/AIVisibilityPanel';
-
-function cleanDomain(value: string): string {
-  return value.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/^www\./, '').replace(/\/+$/, '').toLowerCase();
-}
 
 // The Performance tab is the persistent AI-search report for the site picked
 // in the top site selector: same site everywhere in the app. Tracking data
@@ -21,6 +19,7 @@ export default function PerformanceTab() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
+  const [chosenProjectId, setChosenProjectId] = useState<string | null>(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
@@ -38,11 +37,19 @@ export default function PerformanceTab() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const project = useMemo(() => {
-    if (!projects || !primaryDomain) return null;
+  // All projects on this domain, best AI-tracking candidate first. Several
+  // projects can share a domain (duplicates happen); picking the newest by
+  // accident showed the wrong report, so rank and let the user switch.
+  const domainProjects = useMemo(() => {
+    if (!projects || !primaryDomain) return [];
     const wanted = cleanDomain(primaryDomain);
-    return projects.find(p => cleanDomain(p.domain) === wanted) ?? null;
+    return rankProjectsForAITracking(projects.filter(p => cleanDomain(p.domain) === wanted));
   }, [projects, primaryDomain]);
+
+  const project = useMemo(() => {
+    if (!domainProjects.length) return null;
+    return domainProjects.find(p => p.id === chosenProjectId) ?? domainProjects[0];
+  }, [domainProjects, chosenProjectId]);
 
   // Tracked keywords feed the panel's "quick add from tracked keywords" chips.
   useEffect(() => {
@@ -120,10 +127,27 @@ export default function PerformanceTab() {
   }
 
   return (
-    <AIVisibilityPanel
-      key={project.id}
-      project={{ id: project.id, domain: project.domain }}
-      trackedKeywords={keywords}
-    />
+    <div className="space-y-3">
+      {domainProjects.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <span>{domainProjects.length} tracking projects use this domain. Showing:</span>
+          <Select value={project.id} onValueChange={setChosenProjectId}>
+            <SelectTrigger className="h-8 w-auto min-w-44 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {domainProjects.map(p => (
+                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <AIVisibilityPanel
+        key={project.id}
+        project={{ id: project.id, domain: project.domain }}
+        trackedKeywords={keywords}
+      />
+    </div>
   );
 }

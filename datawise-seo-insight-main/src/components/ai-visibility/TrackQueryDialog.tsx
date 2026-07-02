@@ -8,12 +8,8 @@ import {
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { fetchRankProjects } from '@/lib/dataforseo';
-import { addAIQueries } from '@/lib/ai-tracking';
+import { addAIQueries, cleanTrackingDomain as cleanDomain, rankProjectsForAITracking } from '@/lib/ai-tracking';
 import type { Project } from '@/types/rank-tracking';
-
-function cleanDomain(value: string): string {
-  return value.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/^www\./, '').replace(/\/+$/, '').toLowerCase();
-}
 
 interface TrackQueryDialogProps {
   query: string | null;
@@ -41,8 +37,8 @@ export default function TrackQueryDialog({ query, onOpenChange, defaultDomain }:
         setProjects(rows);
         if (rows.length > 0) {
           const wanted = defaultDomain ? cleanDomain(defaultDomain) : null;
-          const match = wanted ? rows.find(p => cleanDomain(p.domain) === wanted) : null;
-          setProjectId((match ?? rows[0]).id);
+          const matches = wanted ? rankProjectsForAITracking(rows.filter(p => cleanDomain(p.domain) === wanted)) : [];
+          setProjectId((matches[0] ?? rows[0]).id);
         }
       })
       .catch(() => setProjects([]));
@@ -79,6 +75,7 @@ export default function TrackQueryDialog({ query, onOpenChange, defaultDomain }:
           <DialogTitle>Track this query weekly</DialogTitle>
           <DialogDescription>
             "{query?.trim()}" will be checked every Monday across your enabled AI engines, and its history will appear in the Performance tab.
+            AI answers change from day to day, so a query that mentioned you in the past may not in a fresh check; tracking is how you see the real week-to-week picture.
           </DialogDescription>
         </DialogHeader>
 

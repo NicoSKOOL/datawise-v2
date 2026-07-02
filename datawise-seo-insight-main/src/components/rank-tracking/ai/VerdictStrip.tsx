@@ -1,9 +1,6 @@
 import { useMemo } from 'react';
-import {
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
-} from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
-import { ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, Info } from 'lucide-react';
 import { AI_ENGINE_LABELS, type AIEngine, type AITrackedQuery, type AITrendPoint } from '@/lib/ai-tracking';
 import EngineTrendChart from './EngineTrendChart';
 
@@ -13,52 +10,39 @@ interface VerdictStripProps {
   engines: AIEngine[];
 }
 
-function resultValue(status: string): number {
-  if (status === 'cited') return 1;
-  if (status === 'mentioned') return 0.5;
-  return 0;
-}
+// Answer-outcome ramp shared with the trend chart: dark → light = strong → no
+// visibility (see EngineTrendChart for the validation notes).
+const OUTCOME_COLORS = { cited: '#1F7A43', mentioned: '#4E9E6F', absent: '#C9D2CC' } as const;
 
-function shortDate(value: string): string {
-  const d = new Date(`${value}T00:00:00Z`);
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
-
-// The report header: headline score with a plain-language verdict, the score
-// history as a real chart (axis + tooltip, not a sparkline), and the
-// per-engine trend. Shared by the AI Visibility Performance tab and the
-// Rank Tracking AI panel.
+// The report header: a concrete headline (how many AI answers cite or mention
+// you, out of how many we checked), the weighted score as a small explained
+// chip, and a per-engine breakdown as mini composition bars. Sized for the
+// cold start: two queries and one check must not produce acres of white space.
 export default function VerdictStrip({ queries, trend, engines }: VerdictStripProps) {
   const stats = useMemo(() => {
-    let sum = 0;
-    let denom = 0;
-    let citedQueries = 0;
-    let mentionedQueries = 0;
-    let appearQueries = 0;
-    const byEngine: Record<string, { hit: number; total: number }> = {};
-    for (const engine of engines) byEngine[engine] = { hit: 0, total: 0 };
+    let cited = 0;
+    let mentioned = 0;
+    let total = 0;
+    const byEngine: Record<string, { cited: number; mentioned: number; total: number }> = {};
+    for (const engine of engines) byEngine[engine] = { cited: 0, mentioned: 0, total: 0 };
 
     for (const query of queries) {
-      let cited = false;
-      let mentioned = false;
       for (const engine of engines) {
         const result = query.engines[engine];
         if (!result || result.status === 'error') continue;
-        denom += 1;
-        sum += resultValue(result.status);
+        total += 1;
         byEngine[engine].total += 1;
-        if (result.status === 'cited' || result.status === 'mentioned') byEngine[engine].hit += 1;
-        if (result.status === 'cited') cited = true;
-        if (result.status === 'mentioned') mentioned = true;
+        if (result.status === 'cited') { cited += 1; byEngine[engine].cited += 1; }
+        if (result.status === 'mentioned') { mentioned += 1; byEngine[engine].mentioned += 1; }
       }
-      if (cited) citedQueries += 1;
-      else if (mentioned) mentionedQueries += 1;
-      if (cited || mentioned) appearQueries += 1;
     }
 
-    return { score: Math.round((100 * sum) / Math.max(denom, 1)), citedQueries, mentionedQueries, appearQueries, byEngine };
+    const score = Math.round((100 * (cited + mentioned * 0.5)) / Math.max(total, 1));
+    return { cited, mentioned, appear: cited + mentioned, total, score, byEngine };
   }, [queries, engines]);
 
+  // Score per check date, for the delta sentence (the score history itself
+  // lives in the trend card below).
   const dateScores = useMemo(() => {
     const byDate = new Map<string, { weighted: number; total: number }>();
     for (const point of trend) {
@@ -74,97 +58,64 @@ export default function VerdictStrip({ queries, trend, engines }: VerdictStripPr
 
   const delta = dateScores.length >= 2 ? dateScores[dateScores.length - 1].score - dateScores[dateScores.length - 2].score : null;
 
-  // One sentence a user can read instead of decoding the numbers.
-  const verdict = useMemo(() => {
-    if (queries.length === 0) return null;
-    const appear = `AI answers cite or mention you for ${stats.appearQueries} of your ${queries.length} tracked ${queries.length === 1 ? 'query' : 'queries'}`;
-    if (delta === null || delta === 0) return `${appear}.`;
-    return `${appear}, ${delta > 0 ? 'up' : 'down'} ${Math.abs(delta)} score ${Math.abs(delta) === 1 ? 'point' : 'points'} since the last check.`;
-  }, [queries.length, stats.appearQueries, delta]);
+  if (stats.total === 0) return <EngineTrendChart trend={trend} engines={engines} />;
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-3">
-        <Card className="md:col-span-2">
-          <CardContent className="p-4">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">AI Visibility Score</div>
-            <div className="flex items-baseline gap-3">
-              <span className="text-4xl font-extrabold tabular-nums text-[#005232]">{stats.score}</span>
-              {delta !== null && delta !== 0 && (
-                <span className={`inline-flex items-center gap-0.5 text-xs font-bold ${delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {delta > 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
-                  {delta > 0 ? '+' : ''}{delta} vs last check
+      <Card>
+        <CardContent className="p-4">
+          <div className="grid gap-5 md:grid-cols-2">
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Latest check</div>
+              <div className="mt-1 flex items-baseline gap-2">
+                <span className="text-3xl font-extrabold tabular-nums text-[#005232]">{stats.appear}</span>
+                <span className="text-lg font-semibold text-muted-foreground">of {stats.total}</span>
+              </div>
+              <p className="text-sm">
+                AI answers cite or mention you
+                <span className="text-muted-foreground"> ({stats.cited} with a link, {stats.mentioned} by name only)</span>
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span
+                  className="inline-flex cursor-help items-center gap-1 rounded-full bg-secondary px-2.5 py-1 text-xs font-semibold"
+                  title="Visibility score out of 100: the share of checked AI answers where you appear. A citation with a link counts full, a name-only mention counts half."
+                >
+                  Score {stats.score}/100
+                  <Info className="h-3 w-3 text-muted-foreground" />
                 </span>
-              )}
+                {delta !== null && delta !== 0 && (
+                  <span className={`inline-flex items-center gap-0.5 text-xs font-bold ${delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {delta > 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+                    {delta > 0 ? '+' : ''}{delta} vs previous check
+                  </span>
+                )}
+              </div>
             </div>
-            {verdict && <p className="mt-1 text-sm text-muted-foreground">{verdict}</p>}
-            {dateScores.length > 1 && (
-              <div className="mt-3 h-24">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={dateScores} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="aiScoreFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#1F7A43" stopOpacity={0.14} />
-                        <stop offset="100%" stopColor="#1F7A43" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={shortDate}
-                      tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                      tickLine={false}
-                      axisLine={{ stroke: 'hsl(var(--border))' }}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis domain={[0, 100]} hide />
-                    <Tooltip
-                      formatter={(value: number) => [`${value}`, 'Score']}
-                      labelFormatter={(label: string) => shortDate(label)}
-                      contentStyle={{
-                        borderRadius: 8,
-                        border: '1px solid hsl(var(--border))',
-                        background: 'hsl(var(--background))',
-                        fontSize: 12,
-                      }}
-                    />
-                    <Area type="monotone" dataKey="score" stroke="#1F7A43" strokeWidth={2} fill="url(#aiScoreFill)" dot={{ r: 2.5, strokeWidth: 0, fill: '#1F7A43' }} activeDot={{ r: 4 }} isAnimationActive={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
-        <div className="grid gap-3">
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Queries where you appear</div>
-              <div className="text-2xl font-extrabold tabular-nums">
-                {stats.appearQueries}
-                <span className="text-base font-bold text-muted-foreground">/{queries.length}</span>
-              </div>
-              <div className="text-xs text-muted-foreground">cited in {stats.citedQueries}, mentioned in {stats.mentionedQueries}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="p-4">
-              <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">By engine</div>
-              <div className="space-y-1 text-xs">
-                {engines.map(engine => {
-                  const { hit, total } = stats.byEngine[engine];
-                  return (
-                    <div key={engine} className="flex items-center justify-between">
-                      <span>{AI_ENGINE_LABELS[engine]}</span>
-                      <span className={`font-bold tabular-nums ${hit === 0 && total > 0 ? 'text-red-600' : ''}`}>{hit}/{total}</span>
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">By engine</div>
+              {engines.map(engine => {
+                const e = stats.byEngine[engine];
+                const absent = Math.max(0, e.total - e.cited - e.mentioned);
+                return (
+                  <div key={engine} className="flex items-center gap-3 text-xs">
+                    <span className="w-28 flex-shrink-0 truncate">{AI_ENGINE_LABELS[engine]}</span>
+                    <div className="flex h-2.5 flex-1 gap-px overflow-hidden rounded-full bg-secondary">
+                      {e.cited > 0 && <div style={{ width: `${(100 * e.cited) / Math.max(e.total, 1)}%`, background: OUTCOME_COLORS.cited }} />}
+                      {e.mentioned > 0 && <div style={{ width: `${(100 * e.mentioned) / Math.max(e.total, 1)}%`, background: OUTCOME_COLORS.mentioned }} />}
+                      {absent > 0 && <div style={{ width: `${(100 * absent) / Math.max(e.total, 1)}%`, background: OUTCOME_COLORS.absent }} />}
                     </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                    <span className={`w-12 flex-shrink-0 text-right font-bold tabular-nums ${e.cited + e.mentioned === 0 && e.total > 0 ? 'text-red-600' : ''}`}>
+                      {e.cited + e.mentioned}/{e.total}
+                    </span>
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-muted-foreground">Answers that cite you (dark), mention you (light green), or leave you out (gray).</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <EngineTrendChart trend={trend} engines={engines} />
     </div>

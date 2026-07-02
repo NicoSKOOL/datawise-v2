@@ -8,6 +8,9 @@ export interface Project {
   ranking_keywords?: number;
   avg_position?: number | null;
   last_checked_at?: string | null;
+  // AI tracking columns (present in the list endpoint's SELECT p.*).
+  ai_tracking_enabled?: number;
+  ai_brand_terms?: string | null;
 }
 
 export interface TrackedKeyword {
