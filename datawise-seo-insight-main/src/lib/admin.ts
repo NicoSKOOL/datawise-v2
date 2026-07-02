@@ -339,3 +339,134 @@ export function renderContentWriterPrompt(body: PromptPreviewRequest): Promise<P
     body,
   });
 }
+
+// --- Activity dashboard (app_events read side) ---
+
+export interface ActivityTotals {
+  active_users: number;
+  new_users: number;
+  total_events: number;
+  success_events: number;
+  blocked_events: number;
+  error_events: number;
+  credits_used: number;
+  avg_duration_ms: number;
+}
+
+export interface ActivityEvent {
+  id?: string;
+  event_name: string;
+  event_category?: string | null;
+  feature: string;
+  route?: string | null;
+  error_code?: string | null;
+  outcome?: string | null;
+  status_code?: number | null;
+  credit_cost?: number | null;
+  created_at: string;
+  email?: string | null;
+  name?: string | null;
+}
+
+export interface ActivityOverview {
+  totals: ActivityTotals;
+  recent_failures: ActivityEvent[];
+}
+
+export interface ActivityFeature {
+  feature: string;
+  active_users: number;
+  events: number;
+  credits_used: number;
+  blocked_events: number;
+  error_events: number;
+}
+
+export interface ActivityUser {
+  id: string;
+  email: string;
+  name: string | null;
+  subscription_tier: string;
+  top_feature: string | null;
+  active_days: number;
+  total_events: number;
+  credits_used: number;
+  last_active: string | null;
+}
+
+export interface ActivityFunnelStep {
+  key: string;
+  label: string;
+  users: number;
+  rate: number;
+}
+
+export interface ActivityUserDetail {
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    subscription_tier: string;
+    is_admin?: number;
+    is_community_member?: number;
+    created_at?: string;
+  };
+  summary: {
+    total_events?: number;
+    active_days?: number;
+    credits_used?: number;
+    blocked_events?: number;
+    error_events?: number;
+  };
+  features: Array<{ feature: string; events: number }>;
+  events: ActivityEvent[];
+}
+
+export interface ActivitySummaryResponse {
+  summary: string;
+  generated_at: string;
+  usage: { input_tokens: number; output_tokens: number };
+  model_source: string;
+  fallback_reason?: string | null;
+}
+
+function activityQS(params: Record<string, string | number | undefined>): string {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') qs.set(key, String(value));
+  });
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
+export function fetchActivityOverview(from: string, to: string): Promise<ActivityOverview> {
+  return api(`/api/admin/activity/overview${activityQS({ from, to })}`);
+}
+
+export function fetchActivityFeatures(from: string, to: string): Promise<{ features: ActivityFeature[] }> {
+  return api(`/api/admin/activity/features${activityQS({ from, to })}`);
+}
+
+export function fetchActivityUsers(params: {
+  from: string; to: string; query?: string; tier?: string; sort?: string;
+}): Promise<{ users: ActivityUser[] }> {
+  return api(`/api/admin/activity/users${activityQS(params)}`);
+}
+
+export function fetchActivityFunnel(from: string, to: string): Promise<{ steps: ActivityFunnelStep[] }> {
+  return api(`/api/admin/activity/funnel${activityQS({ from, to })}`);
+}
+
+export function fetchActivityEvents(params: {
+  from: string; to: string; limit?: number;
+}): Promise<{ events: ActivityEvent[] }> {
+  return api(`/api/admin/activity/events${activityQS(params)}`);
+}
+
+export function fetchActivityUserDetail(userId: string, from: string, to: string): Promise<ActivityUserDetail> {
+  return api(`/api/admin/activity/users/${encodeURIComponent(userId)}${activityQS({ from, to })}`);
+}
+
+export function generateActivitySummary(from: string, to: string): Promise<ActivitySummaryResponse> {
+  return api('/api/admin/activity/summary', { method: 'POST', body: { from, to } });
+}

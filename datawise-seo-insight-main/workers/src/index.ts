@@ -94,6 +94,11 @@ import {
   handleResetContentWriterPrompt,
   handleRenderContentWriterPrompt,
 } from './routes/admin-content-writer-prompts';
+import {
+  handleActivityOverview, handleActivityFeatures, handleActivityUsers,
+  handleActivityFunnel, handleActivityEvents, handleActivityUserDetail,
+  handleActivitySummary,
+} from './routes/admin-activity';
 import { handleRedeemPromo, handlePromoStatus } from './routes/promo';
 import {
   handleAggregate, handleCrossAggregate, handleSearch,
@@ -239,11 +244,19 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
+    // Set by withCredit after a successful deduction so the activity log can
+    // attribute the action's credit cost per tool (app_events.credit_cost was
+    // otherwise always 0). Recorded for unlimited users too: the column
+    // measures what the action costs, not what the free counter consumed.
+    let gatedCreditCost = 0;
+
     const addCors = (response: Response): Response => {
       // Log the action once, after the response is finalized. classifyActivity
       // inside the helper drops unclassified/anonymous routes, so this is cheap.
       if (loggedUser) {
-        ctx.waitUntil(recordRequestActivity(env, request, loggedUser, response, startedAtMs));
+        ctx.waitUntil(recordRequestActivity(env, request, loggedUser, response, startedAtMs, {
+          creditCost: gatedCreditCost,
+        }));
       }
       const newHeaders = new Headers(response.headers);
       Object.entries(corsHeaders).forEach(([k, v]) => newHeaders.set(k, v));
@@ -388,6 +401,7 @@ export default {
             credits_limit: result.credits_limit,
           }, 403));
         }
+        gatedCreditCost = cost;
         const response = await handler();
         // Append credit info to successful JSON responses
         if (response.headers.get('Content-Type')?.includes('application/json')) {
@@ -847,6 +861,32 @@ export default {
         const m = path.match(/^\/api\/admin\/content-writer-prompts\/([^/]+)\/reset$/);
         if (m && method === 'POST') {
           return addCors(await handleResetContentWriterPrompt(env, user, decodeURIComponent(m[1])));
+        }
+      }
+
+      // --- Admin: activity dashboard (app_events read side) ---
+      if (path === '/api/admin/activity/overview' && method === 'GET') {
+        return addCors(await handleActivityOverview(request, env, user));
+      }
+      if (path === '/api/admin/activity/features' && method === 'GET') {
+        return addCors(await handleActivityFeatures(request, env, user));
+      }
+      if (path === '/api/admin/activity/users' && method === 'GET') {
+        return addCors(await handleActivityUsers(request, env, user));
+      }
+      if (path === '/api/admin/activity/funnel' && method === 'GET') {
+        return addCors(await handleActivityFunnel(request, env, user));
+      }
+      if (path === '/api/admin/activity/events' && method === 'GET') {
+        return addCors(await handleActivityEvents(request, env, user));
+      }
+      if (path === '/api/admin/activity/summary' && method === 'POST') {
+        return addCors(await handleActivitySummary(request, env, user));
+      }
+      {
+        const m = path.match(/^\/api\/admin\/activity\/users\/([^/]+)$/);
+        if (m && method === 'GET') {
+          return addCors(await handleActivityUserDetail(request, env, user, decodeURIComponent(m[1])));
         }
       }
 
