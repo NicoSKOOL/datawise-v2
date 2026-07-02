@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS gsc_properties (
   is_enabled INTEGER DEFAULT 1,
   kind TEXT NOT NULL DEFAULT 'gsc',
   site_group_id TEXT,
+  purged_at TEXT,
   UNIQUE(user_id, site_url)
 );
 
