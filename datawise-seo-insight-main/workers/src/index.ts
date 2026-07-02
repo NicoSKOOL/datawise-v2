@@ -34,7 +34,7 @@ import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetP
 import { handleDevLogin } from './auth/dev';
 import { isAllowedFrontendOrigin } from './auth/origins';
 import { authMiddleware } from './middleware/auth';
-import { recordRequestActivity } from './activity';
+import { recordRequestActivity, pruneAppEvents } from './activity';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty } from './gsc/sync';
@@ -187,6 +187,12 @@ export default {
       console.log(`Pageviews pruned: ${pruned.deleted}`);
     } catch (err) {
       console.error('prunePageviews failed:', err);
+    }
+    try {
+      const pruned = await pruneAppEvents(env);
+      console.log(`App events pruned: ${pruned.deleted}`);
+    } catch (err) {
+      console.error('pruneAppEvents failed:', err);
     }
   },
 
