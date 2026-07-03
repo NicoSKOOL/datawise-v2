@@ -402,6 +402,7 @@ function AnswersTable({
 
 export default function BrandTracker() {
   const { defaultDomain } = useDefaults();
+  const { primaryDomain } = useProperty();
   const { toast } = useToast();
   // activeDomain + platform toggles persist so returning to Brand Tracker
   // restores the last analyzed domain (bug 252b2580 — "ran a few of these
@@ -415,6 +416,22 @@ export default function BrandTracker() {
   const [inputDomain, setInputDomain] = useState(activeDomain || defaultDomain || '');
   const [googleActive, setGoogleActive] = usePersistentState<boolean>('brand-tracker:google-active', true);
   const [chatgptActive, setChatgptActive] = usePersistentState<boolean>('brand-tracker:chatgpt-active', false);
+
+  // The top-left site selector decides which website this tab analyzes: on
+  // first load and whenever the selection changes, it overrides whatever
+  // domain was persisted. Analyzing a different domain (competitor research)
+  // still works via the input below; a banner flags it until the user goes
+  // back or switches sites. Without a connected property the old behavior
+  // (persisted domain, defaults fallback) is unchanged.
+  const selectedSiteDomain = (primaryDomain || '').toLowerCase();
+  useEffect(() => {
+    if (!selectedSiteDomain) return;
+    setActiveDomain(selectedSiteDomain);
+    setInputDomain(selectedSiteDomain);
+    // Deliberately only re-runs when the selected site changes: a manual
+    // "Analyze" of another domain must survive until the selector moves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSiteDomain]);
 
   // Per-platform pagination state. Initial 100 rows come from each search
   // query; subsequent pages append into the matching extras array.
@@ -650,9 +667,27 @@ export default function BrandTracker() {
       <div>
         <h2 className="text-xl font-bold tracking-tight">Brand Tracker</h2>
         <p className="text-muted-foreground text-sm">
-          See how AI search engines mention and cite your brand.
+          Everything the AI search index already has on this domain, no setup needed: where AI engines mention it today, and who gets cited instead.
+        </p>
+        <p className="text-muted-foreground/80 text-xs mt-1">
+          These numbers come from the historical AI search index. The Performance tab checks only the queries you track, so the two tabs measure different things and will not match.
         </p>
       </div>
+
+      {selectedSiteDomain && analysisEnabled && activeDomain !== selectedSiteDomain && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+          <span>
+            Viewing <span className="font-semibold">{activeDomain}</span>, not your selected website ({selectedSiteDomain}).
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setActiveDomain(selectedSiteDomain); setInputDomain(selectedSiteDomain); }}
+          >
+            Back to {selectedSiteDomain}
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="pt-6">
@@ -803,6 +838,12 @@ export default function BrandTracker() {
           enabled={analysisEnabled}
         />
       </div>
+
+      {analysisEnabled && (
+        <p className="text-sm text-muted-foreground">
+          Found a query worth winning? Track it and it moves to the Performance tab for weekly monitoring.
+        </p>
+      )}
 
       <AnswersTable
         rows={searchRows}
