@@ -29,7 +29,7 @@ import {
 import { repairWriterOutputIfNeeded } from '../content-writer/quality';
 import { buildWriterPromptContext, renderPromptTemplate, type WriterPromptContext } from '../content-writer/prompt-template';
 import { buildPostStepPersistenceUpdate, pruneDownstreamStepUsage } from '../content-writer/post-step-persistence';
-import { extractNeverCiteTerms, filterExcludedSources } from '../content-writer/source-filter';
+import { extractNeverCiteTerms, filterExcludedSources, filterCitationsByDomains } from '../content-writer/source-filter';
 import { recentHistorySql } from '../content-writer/history';
 import {
   extractInternalLinks,
@@ -1799,6 +1799,10 @@ export async function handlePostStep(
   const structuredCitationCount = citations?.length || 0;
   const filteredCitations = filterExcludedSources(citations, excludedSourceTerms);
   citations = filteredCitations.sources;
+  const domainFiltered = step === 'research'
+    ? filterCitationsByDomains(citations, excludeDomains)
+    : { sources: citations, filteredCount: 0 };
+  citations = domainFiltered.sources;
 
   // Defensive: LLMs occasionally wrap the entire response in a ```markdown fence,
   // which makes downstream renderers treat it as one code block. Strip a single
@@ -1823,6 +1827,8 @@ export async function handlePostStep(
         ai_question_count: aiQuestionContext?.questions?.length || 0,
         excluded_terms: excludedSourceTerms,
         filtered_source_count: filteredCitations.filteredCount,
+        user_excluded_domains: excludeDomains,
+        user_excluded_filtered_count: domainFiltered.filteredCount,
         generated_at: new Date().toISOString(),
       }
     : undefined;

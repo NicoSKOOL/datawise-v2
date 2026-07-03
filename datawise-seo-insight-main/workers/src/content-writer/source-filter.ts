@@ -67,3 +67,20 @@ function safeHostname(url: string): string {
     return '';
   }
 }
+
+export function filterCitationsByDomains<T extends { url: string }>(
+  citations: T[] | undefined,
+  domains: string[],
+): { sources: T[] | undefined; filteredCount: number } {
+  if (!citations?.length || !domains.length) return { sources: citations, filteredCount: 0 };
+  const matches = (url: string): boolean => {
+    try {
+      const host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+      return domains.some((d) => host === d || host.endsWith(`.${d}`));
+    } catch {
+      return false;
+    }
+  };
+  const kept = citations.filter((c) => !matches(c.url));
+  return { sources: kept, filteredCount: citations.length - kept.length };
+}
