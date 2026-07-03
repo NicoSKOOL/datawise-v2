@@ -465,10 +465,10 @@ export interface StepUsage {
 
 export type UsageMap = Partial<Record<PostStep, StepUsage>>;
 
-export async function runPostStep(postId: string, step: PostStep) {
+export async function runPostStep(postId: string, step: PostStep, opts?: { excludeDomains?: string[] }) {
   const llm_config = buildStepLLMConfig(step);
   return api<{ step: PostStep; text: string; usage?: StepUsage; usage_all?: UsageMap; quality_warnings?: string[]; truncated?: boolean }>(`${BASE}/posts/${postId}/step`, {
     method: 'POST',
-    body: { step, llm_config },
+    body: { step, llm_config, ...(opts?.excludeDomains?.length ? { exclude_domains: opts.excludeDomains } : {}) },
   });
 }

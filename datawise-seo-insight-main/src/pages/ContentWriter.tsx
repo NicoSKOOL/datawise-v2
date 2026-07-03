@@ -45,6 +45,7 @@ import { getOutputLanguagePreference, normalizeOutputLanguage, type OutputLangua
 import PostEditor from '@/components/content-writer/PostEditor';
 import ModelBadge from '@/components/content-writer/ModelBadge';
 import DraftProgressBar from '@/components/content-writer/DraftProgressBar';
+import { classifySourceTier, hostnameOf, type SourceTier } from '@/lib/source-tier';
 
 function StatusBadge({ status }: { status: DocStatus }) {
   if (status === 'ready') {
@@ -2041,7 +2042,7 @@ function PostComposerView({ postId }: { postId: string }) {
     review: 'review',
   };
 
-  async function runStep(step: PostStep, options: { force?: boolean } = {}) {
+  async function runStep(step: PostStep, options: { force?: boolean; excludeDomains?: string[] } = {}) {
     if (!post) return;
     // If the step's output already exists, treat the click as navigation,
     // not regeneration. Spending tokens to redo work the user can already
@@ -2058,7 +2059,7 @@ function PostComposerView({ postId }: { postId: string }) {
     }
     setBusyStep(step);
     try {
-      const res = await runPostStep(post.id, step);
+      const res = await runPostStep(post.id, step, { excludeDomains: options.excludeDomains });
       const qualityWarnings = res.quality_warnings || [];
       if (step === 'review') {
         setReviewReport(res.text);
@@ -2357,6 +2358,7 @@ function PostComposerView({ postId }: { postId: string }) {
                 onSaved={load}
                 onRerun={() => runStep('research', { force: true })}
                 onContinue={() => runStep('outline')}
+                onRerunExcluding={(domains) => runStep('research', { force: true, excludeDomains: domains })}
               />
             </TabsContent>
 
@@ -2425,6 +2427,7 @@ interface SourceItem {
   summary: string;
   raw: string;
   approved: boolean;
+  tier?: SourceTier;
 }
 
 interface CitationItem {
@@ -2487,6 +2490,7 @@ function mergeCitationItems(parsed: SourceItem[], citations: CitationItem[]): So
       id: `c${idx}`,
       label,
       url: c.url,
+      tier: classifySourceTier(c.url),
       summary: c.snippet || '',
       raw: c.title ? `${c.title} — ${c.url}` : c.url,
       approved: true,
@@ -2530,6 +2534,7 @@ function parseSources(md: string): SourceItem[] {
       id: `s${counter++}`,
       label: label.replace(/\*\*/g, '').trim(),
       url,
+      tier: classifySourceTier(url),
       summary,
       raw: block,
       approved: true,
@@ -2566,13 +2571,14 @@ function countItems(md: string): number {
   return (md.match(/^\s*[-*]\s+/gm) || []).length;
 }
 
-function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue }: {
+function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue, onRerunExcluding }: {
   postId: string;
   sourcesJson: string | null;
   busy: PostStep | null;
   onSaved: () => void;
   onRerun: () => void;
   onContinue: () => void;
+  onRerunExcluding: (domains: string[]) => void;
 }) {
   const { toast } = useToast();
   const [items, setItems] = useState<SourceItem[]>([]);
@@ -2598,7 +2604,7 @@ function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue 
       setSourceSearch(parsed.source_search);
       if (parsed.items?.length) {
         // Already-saved curated list takes precedence — user has approved/edited it.
-        setItems(parsed.items);
+        setItems(parsed.items.map((it) => ({ ...it, tier: it.tier ?? classifySourceTier(it.url) })));
       } else if (parsed.citations && parsed.citations.length) {
         // When Sonar returned structured citations, those URLs are the
         // authoritative source list. Don't merge with the LLM's prose —
@@ -2666,6 +2672,8 @@ function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue 
   }
 
   const approvedCount = items.filter((i) => i.approved).length;
+  const primaryCount = items.filter((it) => it.approved && (it.tier === 'primary' || it.tier === 'official')).length;
+  const rejectedDomains = [...new Set(items.filter((it) => !it.approved).map((it) => hostnameOf(it.url)).filter((d): d is string => !!d))];
 
   return (
     <div className="space-y-4">
@@ -2681,6 +2689,11 @@ function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue 
           </div>
           <p className="text-sm text-muted-foreground">
             {approvedCount} of {items.length} selected. Uncheck anything you don't want the writer to cite.
+          </p>
+          <p className={`mt-1 text-xs ${primaryCount === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+            {primaryCount > 0
+              ? `${primaryCount} primary or official source${primaryCount === 1 ? '' : 's'} approved.`
+              : 'No primary or official sources approved. Uncheck weak ones and use "Find different sources" for stronger citations.'}
           </p>
           {aiQuestions?.questions?.length ? (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -2712,6 +2725,12 @@ function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue 
             busy={busy}
             onClick={onRerun}
           />
+          <Button
+            variant="outline" size="sm" className="gap-1"
+            disabled={!!busy || rejectedDomains.length === 0}
+            title={rejectedDomains.length === 0 ? 'Uncheck the sources you want replaced first' : `Re-run research excluding: ${rejectedDomains.join(', ')}`}
+            onClick={() => onRerunExcluding(rejectedDomains)}
+          ><RefreshCw className="h-4 w-4" /> Find different sources</Button>
           <Button
             variant="outline" size="sm" className="gap-1"
             onClick={async () => {
@@ -2751,6 +2770,13 @@ function SourcesPanel({ postId, sourcesJson, busy, onSaved, onRerun, onContinue 
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="font-medium leading-tight">{it.label}</p>
+                  {it.tier && it.tier !== 'general' && (
+                    <Badge variant="outline" className={it.tier === 'primary'
+                      ? 'border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
+                      : 'border-sky-500/50 text-sky-600 dark:text-sky-400'}>
+                      {it.tier === 'primary' ? 'Primary' : 'Official docs'}
+                    </Badge>
+                  )}
                   {it.url && (
                     <a
                       href={it.url}
