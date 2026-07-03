@@ -279,6 +279,9 @@ export interface Post {
   body_html: string | null;
   body_md: string | null;
   usage_json: string | null;
+  review_json: string | null;
+  seo_title: string | null;
+  seo_meta_description: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -462,10 +465,18 @@ export interface StepUsage {
 
 export type UsageMap = Partial<Record<PostStep, StepUsage>>;
 
-export async function runPostStep(postId: string, step: PostStep) {
+export async function runPostStep(postId: string, step: PostStep, opts?: { excludeDomains?: string[] }) {
   const llm_config = buildStepLLMConfig(step);
   return api<{ step: PostStep; text: string; usage?: StepUsage; usage_all?: UsageMap; quality_warnings?: string[]; truncated?: boolean }>(`${BASE}/posts/${postId}/step`, {
     method: 'POST',
-    body: { step, llm_config },
+    body: { step, llm_config, ...(opts?.excludeDomains?.length ? { exclude_domains: opts.excludeDomains } : {}) },
+  });
+}
+
+export async function generateSeoMeta(postId: string) {
+  const llm_config = buildStepLLMConfig('outline');
+  return api<{ seo_title: string; seo_meta_description: string }>(`${BASE}/posts/${postId}/meta`, {
+    method: 'POST',
+    body: { llm_config },
   });
 }

@@ -26,10 +26,11 @@ import {
   postStepPromptKeys,
   resolvePromptFromMap,
 } from '../content-writer/prompt-registry';
-import { repairWriterOutputIfNeeded } from '../content-writer/quality';
+import { repairWriterOutputIfNeeded, stripOutlineMarkers } from '../content-writer/quality';
 import { buildWriterPromptContext, renderPromptTemplate, type WriterPromptContext } from '../content-writer/prompt-template';
 import { buildPostStepPersistenceUpdate, pruneDownstreamStepUsage } from '../content-writer/post-step-persistence';
-import { extractNeverCiteTerms, filterExcludedSources } from '../content-writer/source-filter';
+import { extractNeverCiteTerms, filterExcludedSources, filterCitationsByDomains } from '../content-writer/source-filter';
+import { recentHistorySql } from '../content-writer/history';
 import {
   extractInternalLinks,
   extractPageEvidence,
@@ -47,6 +48,7 @@ import {
 import { fetchAndParseHtml } from '../site-audit/html-parser';
 import { dataforseoRequestCached, extractResult } from '../dataforseo/client';
 import { safeFetch, UnsafeUrlError } from '../lib/safe-fetch';
+import { buildSeoMetaPrompt, parseSeoMetaResponse } from '../content-writer/seo-meta';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -139,7 +141,10 @@ function resolvePostStepMaxTokens(step: PostStep, model: string | null | undefin
     if (step === 'draft') return 16000;
   }
   if (step === 'draft') return 16384;
-  if (step === 'review') return 8192;
+  // Outline shares the review cap: DeepSeek V4 Pro is a reasoning model and
+  // can spend a large share of the budget on hidden reasoning, so 4096 got
+  // outlines visibly cut off in the field.
+  if (step === 'review' || step === 'outline') return 8192;
   return 4096;
 }
 
@@ -1410,7 +1415,7 @@ export async function handleFinalize(
   ).bind(newId(), doc.conversation_id, finalizeMsg).run();
 
   const history = await env.DB.prepare(
-    `SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 100`
+    recentHistorySql(100)
   ).bind(doc.conversation_id).all<{ role: 'user' | 'assistant'; content: string }>();
 
   const messages: ChatMessage[] = [
@@ -1605,7 +1610,7 @@ export async function handlePostStep(
   const post = await getPostForUser(env, userId, postId);
   if (!post) return json({ error: 'not found' }, 404);
 
-  const body = await request.json() as { step?: PostStep; llm_config?: UserLLMConfig };
+  const body = await request.json() as { step?: PostStep; llm_config?: UserLLMConfig; exclude_domains?: string[] };
   const step = body.step;
   if (!step || !['research', 'outline', 'draft', 'review'].includes(step)) {
     return json({ error: 'invalid step' }, 400);
@@ -1704,6 +1709,14 @@ export async function handlePostStep(
     userPrompt.source === 'published' ? userPrompt.text : undefined,
     promptContext,
   );
+  const excludeDomains = Array.isArray(body.exclude_domains)
+    ? [...new Set(body.exclude_domains
+        .map((d) => String(d).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0])
+        .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)))].slice(0, 20)
+    : [];
+  const exclusionNote = step === 'research' && excludeDomains.length
+    ? `\n\nDo NOT return sources from these domains (the user rejected them): ${excludeDomains.join(', ')}. Replace them with primary research, government, academic, or official documentation sources.`
+    : '';
   const messages: ChatMessage[] = [
     {
       role: 'system',
@@ -1711,7 +1724,7 @@ export async function handlePostStep(
     },
     {
       role: 'user',
-      content: `${baseUserMessage}${languageReminder}`,
+      content: `${baseUserMessage}${exclusionNote}${languageReminder}`,
     },
   ];
   const aiQuestionContextPromise = step === 'research'
@@ -1789,6 +1802,10 @@ export async function handlePostStep(
   const structuredCitationCount = citations?.length || 0;
   const filteredCitations = filterExcludedSources(citations, excludedSourceTerms);
   citations = filteredCitations.sources;
+  const domainFiltered = step === 'research'
+    ? filterCitationsByDomains(citations, excludeDomains)
+    : { sources: citations, filteredCount: 0 };
+  citations = domainFiltered.sources;
 
   // Defensive: LLMs occasionally wrap the entire response in a ```markdown fence,
   // which makes downstream renderers treat it as one code block. Strip a single
@@ -1800,6 +1817,10 @@ export async function handlePostStep(
     text = stripBannedTypography(text);
   }
   if (step === 'draft' || step === 'review') {
+    // Outline tags ([CAPSULE]/[NARRATIVE]/[TABLE]) sometimes leak into the
+    // drafted headings; they are instructions, not content. Outline output
+    // keeps them (the outline editor parses them into section types).
+    text = stripOutlineMarkers(text);
     const repair = repairWriterOutputIfNeeded(text);
     text = repair.text;
     qualityWarnings = repair.warnings;
@@ -1813,6 +1834,8 @@ export async function handlePostStep(
         ai_question_count: aiQuestionContext?.questions?.length || 0,
         excluded_terms: excludedSourceTerms,
         filtered_source_count: filteredCitations.filteredCount,
+        user_excluded_domains: excludeDomains,
+        user_excluded_filtered_count: domainFiltered.filteredCount,
         generated_at: new Date().toISOString(),
       }
     : undefined;
@@ -1833,9 +1856,9 @@ export async function handlePostStep(
       case 'draft':
         return buildPostStepPersistenceUpdate(step, text, postId);
       case 'review':
-        // Review is informational — don't overwrite the draft. The frontend
-        // shows the review report to the user.
-        return buildPostStepPersistenceUpdate(step, '', postId);
+        // Review is informational: it never overwrites the draft. Persist the
+        // report so it survives reloads; upstream re-runs null it out.
+        return buildPostStepPersistenceUpdate(step, JSON.stringify({ text, at: new Date().toISOString() }), postId);
     }
   })();
   await env.DB.prepare(updates.sql).bind(...updates.params).run();
@@ -1859,6 +1882,35 @@ export async function handlePostStep(
     `UPDATE content_writer_posts SET usage_json = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(JSON.stringify(usageMap), postId).run();
 
+  // Every successful draft also gets its SEO title + meta description
+  // generated automatically (no extra credit charge; runs inside this
+  // step's budget). Failures never fail the draft: the SeoMetaCard still
+  // offers manual generation via /posts/:id/meta.
+  if (step === 'draft' && text.trim() && !truncated) {
+    try {
+      const metaPrompt = buildSeoMetaPrompt({
+        topic: effectiveBrief.topic || post.topic || '',
+        targetKeyword: effectiveBrief.target_keyword || post.target_keyword || effectiveBrief.topic || '',
+        businessName: workspace?.name || 'the business',
+        bodyMd: text,
+      });
+      const metaConfig = resolveStepLLMConfig('outline', body.llm_config, env);
+      const metaProvider = getLLMProvider(env, metaConfig);
+      const metaRes = await metaProvider.chatComplete(
+        [{ role: 'system', content: metaPrompt.system }, { role: 'user', content: metaPrompt.user }],
+        env, metaConfig, 512,
+      );
+      const parsedMeta = parseSeoMetaResponse(metaRes.text);
+      if (parsedMeta) {
+        await env.DB.prepare(
+          `UPDATE content_writer_posts SET seo_title = ?, seo_meta_description = ?, updated_at = datetime('now') WHERE id = ?`
+        ).bind(parsedMeta.title, parsedMeta.meta_description, postId).run();
+      }
+    } catch (err) {
+      console.warn(`[content-writer] auto seo-meta failed post=${postId} err=${String(err)}`);
+    }
+  }
+
   return json({
     step,
     text,
@@ -1868,4 +1920,51 @@ export async function handlePostStep(
     usage: stepUsage,
     usage_all: usageMap,
   });
+}
+
+// POST /api/content-writer/posts/:id/meta
+// Generates an SEO title tag and meta description from the drafted post
+// body and persists them to the Task 1 seo_title / seo_meta_description
+// columns.
+export async function handleGenerateSeoMeta(
+  request: Request, env: Env, userId: string, postId: string,
+): Promise<Response> {
+  const post = await getPostForUser(env, userId, postId);
+  if (!post) return json({ error: 'not found' }, 404);
+  if (!post.body_md) return json({ error: 'draft the post before generating title and meta' }, 400);
+
+  const body = await request.json().catch(() => ({})) as { llm_config?: UserLLMConfig };
+  const keyError = userOpenRouterKeyRequired(env, body.llm_config);
+  if (keyError) return keyError;
+
+  const workspace = await getWorkspaceForUser(env, userId, post.workspace_id);
+  const brief = post.brief_json ? JSON.parse(post.brief_json) as { topic?: string; target_keyword?: string } : {};
+  const { system, user } = buildSeoMetaPrompt({
+    topic: brief.topic || post.topic || '',
+    targetKeyword: brief.target_keyword || post.target_keyword || brief.topic || '',
+    businessName: workspace?.name || 'the business',
+    bodyMd: post.body_md,
+  });
+
+  const stepConfig = resolveStepLLMConfig('outline', body.llm_config, env);
+  const provider = getLLMProvider(env, stepConfig);
+  let text: string;
+  try {
+    const res = await provider.chatComplete(
+      [{ role: 'system', content: system }, { role: 'user', content: user }],
+      env, stepConfig, 512,
+    );
+    text = res.text;
+  } catch (err) {
+    return json({ error: err instanceof Error ? err.message : 'LLM provider error' }, 502);
+  }
+
+  const parsed = parseSeoMetaResponse(text);
+  if (!parsed) return json({ error: 'could not parse title and meta from the model, run it again' }, 502);
+
+  await env.DB.prepare(
+    `UPDATE content_writer_posts SET seo_title = ?, seo_meta_description = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(parsed.title, parsed.meta_description, postId).run();
+
+  return json({ seo_title: parsed.title, seo_meta_description: parsed.meta_description });
 }

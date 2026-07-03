@@ -8,7 +8,9 @@ import { useEffect, useState } from 'react';
 // reaches green before "done" rather than crawling at 99% forever.
 const ETA_SECONDS: Record<string, number> = {
   research: 25,
-  outline: 25,
+  // Outline runs on a reasoning model with an 8K output cap; long briefs
+  // routinely pass the old 25s estimate, which made the bar look stuck.
+  outline: 50,
   // Draft is bursty: DeepSeek V4 Pro at ~50-60 tok/s on a 16K cap can run
   // for 2-3 minutes on long posts. Bar still asymptotes near 95% after the
   // ETA, so a slightly conservative number here just keeps the percentage
@@ -90,19 +92,25 @@ export default function DraftProgressBar({ step, active }: Props) {
 
   const elapsedSec = startedAt ? Math.round((performance.now() - startedAt) / 1000) : 0;
   const fill = colorAt(pct);
+  const overtime = elapsedSec > eta;
 
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between text-[10px] text-muted-foreground">
         <span className="font-medium uppercase tracking-wider">{step === 'draft' ? 'Writing draft' : `Running ${step}`}</span>
-        <span className="font-mono">{pct}% · {elapsedSec}s / ~{eta}s</span>
+        <span className="font-mono">{overtime ? `${elapsedSec}s, longer than usual` : `${pct}% · ${elapsedSec}s / ~${eta}s`}</span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
-          className="h-full rounded-full transition-[width,background-color] duration-300 ease-out"
+          className={`h-full rounded-full transition-[width,background-color] duration-300 ease-out ${overtime ? 'animate-pulse' : ''}`}
           style={{ width: `${pct}%`, backgroundColor: fill }}
         />
       </div>
+      {overtime && (
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          Still working: complex {step === 'draft' ? 'drafts' : `${step}s`} can take a couple of minutes. The result appears the moment the model finishes.
+        </p>
+      )}
     </div>
   );
 }

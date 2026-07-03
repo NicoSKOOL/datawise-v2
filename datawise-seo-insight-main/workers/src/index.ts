@@ -134,7 +134,7 @@ import {
   handleListWorkspaces, handleCreateWorkspace, handleResolveWorkspace, handleGetWorkspace, handleDeleteWorkspace,
   handleGetKBDoc, handleUpdateKBDoc, handleDiscoverWebsitePages, handleAutoDraftKnowledgeBase, handleInterview, handleFinalize,
   handleListPosts, handleCreatePost, handleGetPost, handleUpdatePost, handleDeletePost,
-  handlePostStep,
+  handlePostStep, handleGenerateSeoMeta,
 } from './routes/content-writer';
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
@@ -1069,6 +1069,12 @@ export default {
         const m = path.match(/^\/api\/content-writer\/posts\/([^/]+)\/step$/);
         if (m && method === 'POST') {
           return await withCredit(() => handlePostStep(request, env, user.id, m[1]), 2);
+        }
+      }
+      {
+        const m = path.match(/^\/api\/content-writer\/posts\/([^/]+)\/meta$/);
+        if (m && method === 'POST') {
+          return await withCredit(() => handleGenerateSeoMeta(request, env, user.id, m[1]), 1);
         }
       }
 

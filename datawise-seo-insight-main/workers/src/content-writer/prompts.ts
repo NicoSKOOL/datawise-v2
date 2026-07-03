@@ -386,7 +386,7 @@ Base everything on the samples I shared in this conversation. No other commentar
 ----------------------------------------------------------------------
 EXPERIENCE NOTES
 [Business name]
-Generated [today's date]
+Generated {{current_date}}
 
 BUSINESS OVERVIEW
 - Business name:
@@ -427,7 +427,7 @@ If we used the early-stage path, include Prior Career, Why You Started, Observed
 ----------------------------------------------------------------------
 OFFER DETAILS
 [Business name]
-Generated [today's date]
+Generated {{current_date}}
 
 OFFERS OVERVIEW
 | Offer | What it covers (1 line) | Who it's for |
@@ -479,7 +479,7 @@ Use only what I told you in this conversation. Do not invent prices, inclusions,
 ----------------------------------------------------------------------
 BRAND GUIDELINES
 [Business name]
-Generated [today's date]
+Generated {{current_date}}
 
 BUSINESS NAME AND SPELLING
 - Exact name:
@@ -564,6 +564,14 @@ A Content Capsule:
 - The H2 (or H3) is phrased as a question
 - The very first sentence directly answers the question, clearly and concisely
 - The rest of the section expands with detail, examples, or context
+
+OPENING ANSWER CAPSULE (required on every post)
+Immediately after the # title, before the TL;DR and before any H2, write ONE standalone paragraph that:
+- Directly and completely answers the target query in 40 to 60 words.
+- Is self-contained: it makes full sense read alone, names the topic explicitly, and never points back at the title with "this" or "it".
+- Includes at least one specific number, timeframe, price, or concrete fact.
+- Reads naturally when spoken aloud. No heading above it, no bold label, no "TL;DR" prefix.
+This paragraph is the sentence AI search engines lift and cite. It is not optional and it is separate from the TL;DR bullets.
 
 Other selected format settings:
 - TL;DR: {{tldr_setting}}
@@ -657,8 +665,10 @@ Output ONLY the outline and that final line. No preamble outside the title block
 Write the full blog post in markdown for {{business_name}}, following the approved outline. Requirements:
 
 - Selected format settings: {{format_settings}}.
+- OPENING ANSWER CAPSULE: immediately after the # title, one standalone paragraph of 40 to 60 words that directly answers the target query, self-contained, with at least one specific number or concrete fact. Place it BEFORE the TL;DR block.
 - Honor the "Format settings" block in the user message exactly: TL;DR (include or skip), Tables (allow or disallow), Capsule technique target, FAQ section (include or skip). These override any defaults you might assume.
 - Use the Content Capsule format on H2s the outline marks with [CAPSULE].
+- The outline's [CAPSULE], [TABLE], and [NARRATIVE] tags are writing instructions only. NEVER copy these tags into the post: every heading in the final post must be clean reader-facing text with no bracketed tags.
 - For any H2 the outline marks with [TABLE], render the section's body as a markdown table (with a header row) — use it for comparisons, specs, or grids that read better as a table than prose. Add a 1-2 sentence intro before the table.
 - Cite every external claim inline as [anchor](url) with anchor text 1-3 contextual words. NEVER a references list at the bottom.
 - Never output citation footnotes, superscript citations, bracketed citation numbers, bare citation indexes, or source markers like [1], [16], ^16, <sup>16</sup>, or inline numbers glued to words.
@@ -678,6 +688,7 @@ Output ONLY the markdown body of the post. No preamble, no closing remarks. DO N
 Run the post you just drafted for {{business_name}} through this checklist and report results. For each item, say PASS or FAIL with a one-line explanation. If anything fails, output a corrected version of the post below the checklist.
 
 [ ] TL;DR present at top with 3-5 key takeaways
+[ ] Opening answer capsule: the first paragraph after the title answers the target query in 40 to 60 words, is self-contained, and contains a specific number or concrete fact
 [ ] Every factual claim is supported by an approved source
 [ ] Sources are cited inline as markdown hyperlinks on 1-3 word contextual anchors. Never a references list.
 [ ] No citation footnotes, superscript citations, bracketed citation numbers, bare citation indexes, or inline numbers glued to words appear anywhere in the post.
@@ -719,7 +730,7 @@ Return:
 - Do NOT list "key statistics", "common questions", or "counter-arguments".
 - Do NOT include numbered citation markers, footnotes, superscripts, bracketed references, or source indexes. Use only clean markdown links in the Source candidates bullets.
 
-Prefer sources from the last 18 months. Prioritise official documentation, .edu / .gov, and reputable industry publications. If two sources contradict each other, flag the disagreement in your summary.`,
+Prefer sources from the last 18 months. Prioritise, in this order: primary research and original data (studies, surveys, government statistics), .gov / .edu pages, official documentation, then reputable industry publications. At least 3 of the sources must be primary research, government, academic, or official documentation. At most 2 sources may be commercial vendor blogs. Never include SEO-tool vendor listicles, content farms, or e-commerce category pages posing as guides. Never include direct competitors of the business (anyone selling what {{business_name}} sells). If two sources contradict each other, flag the disagreement in your summary.`,
 
   outline: `Build a complete outline for {{business_name}} using the brief, approved sources, AI search questions, and knowledge base.
 
@@ -847,6 +858,8 @@ export function buildPostStepUserMessage(brief: {
 
   if (step === 'draft' || step === 'outline') {
     lines.push('', 'Format settings (must follow exactly):');
+    const capsuleQuery = brief.target_keyword || brief.topic;
+    lines.push(`- Opening answer capsule: INCLUDE. One standalone 40 to 60 word paragraph directly under the # title that completely answers "${capsuleQuery}", self-contained, with at least one specific number or concrete fact, placed BEFORE the TL;DR block.`);
     if (brief.include_tldr === false) {
       lines.push(`- TL;DR block: SKIP. Do not include a TL;DR at the top of the post.`);
     } else {

@@ -14,23 +14,23 @@ export function buildPostStepPersistenceUpdate(
   switch (step) {
     case 'research':
       return {
-        sql: `UPDATE content_writer_posts SET sources_json = ?, outline_json = NULL, body_md = NULL, body_html = NULL, status = 'researched', updated_at = ${now} WHERE id = ?`,
+        sql: `UPDATE content_writer_posts SET sources_json = ?, outline_json = NULL, body_md = NULL, body_html = NULL, review_json = NULL, seo_title = NULL, seo_meta_description = NULL, status = 'researched', updated_at = ${now} WHERE id = ?`,
         params: [output, postId],
       };
     case 'outline':
       return {
-        sql: `UPDATE content_writer_posts SET outline_json = ?, body_md = NULL, body_html = NULL, status = 'outlined', updated_at = ${now} WHERE id = ?`,
+        sql: `UPDATE content_writer_posts SET outline_json = ?, body_md = NULL, body_html = NULL, review_json = NULL, seo_title = NULL, seo_meta_description = NULL, status = 'outlined', updated_at = ${now} WHERE id = ?`,
         params: [output, postId],
       };
     case 'draft':
       return {
-        sql: `UPDATE content_writer_posts SET body_md = ?, body_html = NULL, status = 'written', updated_at = ${now} WHERE id = ?`,
+        sql: `UPDATE content_writer_posts SET body_md = ?, body_html = NULL, review_json = NULL, seo_title = NULL, seo_meta_description = NULL, status = 'written', updated_at = ${now} WHERE id = ?`,
         params: [output, postId],
       };
     case 'review':
       return {
-        sql: `UPDATE content_writer_posts SET updated_at = ${now} WHERE id = ?`,
-        params: [postId],
+        sql: `UPDATE content_writer_posts SET review_json = ?, updated_at = ${now} WHERE id = ?`,
+        params: [output, postId],
       };
   }
 }
