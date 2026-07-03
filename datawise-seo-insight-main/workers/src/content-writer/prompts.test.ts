@@ -8,6 +8,7 @@ import {
   MASTER_WRITING_PROMPT_BASE,
   STEP_INSTRUCTIONS,
   buildPostStepUserMessage,
+  POST_STEP_USER_PROMPTS,
 } from './prompts';
 import { buildWriterPromptContext, renderPromptTemplate } from './prompt-template';
 
@@ -95,5 +96,14 @@ describe('opening answer capsule', () => {
     );
     expect(msg).toContain('Opening answer capsule: INCLUDE');
     expect(msg).toContain('winterize a pool');
+  });
+});
+
+describe('research source quality rules', () => {
+  it('demands primary/official sources and caps vendor blogs', () => {
+    const p = POST_STEP_USER_PROMPTS.research;
+    expect(p).toContain('At least 3 of the sources must be primary');
+    expect(p).toContain('At most 2 sources may be commercial vendor blogs');
+    expect(p.toLowerCase()).toContain('never include seo-tool vendor listicles');
   });
 });

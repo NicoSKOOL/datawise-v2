@@ -1606,7 +1606,7 @@ export async function handlePostStep(
   const post = await getPostForUser(env, userId, postId);
   if (!post) return json({ error: 'not found' }, 404);
 
-  const body = await request.json() as { step?: PostStep; llm_config?: UserLLMConfig };
+  const body = await request.json() as { step?: PostStep; llm_config?: UserLLMConfig; exclude_domains?: string[] };
   const step = body.step;
   if (!step || !['research', 'outline', 'draft', 'review'].includes(step)) {
     return json({ error: 'invalid step' }, 400);
@@ -1705,6 +1705,14 @@ export async function handlePostStep(
     userPrompt.source === 'published' ? userPrompt.text : undefined,
     promptContext,
   );
+  const excludeDomains = Array.isArray(body.exclude_domains)
+    ? [...new Set(body.exclude_domains
+        .map((d) => String(d).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0])
+        .filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)))].slice(0, 20)
+    : [];
+  const exclusionNote = step === 'research' && excludeDomains.length
+    ? `\n\nDo NOT return sources from these domains (the user rejected them): ${excludeDomains.join(', ')}. Replace them with primary research, government, academic, or official documentation sources.`
+    : '';
   const messages: ChatMessage[] = [
     {
       role: 'system',
@@ -1712,7 +1720,7 @@ export async function handlePostStep(
     },
     {
       role: 'user',
-      content: `${baseUserMessage}${languageReminder}`,
+      content: `${baseUserMessage}${exclusionNote}${languageReminder}`,
     },
   ];
   const aiQuestionContextPromise = step === 'research'

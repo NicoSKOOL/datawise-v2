@@ -729,7 +729,7 @@ Return:
 - Do NOT list "key statistics", "common questions", or "counter-arguments".
 - Do NOT include numbered citation markers, footnotes, superscripts, bracketed references, or source indexes. Use only clean markdown links in the Source candidates bullets.
 
-Prefer sources from the last 18 months. Prioritise official documentation, .edu / .gov, and reputable industry publications. If two sources contradict each other, flag the disagreement in your summary.`,
+Prefer sources from the last 18 months. Prioritise, in this order: primary research and original data (studies, surveys, government statistics), .gov / .edu pages, official documentation, then reputable industry publications. At least 3 of the sources must be primary research, government, academic, or official documentation. At most 2 sources may be commercial vendor blogs. Never include SEO-tool vendor listicles, content farms, or e-commerce category pages posing as guides. Never include direct competitors of the business (anyone selling what {{business_name}} sells). If two sources contradict each other, flag the disagreement in your summary.`,
 
   outline: `Build a complete outline for {{business_name}} using the brief, approved sources, AI search questions, and knowledge base.
 
