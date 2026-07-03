@@ -128,6 +128,9 @@ export default function PerformanceTab() {
 
   return (
     <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Weekly checks of your tracked queries for <span className="font-medium text-foreground">{project.domain}</span> across Google AI Mode, ChatGPT, and Perplexity: are you cited for the queries you care about, and is it trending up? Discover new queries worth tracking in the Brand Tracker tab.
+      </p>
       {domainProjects.length > 1 && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
           <span>{domainProjects.length} tracking projects use this domain. Showing:</span>
