@@ -472,3 +472,11 @@ export async function runPostStep(postId: string, step: PostStep, opts?: { exclu
     body: { step, llm_config, ...(opts?.excludeDomains?.length ? { exclude_domains: opts.excludeDomains } : {}) },
   });
 }
+
+export async function generateSeoMeta(postId: string) {
+  const llm_config = buildStepLLMConfig('outline');
+  return api<{ seo_title: string; seo_meta_description: string }>(`${BASE}/posts/${postId}/meta`, {
+    method: 'POST',
+    body: { llm_config },
+  });
+}

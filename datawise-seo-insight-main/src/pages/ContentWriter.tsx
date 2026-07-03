@@ -45,6 +45,7 @@ import { getOutputLanguagePreference, normalizeOutputLanguage, type OutputLangua
 import PostEditor from '@/components/content-writer/PostEditor';
 import ModelBadge from '@/components/content-writer/ModelBadge';
 import DraftProgressBar from '@/components/content-writer/DraftProgressBar';
+import SeoMetaCard from '@/components/content-writer/SeoMetaCard';
 import { classifySourceTier, hostnameOf, type SourceTier } from '@/lib/source-tier';
 
 function StatusBadge({ status }: { status: DocStatus }) {
@@ -2374,6 +2375,7 @@ function PostComposerView({ postId }: { postId: string }) {
             </TabsContent>
 
             <TabsContent value="editor" className="flex-1 overflow-y-auto p-6 mt-0 data-[state=inactive]:hidden">
+              <SeoMetaCard post={post} onGenerated={load} disabled={!post.body_md} />
               {outline ? (
                 <div className="mb-3 flex justify-end">
                   <StepRefreshButton
