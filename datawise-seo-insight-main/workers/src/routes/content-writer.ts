@@ -48,6 +48,7 @@ import {
 import { fetchAndParseHtml } from '../site-audit/html-parser';
 import { dataforseoRequestCached, extractResult } from '../dataforseo/client';
 import { safeFetch, UnsafeUrlError } from '../lib/safe-fetch';
+import { buildSeoMetaPrompt, parseSeoMetaResponse } from '../content-writer/seo-meta';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -1877,4 +1878,51 @@ export async function handlePostStep(
     usage: stepUsage,
     usage_all: usageMap,
   });
+}
+
+// POST /api/content-writer/posts/:id/meta
+// Generates an SEO title tag and meta description from the drafted post
+// body and persists them to the Task 1 seo_title / seo_meta_description
+// columns.
+export async function handleGenerateSeoMeta(
+  request: Request, env: Env, userId: string, postId: string,
+): Promise<Response> {
+  const post = await getPostForUser(env, userId, postId);
+  if (!post) return json({ error: 'not found' }, 404);
+  if (!post.body_md) return json({ error: 'draft the post before generating title and meta' }, 400);
+
+  const body = await request.json().catch(() => ({})) as { llm_config?: UserLLMConfig };
+  const keyError = userOpenRouterKeyRequired(env, body.llm_config);
+  if (keyError) return keyError;
+
+  const workspace = await getWorkspaceForUser(env, userId, post.workspace_id);
+  const brief = post.brief_json ? JSON.parse(post.brief_json) as { topic?: string; target_keyword?: string } : {};
+  const { system, user } = buildSeoMetaPrompt({
+    topic: brief.topic || post.topic || '',
+    targetKeyword: brief.target_keyword || post.target_keyword || brief.topic || '',
+    businessName: workspace?.name || 'the business',
+    bodyMd: post.body_md,
+  });
+
+  const stepConfig = resolveStepLLMConfig('outline', body.llm_config, env);
+  const provider = getLLMProvider(env, stepConfig);
+  let text: string;
+  try {
+    const res = await provider.chatComplete(
+      [{ role: 'system', content: system }, { role: 'user', content: user }],
+      env, stepConfig, 512,
+    );
+    text = res.text;
+  } catch (err) {
+    return json({ error: err instanceof Error ? err.message : 'LLM provider error' }, 502);
+  }
+
+  const parsed = parseSeoMetaResponse(text);
+  if (!parsed) return json({ error: 'could not parse title and meta from the model, run it again' }, 502);
+
+  await env.DB.prepare(
+    `UPDATE content_writer_posts SET seo_title = ?, seo_meta_description = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(parsed.title, parsed.meta_description, postId).run();
+
+  return json({ seo_title: parsed.title, seo_meta_description: parsed.meta_description });
 }
