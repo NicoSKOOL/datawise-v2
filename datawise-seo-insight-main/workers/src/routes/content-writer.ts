@@ -30,6 +30,7 @@ import { repairWriterOutputIfNeeded } from '../content-writer/quality';
 import { buildWriterPromptContext, renderPromptTemplate, type WriterPromptContext } from '../content-writer/prompt-template';
 import { buildPostStepPersistenceUpdate, pruneDownstreamStepUsage } from '../content-writer/post-step-persistence';
 import { extractNeverCiteTerms, filterExcludedSources } from '../content-writer/source-filter';
+import { recentHistorySql } from '../content-writer/history';
 import {
   extractInternalLinks,
   extractPageEvidence,
@@ -1410,7 +1411,7 @@ export async function handleFinalize(
   ).bind(newId(), doc.conversation_id, finalizeMsg).run();
 
   const history = await env.DB.prepare(
-    `SELECT role, content FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 100`
+    recentHistorySql(100)
   ).bind(doc.conversation_id).all<{ role: 'user' | 'assistant'; content: string }>();
 
   const messages: ChatMessage[] = [
