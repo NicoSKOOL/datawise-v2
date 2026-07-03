@@ -1999,6 +1999,15 @@ function PostComposerView({ postId }: { postId: string }) {
       setLanguage(normalizeOutputLanguage(b?.content_output_controls?.language));
     } catch { /* keep current */ }
   }, [post]);
+  // Hydrate the review report from the persisted column so a reload (or
+  // navigating away and back) doesn't lose the QA output.
+  useEffect(() => {
+    if (!post?.review_json) return;
+    try {
+      const r = JSON.parse(post.review_json) as { text?: string };
+      if (r.text) setReviewReport(r.text);
+    } catch { /* ignore */ }
+  }, [post?.review_json]);
 
   const handleLanguageChange = async (next: OutputLanguageCode) => {
     setLanguage(next); // optimistic
@@ -2041,7 +2050,8 @@ function PostComposerView({ postId }: { postId: string }) {
     const alreadyHas =
       (step === 'research' && !!post.sources_json) ||
       (step === 'outline' && !!post.outline_json) ||
-      (step === 'draft' && (!!post.body_md || !!post.body_html));
+      (step === 'draft' && (!!post.body_md || !!post.body_html)) ||
+      (step === 'review' && !!reviewReport);
     if (alreadyHas && !options.force) {
       setActiveTab(STEP_TO_TAB[step]);
       return;
@@ -2052,6 +2062,7 @@ function PostComposerView({ postId }: { postId: string }) {
       const qualityWarnings = res.quality_warnings || [];
       if (step === 'review') {
         setReviewReport(res.text);
+        await load();
       } else {
         setReviewReport(null);
         await load();
@@ -2308,6 +2319,7 @@ function PostComposerView({ postId }: { postId: string }) {
                   <StepButton label="1. Research sources" step="research" busy={busyStep} run={runStep} highlight={nextStep === 'research'} />
                   <StepButton label="2. Outline" step="outline" busy={busyStep} run={runStep} disabled={!sources} highlight={nextStep === 'outline'} />
                   <StepButton label="3. Draft full post" step="draft" busy={busyStep} run={runStep} disabled={!outline} highlight={nextStep === 'draft'} />
+                  <StepButton label="4. Review (QA)" step="review" busy={busyStep} run={runStep} disabled={!post.body_md} highlight={false} />
                 </>
               );
             })()}
@@ -2379,6 +2391,14 @@ function PostComposerView({ postId }: { postId: string }) {
 
             {reviewReport && (
               <TabsContent value="review" className="flex-1 overflow-y-auto p-6 mt-0 data-[state=inactive]:hidden">
+                <div className="mb-3 flex justify-end">
+                  <StepRefreshButton
+                    step="review"
+                    label="Re-run review"
+                    busy={busyStep}
+                    onClick={() => runStep('review', { force: true })}
+                  />
+                </div>
                 <Card>
                   <CardHeader><CardTitle className="text-base">Review report</CardTitle></CardHeader>
                   <CardContent>

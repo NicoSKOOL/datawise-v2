@@ -1842,9 +1842,9 @@ export async function handlePostStep(
       case 'draft':
         return buildPostStepPersistenceUpdate(step, text, postId);
       case 'review':
-        // Review is informational — don't overwrite the draft. The frontend
-        // shows the review report to the user.
-        return buildPostStepPersistenceUpdate(step, '', postId);
+        // Review is informational: it never overwrites the draft. Persist the
+        // report so it survives reloads; upstream re-runs null it out.
+        return buildPostStepPersistenceUpdate(step, JSON.stringify({ text, at: new Date().toISOString() }), postId);
     }
   })();
   await env.DB.prepare(updates.sql).bind(...updates.params).run();
