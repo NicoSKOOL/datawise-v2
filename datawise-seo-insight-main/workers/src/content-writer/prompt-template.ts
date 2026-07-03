@@ -28,6 +28,7 @@ export interface WriterPromptContextInput {
     draft?: string;
   };
   metadata?: Record<string, unknown>;
+  now?: Date;
 }
 
 export interface WriterPromptContext {
@@ -76,6 +77,7 @@ const FALLBACKS: Record<string, string> = {
   main_takeaway: 'the intended takeaway',
   takeaway: 'the intended takeaway',
   notes: 'the post notes',
+  current_date: 'the current date',
 };
 
 const PLACEHOLDER_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
@@ -85,6 +87,7 @@ export function buildWriterPromptContext(input: WriterPromptContextInput): Write
   const brief = input.brief || {};
   const workspace = input.workspace || {};
   const metadata = input.metadata || {};
+  const now = input.now instanceof Date && !isNaN(input.now.getTime()) ? input.now : new Date();
 
   const values: Record<string, string> = {};
   const fallbackKeys = new Set<string>();
@@ -99,6 +102,7 @@ export function buildWriterPromptContext(input: WriterPromptContextInput): Write
     fallbackKeys.add(key);
   };
 
+  set('current_date', now.toISOString().slice(0, 10));
   set('business_name', findFirst([
     extractLineValue(kb.brand_guidelines, ['business name', 'exact name']),
     extractLineValue(kb.service_details, ['business name']),

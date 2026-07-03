@@ -386,7 +386,7 @@ Base everything on the samples I shared in this conversation. No other commentar
 ----------------------------------------------------------------------
 EXPERIENCE NOTES
 [Business name]
-Generated [today's date]
+Generated {{current_date}}
 
 BUSINESS OVERVIEW
 - Business name:
@@ -427,7 +427,7 @@ If we used the early-stage path, include Prior Career, Why You Started, Observed
 ----------------------------------------------------------------------
 OFFER DETAILS
 [Business name]
-Generated [today's date]
+Generated {{current_date}}
 
 OFFERS OVERVIEW
 | Offer | What it covers (1 line) | Who it's for |
@@ -479,7 +479,7 @@ Use only what I told you in this conversation. Do not invent prices, inclusions,
 ----------------------------------------------------------------------
 BRAND GUIDELINES
 [Business name]
-Generated [today's date]
+Generated {{current_date}}
 
 BUSINESS NAME AND SPELLING
 - Exact name:
