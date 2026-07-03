@@ -5,6 +5,9 @@ import {
   withInterviewConductRules,
   resolveInterviewReply,
   FINALIZE_PROMPTS,
+  MASTER_WRITING_PROMPT_BASE,
+  STEP_INSTRUCTIONS,
+  buildPostStepUserMessage,
 } from './prompts';
 import { buildWriterPromptContext, renderPromptTemplate } from './prompt-template';
 
@@ -68,5 +71,29 @@ describe('current_date placeholder', () => {
       expect(rendered).not.toContain("[today's date]");
       expect(rendered).toContain('Generated 2026-07-03');
     }
+  });
+});
+
+describe('opening answer capsule', () => {
+  it('is defined in the master prompt', () => {
+    expect(MASTER_WRITING_PROMPT_BASE).toContain('OPENING ANSWER CAPSULE');
+    expect(MASTER_WRITING_PROMPT_BASE).toContain('40 to 60 words');
+  });
+
+  it('is required by the draft step instruction', () => {
+    expect(STEP_INSTRUCTIONS.draft).toContain('OPENING ANSWER CAPSULE');
+  });
+
+  it('is checked by the review step', () => {
+    expect(STEP_INSTRUCTIONS.review.toLowerCase()).toContain('opening answer capsule');
+  });
+
+  it('is pushed into the draft format settings with the target query named', () => {
+    const msg = buildPostStepUserMessage(
+      { topic: 'How to winterize a pool', target_keyword: 'winterize a pool' },
+      'draft',
+    );
+    expect(msg).toContain('Opening answer capsule: INCLUDE');
+    expect(msg).toContain('winterize a pool');
   });
 });
