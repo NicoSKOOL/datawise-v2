@@ -73,7 +73,7 @@ export default function SeoMetaCard({ post, onGenerated, disabled }: {
           </>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Generate a title tag (60 characters, keyword plus benefit) and meta description (155 characters) from the draft.
+            The SEO title tag (60 characters, keyword plus benefit) and meta description (155 characters) are generated automatically when the draft finishes. If they did not appear, generate them here.
           </p>
         )}
       </CardContent>

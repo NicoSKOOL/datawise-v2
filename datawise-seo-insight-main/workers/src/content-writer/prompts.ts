@@ -668,6 +668,7 @@ Write the full blog post in markdown for {{business_name}}, following the approv
 - OPENING ANSWER CAPSULE: immediately after the # title, one standalone paragraph of 40 to 60 words that directly answers the target query, self-contained, with at least one specific number or concrete fact. Place it BEFORE the TL;DR block.
 - Honor the "Format settings" block in the user message exactly: TL;DR (include or skip), Tables (allow or disallow), Capsule technique target, FAQ section (include or skip). These override any defaults you might assume.
 - Use the Content Capsule format on H2s the outline marks with [CAPSULE].
+- The outline's [CAPSULE], [TABLE], and [NARRATIVE] tags are writing instructions only. NEVER copy these tags into the post: every heading in the final post must be clean reader-facing text with no bracketed tags.
 - For any H2 the outline marks with [TABLE], render the section's body as a markdown table (with a header row) — use it for comparisons, specs, or grids that read better as a table than prose. Add a 1-2 sentence intro before the table.
 - Cite every external claim inline as [anchor](url) with anchor text 1-3 contextual words. NEVER a references list at the bottom.
 - Never output citation footnotes, superscript citations, bracketed citation numbers, bare citation indexes, or source markers like [1], [16], ^16, <sup>16</sup>, or inline numbers glued to words.

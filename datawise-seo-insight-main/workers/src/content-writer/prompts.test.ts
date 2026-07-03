@@ -107,3 +107,9 @@ describe('research source quality rules', () => {
     expect(p.toLowerCase()).toContain('never include seo-tool vendor listicles');
   });
 });
+
+describe('outline marker hygiene', () => {
+  it('draft step forbids copying outline tags into the post', () => {
+    expect(STEP_INSTRUCTIONS.draft).toContain('NEVER copy these tags into the post');
+  });
+});

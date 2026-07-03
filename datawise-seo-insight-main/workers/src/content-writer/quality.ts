@@ -67,6 +67,28 @@ export function repairWriterOutput(text: string): string {
     .replace(/[ \t]{2,}/g, ' ');
 }
 
+// Outline section tags are writing instructions for the draft step, not
+// content. Models occasionally copy them into drafted headings
+// ("## How it works [NARRATIVE]"), so writer output (draft/review) gets a
+// deterministic scrub. Outline output must keep them: the outline editor
+// parses the tags into section types.
+const OUTLINE_MARKER_RE = /[ \t]*\[(?:CAPSULE|NARRATIVE|TABLE)\]/gi;
+
+export function stripOutlineMarkers(text: string): string {
+  let inFence = false;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line.replace(OUTLINE_MARKER_RE, '');
+    })
+    .join('\n');
+}
+
 export function repairWriterOutputIfNeeded(text: string): WriterRepairResult {
   const analysis = analyzeWriterQuality(text);
   if (!shouldRepairWriterOutput(analysis)) {

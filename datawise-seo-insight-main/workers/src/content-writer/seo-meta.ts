@@ -18,6 +18,7 @@ export function buildSeoMetaPrompt(input: SeoMetaPromptInput): { system: string;
     '{"title": "...", "meta_description": "..."}',
     'Rules for title: maximum 60 characters, contains the target keyword near the front, states a concrete benefit, no clickbait, no pipe-brand suffix, no em dashes.',
     'Rules for meta_description: maximum 155 characters, contains the target keyword, starts with or contains an action verb, summarises the post honestly, no em dashes, no quotes inside the text.',
+    'Write both in the same language as the post body.',
   ].join('\n');
   const body = input.bodyMd.length > BODY_CHAR_BUDGET
     ? `${input.bodyMd.slice(0, BODY_CHAR_BUDGET)}\n[truncated]`
