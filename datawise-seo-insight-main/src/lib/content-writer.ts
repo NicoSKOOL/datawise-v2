@@ -279,6 +279,9 @@ export interface Post {
   body_html: string | null;
   body_md: string | null;
   usage_json: string | null;
+  review_json: string | null;
+  seo_title: string | null;
+  seo_meta_description: string | null;
   created_at: string;
   updated_at: string;
 }
