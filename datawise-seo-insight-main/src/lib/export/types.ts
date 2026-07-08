@@ -16,6 +16,12 @@ export type ReportSection =
       headers: string[];
       rows: Array<Array<string | number>>;
       caption?: string;
+      /**
+       * Optional per-column widths as percentages of the content width.
+       * When omitted the renderer auto-sizes columns (long text columns can
+       * starve short ones, so tables mixing both should set this).
+       */
+      colWidthsPct?: number[];
     }
   | { type: 'list'; items: string[]; style: 'bullet' | 'numbered' }
   | { type: 'chart'; pngDataUrl: string; caption?: string; widthPct?: number }
