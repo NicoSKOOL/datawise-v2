@@ -15,19 +15,21 @@ import {
   ResponsiveContainer, Cell,
 } from "recharts";
 
-const WRITER_PROMPT_SECONDARY_COLORS = [
-  "#38bdf8",
-  "#22d3ee",
-  "#2dd4bf",
-  "#818cf8",
-  "#34d399",
-  "#a3e635",
-  "#a78bfa",
-  "#fbbf24",
-  "#fb7185",
-  "#94a3b8",
+// Deliberately far-apart hues so up to 5 compared domains stay tellable
+// apart (feedback 25747527: competitor lines "look almost the same color").
+// Same palette as Traffic Trends.
+const DOMAIN_COLORS = [
+  "#047857",
+  "#2563eb",
+  "#dc2626",
+  "#d97706",
+  "#7c3aed",
+  "#0891b2",
+  "#db2777",
+  "#65a30d",
+  "#475569",
+  "#b45309",
 ];
-const DOMAIN_COLORS = WRITER_PROMPT_SECONDARY_COLORS;
 
 interface DomainResult {
   domain: string;

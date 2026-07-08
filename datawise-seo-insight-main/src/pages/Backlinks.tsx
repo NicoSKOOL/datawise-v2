@@ -62,6 +62,9 @@ import {
   fetchAnchors,
   fetchBacklinksCompetitors,
   cleanBacklinksDomain,
+  cleanBacklinksTarget,
+  isPageTarget,
+  urlToPath,
   type BacklinksTimeseriesRow,
   type BacklinkItem,
   type AnchorItem,
@@ -486,7 +489,7 @@ function BreakdownCard({
 
 // ---------- Backlinks list tab ----------
 
-type BacklinksSortKey = 'source' | 'anchor' | 'rank' | 'lastSeen';
+type BacklinksSortKey = 'source' | 'anchor' | 'linksTo' | 'rank' | 'lastSeen';
 
 function BacklinksListTab({ target }: { target: string }) {
   const [dofollow, setDofollow] = useState<'all' | 'dofollow' | 'nofollow'>('all');
@@ -527,6 +530,7 @@ function BacklinksListTab({ target }: { target: string }) {
     const getters: Record<BacklinksSortKey, (r: BacklinkItem) => number | string | null | undefined> = {
       source: (r) => r.domain_from,
       anchor: (r) => r.anchor,
+      linksTo: (r) => urlToPath(r.url_to),
       rank: (r) => r.domain_from_rank ?? 0,
       lastSeen: (r) => (r.last_seen ? new Date(r.last_seen).getTime() : 0),
     };
@@ -603,6 +607,15 @@ function BacklinksListTab({ target }: { target: string }) {
                       sort={sort}
                       onSort={toggleSort}
                       help="The visible text of the link. Branded anchors are healthy; exact-match keyword anchors in bulk can look manipulative to search engines."
+                    />
+                  </TableHead>
+                  <TableHead>
+                    <SortableHeader
+                      label="Links to"
+                      sortKey="linksTo"
+                      sort={sort}
+                      onSort={toggleSort}
+                      help="The exact page on the analyzed site this backlink points at. Sort by this column to group links per page."
                     />
                   </TableHead>
                   <TableHead className="w-[80px] text-right">
@@ -686,6 +699,31 @@ function BacklinksListTab({ target }: { target: string }) {
                         <p className="text-xs truncate">
                           {it.anchor?.trim() || <span className="text-muted-foreground italic">(empty)</span>}
                         </p>
+                      </TableCell>
+                      <TableCell className="max-w-0">
+                        {it.url_to ? (
+                          <div className="flex items-center gap-1 min-w-0">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-xs truncate font-mono">{urlToPath(it.url_to)}</span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-md text-xs break-all">
+                                {it.url_to}
+                              </TooltipContent>
+                            </Tooltip>
+                            <a
+                              href={it.url_to}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="text-muted-foreground hover:text-foreground shrink-0"
+                              aria-label="Open linked page"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right text-sm tabular-nums">
                         {it.domain_from_rank ?? '—'}
@@ -912,7 +950,8 @@ function categorizeAnchor(anchor: string | undefined, target: string): AnchorCat
   if (/^https?:\/\//.test(a) || /\.[a-z]{2,}\b/.test(a)) return 'url';
   if (/^(click here|read more|learn more|more|here|this|link|website|visit|site)$/.test(a))
     return 'generic';
-  const brandRoot = target.split('.')[0].toLowerCase();
+  const host = target.replace(/^https?:\/\//i, '').replace(/^www\./, '').split('/')[0];
+  const brandRoot = host.split('.')[0].toLowerCase();
   if (brandRoot && a.includes(brandRoot)) return 'branded';
   if (a.split(' ').length <= 4) return 'exact';
   return 'other';
@@ -1705,11 +1744,12 @@ export default function Backlinks() {
   }, [defaultDomain]);
 
   const handleAnalyze = () => {
-    const cleaned = cleanBacklinksDomain(inputDomain);
-    if (cleaned) setActiveTarget(cleaned);
+    const cleaned = cleanBacklinksTarget(inputDomain);
+    if (cleaned.target) setActiveTarget(cleaned.target);
   };
 
   const enabled = !!activeTarget;
+  const pageMode = isPageTarget(activeTarget);
 
   return (
     <div className="space-y-6">
@@ -1724,10 +1764,10 @@ export default function Backlinks() {
         <CardContent className="pt-6">
           <div className="flex flex-col sm:flex-row gap-4 items-end">
             <div className="flex-1 space-y-1.5">
-              <Label htmlFor="bl-domain">Domain</Label>
+              <Label htmlFor="bl-domain">Domain or exact page URL</Label>
               <Input
                 id="bl-domain"
-                placeholder="e.g., ahrefs.com"
+                placeholder="e.g., ahrefs.com or ahrefs.com/blog/seo-tips"
                 value={inputDomain}
                 onChange={(e) => setInputDomain(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
@@ -1738,6 +1778,14 @@ export default function Backlinks() {
               Analyze
             </Button>
           </div>
+          {pageMode && (
+            <div className="mt-3 flex items-center gap-2">
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Page mode</Badge>
+              <p className="text-xs text-muted-foreground">
+                Showing backlinks pointing at this exact page only. Enter a bare domain for site-wide data.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

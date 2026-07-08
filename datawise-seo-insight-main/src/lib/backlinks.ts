@@ -325,3 +325,39 @@ export function cleanBacklinksDomain(raw: string): string {
     .split('/')[0]
     .toLowerCase();
 }
+
+export interface BacklinksTarget {
+  target: string;
+  isUrl: boolean;
+}
+
+// DataForSEO backlinks endpoints accept a domain, subdomain, or exact webpage.
+// A webpage must be an absolute URL; its host and path must match the crawled
+// URL, so preserve www and path casing instead of normalizing them away.
+export function cleanBacklinksTarget(raw: string): BacklinksTarget {
+  const trimmed = raw.trim();
+  if (!trimmed) return { target: '', isUrl: false };
+  const hadProto = /^https?:\/\//i.test(trimmed);
+  const noProto = trimmed.replace(/^https?:\/\//i, '');
+  const slash = noProto.indexOf('/');
+  const host = (slash >= 0 ? noProto.slice(0, slash) : noProto).toLowerCase();
+  const path = slash >= 0 ? noProto.slice(slash) : '';
+  if (!host) return { target: '', isUrl: false };
+  if (path === '' || path === '/') {
+    return { target: host.replace(/^www\./, ''), isUrl: false };
+  }
+  const proto = hadProto && trimmed.toLowerCase().startsWith('http://') ? 'http://' : 'https://';
+  return { target: `${proto}${host}${path}`, isUrl: true };
+}
+
+export function isPageTarget(target: string): boolean {
+  return /^https?:\/\//i.test(target);
+}
+
+// Display helper: the path portion of a url_to for table cells.
+export function urlToPath(url: string | undefined): string {
+  if (!url) return '';
+  const noProto = url.replace(/^https?:\/\//i, '');
+  const slash = noProto.indexOf('/');
+  return slash >= 0 ? noProto.slice(slash) : '/';
+}
