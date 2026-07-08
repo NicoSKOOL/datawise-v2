@@ -1,5 +1,6 @@
 import type { ReportPayload, ReportSection } from '../types';
 import { cappedTable } from './shared';
+import { formatKeywordMetricValue, isKeywordMetricKey } from '@/lib/keyword-metrics';
 
 export type KeywordTableCell = string | number | null | undefined;
 
@@ -54,7 +55,17 @@ export function buildKeywordTableReport({
     sections.push(
       ...cappedTable(
         headers.map(prettyHeader),
-        rows.map((r) => headers.map((h) => (r[h] == null || r[h] === '' ? '--' : (r[h] as string | number))))
+        rows.map((r) =>
+          headers.map((h) => {
+            if (r[h] == null || r[h] === '') return '--';
+            // Match the on-screen table formatting (bug cc2c07fc: exported
+            // CPC was a bare number with no $; competition a raw fraction).
+            if (isKeywordMetricKey(h) && typeof r[h] === 'number') {
+              return formatKeywordMetricValue(h, r[h]);
+            }
+            return r[h] as string | number;
+          })
+        )
       )
     );
   }
