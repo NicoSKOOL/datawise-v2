@@ -9,14 +9,14 @@ import { useToast } from "@/components/ui/use-toast";
 import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchRelatedKeywords } from "@/lib/dataforseo";
+import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 
 export default function RelatedKeywords() {
-  const [keyword, setKeyword] = useState("");
-  const [location, setLocation] = useState("2840"); // Default to US
-  const [language, setLanguage] = useState("en"); // Default to English
-  const [limit, setLimit] = useState("50"); // Default to 50 results
+  const { keyword, setKeyword, location, setLocation, language, setLanguage } = useKeywordFilters();
+  const [limit, setLimit] = usePersistentState<string>("keyword-related:limit", "50");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = usePersistentState<any[]>("keyword-related:results", []);
   const { toast } = useToast();
 
   // Limit options

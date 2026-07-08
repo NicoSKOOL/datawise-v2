@@ -10,11 +10,10 @@ import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerData
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordIdeas } from "@/lib/dataforseo";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 
 export default function KeywordIdeas() {
-  const [keyword, setKeyword] = usePersistentState<string>("keyword-ideas:keyword", "");
-  const [location, setLocation] = usePersistentState<string>("keyword-ideas:location", "2840");
-  const [language, setLanguage] = usePersistentState<string>("keyword-ideas:language", "en");
+  const { keyword, setKeyword, location, setLocation, language, setLanguage } = useKeywordFilters();
   const [limit, setLimit] = usePersistentState<number>("keyword-ideas:limit", 50);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = usePersistentState<any[]>("keyword-ideas:results", []);

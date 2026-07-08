@@ -15,6 +15,8 @@ import { AddToPlannerButton } from "@/components/planner/AddToPlannerButton";
 import { BulkSaveToPlannerButton } from "@/components/planner/BulkSaveToPlannerButton";
 import { normalizePlannerKeyword } from "@/lib/planner-keyword-selection";
 import type { PlannerItemInput } from "@/lib/planner";
+import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 
 interface PAAItem {
   position: number;
@@ -122,22 +124,22 @@ function TreeBranch({ node, depth = 0 }: { node: TreeNode; depth?: number }) {
 }
 
 const PeopleAlsoAsk = () => {
-  const [keyword, setKeyword] = useState("");
-  const [location, setLocation] = useState("2840");
-  const [language, setLanguage] = useState("en");
-  const [depth, setDepth] = useState("2");
+  const { keyword, setKeyword, location, setLocation, language, setLanguage } = useKeywordFilters();
+  const [depth, setDepth] = usePersistentState<string>("paa:depth", "2");
   const [loading, setLoading] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [data, setData] = useState<PAAItem[]>([]);
-  const [sourceStats, setSourceStats] = useState<Record<string, number>>({});
+  // Results persist so switching Keyword Research tabs (which unmounts this
+  // component) doesn't discard a slow, credit-consuming PAA run.
+  const [data, setData] = usePersistentState<PAAItem[]>("paa:data", []);
+  const [sourceStats, setSourceStats] = usePersistentState<Record<string, number>>("paa:source-stats", {});
   const [selectedSource, setSelectedSource] = useState<string>('all');
-  const [extractionMethod, setExtractionMethod] = useState<string>('');
-  const [clicksSimulated, setClicksSimulated] = useState<number>(0);
-  const [estimatedCost, setEstimatedCost] = useState<number>(0);
-  const [apiCallsMade, setApiCallsMade] = useState<number>(0);
-  const [keywordsSearched, setKeywordsSearched] = useState<string[]>([]);
-  const [iterationStats, setIterationStats] = useState<Record<string, number>>({});
-  const [contentMap, setContentMap] = useState<ContentMap | null>(null);
+  const [extractionMethod, setExtractionMethod] = usePersistentState<string>("paa:extraction-method", '');
+  const [clicksSimulated, setClicksSimulated] = usePersistentState<number>("paa:clicks-simulated", 0);
+  const [estimatedCost, setEstimatedCost] = usePersistentState<number>("paa:estimated-cost", 0);
+  const [apiCallsMade, setApiCallsMade] = usePersistentState<number>("paa:api-calls", 0);
+  const [keywordsSearched, setKeywordsSearched] = usePersistentState<string[]>("paa:keywords-searched", []);
+  const [iterationStats, setIterationStats] = usePersistentState<Record<string, number>>("paa:iteration-stats", {});
+  const [contentMap, setContentMap] = usePersistentState<ContentMap | null>("paa:content-map", null);
   const [selectedQuestionKeys, setSelectedQuestionKeys] = useState<Set<string>>(new Set());
 
   const handleDownloadCSV = () => {
