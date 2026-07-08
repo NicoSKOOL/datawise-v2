@@ -349,9 +349,12 @@ export async function sendInterviewMessage(workspaceId: string, docType: DocType
 
 export async function finalizeKBDoc(workspaceId: string, docType: DocType) {
   const llm_config = getLLMConfig() || undefined;
+  // The worker only knows UTC; send the local calendar date so the
+  // "Generated <date>" line in finalized docs matches the user's day.
+  const client_date = new Date().toLocaleDateString('en-CA');
   return api<{ content: string; status: DocStatus }>(
     `${BASE}/workspaces/${workspaceId}/kb/${docType}/finalize`,
-    { method: 'POST', body: { llm_config } },
+    { method: 'POST', body: { llm_config, client_date } },
   );
 }
 

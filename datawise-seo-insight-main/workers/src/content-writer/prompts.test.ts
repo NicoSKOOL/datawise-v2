@@ -65,6 +65,23 @@ describe('current_date placeholder', () => {
     expect(ctx.values.current_date).toBe('2026-07-03');
   });
 
+  it('prefers the client local date over server UTC (bug 56bd3cb3)', () => {
+    // 23:30 UTC on the 3rd is already the 4th for a UTC+2 user.
+    const ctx = buildWriterPromptContext({
+      now: new Date('2026-07-03T23:30:00Z'),
+      currentDate: '2026-07-04',
+    });
+    expect(ctx.values.current_date).toBe('2026-07-04');
+  });
+
+  it('ignores a malformed client date', () => {
+    const ctx = buildWriterPromptContext({
+      now: new Date('2026-07-03T15:00:00Z'),
+      currentDate: '04/07/2026',
+    });
+    expect(ctx.values.current_date).toBe('2026-07-03');
+  });
+
   it('finalize prompts render a real date, not a hallucination slot', () => {
     const ctx = buildWriterPromptContext({ now: new Date('2026-07-03T15:00:00Z') });
     for (const docType of ['experience_notes', 'service_details', 'brand_guidelines'] as const) {
