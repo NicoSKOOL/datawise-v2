@@ -45,7 +45,7 @@ import {
 } from './routes/keywords';
 import {
   handleRankedKeywords, handleDomainRankOverview, handleKeywordGapAnalysis,
-  handleBulkTrafficEstimation, handleCompetitorsDomain, handleGapAnalysisAI,
+  handleBulkTrafficEstimation, handleTrafficHistory, handleCompetitorsDomain, handleGapAnalysisAI,
 } from './routes/competitors';
 import {
   handleGoogleAIMode, handleChatGPTSearch, handlePerplexitySearch,
@@ -445,6 +445,9 @@ export default {
       }
       if (path === '/api/competitors/gap-analysis' && method === 'POST') {
         return await withCredit(() => handleKeywordGapAnalysis(request, env));
+      }
+      if (path === '/api/competitors/traffic-history' && method === 'POST') {
+        return await withCredit(() => handleTrafficHistory(request, env));
       }
       if (path === '/api/competitors/traffic' && method === 'POST') {
         return await withCredit(() => handleBulkTrafficEstimation(request, env));

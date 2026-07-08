@@ -4,6 +4,7 @@ import DomainRankOverview from './DomainRankOverview';
 import RankedKeywords from './RankedKeywords';
 import KeywordGapAnalysis from './KeywordGapAnalysis';
 import BulkTrafficEstimation from './BulkTrafficEstimation';
+import TrafficHistory from './TrafficHistory';
 import CompetitorsDomain from './CompetitorsDomain';
 
 const competitorAnalysisTabs = new Set([
@@ -11,6 +12,7 @@ const competitorAnalysisTabs = new Set([
   'ranked-keywords',
   'gap-analysis',
   'traffic',
+  'traffic-trends',
   'competitors',
 ]);
 
@@ -44,6 +46,7 @@ export default function CompetitorAnalysis() {
           <TabsTrigger value="ranked-keywords">Ranked Keywords</TabsTrigger>
           <TabsTrigger value="gap-analysis">Gap Analysis</TabsTrigger>
           <TabsTrigger value="traffic">Traffic</TabsTrigger>
+          <TabsTrigger value="traffic-trends">Traffic Trends</TabsTrigger>
           <TabsTrigger value="competitors">Competitors</TabsTrigger>
         </TabsList>
 
@@ -58,6 +61,12 @@ export default function CompetitorAnalysis() {
         </TabsContent>
         <TabsContent forceMount value="traffic" className="mt-6">
           <BulkTrafficEstimation />
+        </TabsContent>
+        {/* No forceMount: state persists via usePersistentState, and keeping
+            panels unmounted avoids the duplicate-input-id focus bug fixed in
+            keyword research (ee89b0bb). */}
+        <TabsContent value="traffic-trends" className="mt-6">
+          <TrafficHistory />
         </TabsContent>
         <TabsContent forceMount value="competitors" className="mt-6">
           <CompetitorsDomain />
