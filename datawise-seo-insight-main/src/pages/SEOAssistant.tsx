@@ -136,11 +136,13 @@ export default function SEOAssistant() {
     };
   }, [loading]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  // textOverride lets suggested-prompt chips send immediately; reading `input`
+  // right after setInput(prompt) would send the stale value.
+  const handleSend = useCallback(async (textOverride?: string) => {
+    const text = (textOverride ?? input).trim();
     if (!text || loading) return;
 
-    setInput('');
+    if (!textOverride) setInput('');
     const userMsg: UIMessage = { id: Date.now().toString(), role: 'user', content: text };
     setMessages((prev) => [...prev, userMsg]);
 
@@ -277,9 +279,10 @@ export default function SEOAssistant() {
     { label: 'Traffic Summary', prompt: 'Give me a full performance summary: clicks, impressions, and avg position for the past 7, 30, and 90 days.' },
   ];
 
+  // Send the prepared prompt right away (bug 5a49fe13: chips only filled the
+  // input, so the search never ran unless the user pressed Enter themselves).
   const handleSuggestedPrompt = (prompt: string) => {
-    setInput(prompt);
-    inputRef.current?.focus();
+    handleSend(prompt);
   };
 
   return (
@@ -519,13 +522,17 @@ export default function SEOAssistant() {
 
         {/* Suggested Prompts + Input */}
         <div className="p-4 border-t">
-          {connected && messages.length === 0 && (
+          {/* Chips stay visible mid-conversation (bug 5a49fe13: they used to
+              unmount after the first exchange, forcing a new chat to use
+              another prepared prompt). */}
+          {connected && (
             <div className="flex flex-wrap gap-2 max-w-3xl mx-auto mb-3">
               {suggestedPrompts.map((sp) => (
                 <button
                   key={sp.label}
                   onClick={() => handleSuggestedPrompt(sp.prompt)}
-                  className="text-xs px-3 py-1.5 rounded-full border border-border bg-background hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                  disabled={loading}
+                  className="text-xs px-3 py-1.5 rounded-full border border-border bg-background hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:pointer-events-none"
                 >
                   {sp.label}
                 </button>
@@ -544,7 +551,7 @@ export default function SEOAssistant() {
               disabled={loading}
             />
             <Button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={!input.trim() || loading}
               size="icon"
               className="h-12 w-12 rounded-xl flex-shrink-0"
