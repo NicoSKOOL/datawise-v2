@@ -43,13 +43,19 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research Fan-out Queries tab trigger', 'src/pages/KeywordResearch.tsx', '<TabsTrigger value="fan-out">Fan-out Queries</TabsTrigger>'],
   ['Keyword Research People Also Ask tab panel', 'src/pages/KeywordResearch.tsx', '<PeopleAlsoAsk />'],
   ['Keyword Research Fan-out Queries tab panel', 'src/pages/KeywordResearch.tsx', '<FanOutQueries />'],
-  ['Keyword Research keeps Overview mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="overview" className="mt-6">'],
-  ['Keyword Research keeps Related mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="related" className="mt-6">'],
-  ['Keyword Research keeps Suggestions mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="suggestions" className="mt-6">'],
-  ['Keyword Research keeps Ideas mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="ideas" className="mt-6">'],
-  ['Keyword Research keeps Difficulty mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="difficulty" className="mt-6">'],
-  ['Keyword Research keeps People Also Ask mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="people-also-ask" className="mt-6">'],
-  ['Keyword Research keeps Fan-out mounted', 'src/pages/KeywordResearch.tsx', '<TabsContent forceMount value="fan-out" className="mt-6">'],
+  // Tab state must survive switching. This used to be forceMount on every
+  // panel, but mounting all 7 forms at once duplicated input ids and broke
+  // typing/scroll (bug ee89b0bb). The invariant now is localStorage-backed
+  // state: shared filters in every tab, and per-tab persisted results for
+  // the tabs whose runs are slow or spend DFS credits.
+  ['Keyword Research Overview persists shared filters', 'src/pages/KeywordOverview.tsx', 'useKeywordFilters()'],
+  ['Keyword Research Related persists shared filters', 'src/pages/RelatedKeywords.tsx', 'useKeywordFilters()'],
+  ['Keyword Research Suggestions persists shared filters', 'src/pages/KeywordSuggestions.tsx', 'useKeywordFilters()'],
+  ['Keyword Research Ideas persists shared filters', 'src/pages/KeywordIdeas.tsx', 'useKeywordFilters()'],
+  ['Keyword Research Difficulty persists results', 'src/pages/KeywordDifficulty.tsx', 'usePersistentState<any[]>("keyword-difficulty:results"'],
+  ['Keyword Research People Also Ask persists results', 'src/pages/PeopleAlsoAsk.tsx', 'usePersistentState<PAAItem[]>("paa:data"'],
+  ['Keyword Research Fan-out persists results', 'src/pages/FanOutQueries.tsx', "usePersistentState<FanOutRow[]>('fan-out:rows'"],
+  ['Keyword Research panels mount one at a time (no duplicate input ids)', 'src/pages/KeywordResearch.tsx', '<TabsContent value="overview" className="mt-6">'],
   ['Keyword Research sidebar tab sync', 'src/pages/KeywordResearch.tsx', 'useSearchParams'],
   ['GSC lib retains sitemap indexation API for Phase 2', 'src/lib/gsc.ts', 'getGSCSitemaps'],
   ['Dashboard shows top pages', 'src/pages/Dashboard.tsx', 'TopPagesPanel'],
