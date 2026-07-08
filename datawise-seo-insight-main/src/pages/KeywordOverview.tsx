@@ -12,13 +12,12 @@ import { formatKeywordMetricValue } from "@/lib/keyword-metrics";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordOverview } from "@/lib/dataforseo";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
 
 export default function KeywordOverview() {
-  const [keyword, setKeyword] = usePersistentState<string>("keyword-overview:keyword", "");
-  const [location, setLocation] = usePersistentState<string>("keyword-overview:location", "2840");
-  const [language, setLanguage] = usePersistentState<string>("keyword-overview:language", "en");
+  const { keyword, setKeyword, location, setLocation, language, setLanguage } = useKeywordFilters();
   const [loading, setLoading] = useState(false);
   const [results, setResults] = usePersistentState<any[]>("keyword-overview:results", []);
   const [metrics, setMetrics] = usePersistentState<any>("keyword-overview:metrics", null);

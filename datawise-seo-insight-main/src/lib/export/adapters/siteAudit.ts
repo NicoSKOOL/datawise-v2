@@ -171,7 +171,9 @@ export function buildSiteAuditReport({ audit, findings }: Args): ReportPayload {
             f.severity,
             f.title + (f.evidence?.display_value ? ` (${f.evidence.display_value})` : ''),
             excerpt(f.evidence?.how_to_fix || f.description, 240),
-          ])
+          ]),
+          undefined,
+          [14, 36, 50]
         )
       );
     }

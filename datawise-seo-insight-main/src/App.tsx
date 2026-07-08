@@ -40,6 +40,7 @@ const ContentPlanner = lazy(() => import('./pages/ContentPlanner'));
 const ContentWriter = lazy(() => import('./pages/ContentWriter'));
 const SiteAudit = lazy(() => import('./pages/SiteAudit'));
 const Backlinks = lazy(() => import('./pages/Backlinks'));
+const Tasks = lazy(() => import('./pages/Tasks'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const Roadmap = lazy(() => import('./pages/Roadmap'));
 const AdminMembers = lazy(() => import('./pages/AdminMembers'));
@@ -171,6 +172,7 @@ const App = () => (
             <Route path="/content-writer" element={<ProtectedPage><ContentWriter /></ProtectedPage>} />
             <Route path="/site-audit" element={<ProtectedPage><SiteAudit /></ProtectedPage>} />
             <Route path="/backlinks" element={<ProtectedPage><Backlinks /></ProtectedPage>} />
+            <Route path="/tasks" element={<ProtectedPage><Tasks /></ProtectedPage>} />
             <Route path="/roadmap" element={<ProtectedPage><Roadmap /></ProtectedPage>} />
             <Route path="/settings" element={<ProtectedPage><SettingsPage /></ProtectedPage>} />
             <Route path="/admin/members" element={<ProtectedPage><AdminMembers /></ProtectedPage>} />

@@ -48,6 +48,13 @@ import DraftProgressBar from '@/components/content-writer/DraftProgressBar';
 import SeoMetaCard from '@/components/content-writer/SeoMetaCard';
 import { classifySourceTier, hostnameOf, type SourceTier } from '@/lib/source-tier';
 
+// D1's datetime('now') is UTC but has no 'Z' suffix, so new Date(raw) would
+// parse it as LOCAL time and shift every timestamp by the user's UTC offset
+// (bug 56bd3cb3: wrong dates for a UTC+2 user). Same idiom as SiteAudit.tsx.
+function parseUtc(value: string): Date {
+  return new Date(value.replace(' ', 'T') + (value.endsWith('Z') ? '' : 'Z'));
+}
+
 function StatusBadge({ status }: { status: DocStatus }) {
   if (status === 'ready') {
     return <Badge variant="default" className="gap-1"><CheckCircle2 className="h-3 w-3" /> Ready</Badge>;
@@ -249,7 +256,7 @@ function WorkspacesListView() {
                 <CardDescription className="line-clamp-1">{w.website_url || w.property_url || 'No site URL'}</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-xs text-muted-foreground">Updated {new Date(w.updated_at).toLocaleDateString()}</p>
+                <p className="text-xs text-muted-foreground">Updated {parseUtc(w.updated_at).toLocaleDateString()}</p>
               </CardContent>
             </Card>
           ))}
@@ -492,7 +499,7 @@ function WorkspaceDetailView({ workspaceId }: { workspaceId: string }) {
                           <p className="font-medium">{p.title || p.topic}</p>
                           <p className="text-xs text-muted-foreground">
                             {p.target_keyword ? `${p.target_keyword} • ` : ''}
-                            Updated {new Date(p.updated_at).toLocaleString()}
+                            Updated {parseUtc(p.updated_at).toLocaleString()}
                           </p>
                         </div>
                         <Badge variant="outline" className={POST_STATUS_PILL[p.status]}>

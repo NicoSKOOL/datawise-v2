@@ -279,7 +279,12 @@ function renderKpiGrid(
 
 function renderTable(
   ctx: Ctx,
-  section: { headers: string[]; rows: Array<Array<string | number>>; caption?: string }
+  section: {
+    headers: string[];
+    rows: Array<Array<string | number>>;
+    caption?: string;
+    colWidthsPct?: number[];
+  }
 ) {
   if (section.caption) {
     const { doc } = ctx;
@@ -291,12 +296,21 @@ function renderTable(
     ctx.y += 4;
   }
   ensureSpace(ctx, 20);
+  // Explicit widths (percent of content width) stop autotable from letting a
+  // long text column starve short ones (bug 1a856da2: Severity/Issue in the
+  // Site Audit export were squeezed to unreadable slivers by "How to Fix").
+  const columnStyles = section.colWidthsPct
+    ? Object.fromEntries(
+        section.colWidthsPct.map((pct, i) => [i, { cellWidth: (CONTENT_WIDTH * pct) / 100 }])
+      )
+    : undefined;
   autoTable(ctx.doc, {
     startY: ctx.y,
     head: [section.headers],
     body: section.rows.map((r) => r.map((cell) => (cell ?? '').toString())),
     margin: { left: PAGE.marginX, right: PAGE.marginX },
     styles: { fontSize: 9, cellPadding: 2, textColor: BRAND_RGB.textDark },
+    columnStyles,
     headStyles: {
       fillColor: [...ctx.pal.primary],
       textColor: BRAND_RGB.white,

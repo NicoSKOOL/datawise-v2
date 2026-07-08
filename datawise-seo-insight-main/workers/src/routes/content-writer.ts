@@ -1389,7 +1389,7 @@ export async function handleFinalize(
   const ws = await getWorkspaceForUser(env, userId, workspaceId);
   if (!ws) return json({ error: 'workspace not found' }, 404);
 
-  const body = await request.json().catch(() => ({})) as { llm_config?: UserLLMConfig };
+  const body = await request.json().catch(() => ({})) as { llm_config?: UserLLMConfig; client_date?: string };
   const keyError = userOpenRouterKeyRequired(env, body.llm_config);
   if (keyError) return keyError;
   const doc = await loadKBDoc(env, workspaceId, docType);
@@ -1402,6 +1402,7 @@ export async function handleFinalize(
   const promptContext = buildWriterPromptContext({
     workspace: ws,
     kb: readyKb,
+    currentDate: body.client_date,
   });
   const finalizeMsg = renderPromptTemplate(resolvePromptFromMap(
     promptConfigs,

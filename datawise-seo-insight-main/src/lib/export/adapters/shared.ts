@@ -10,14 +10,15 @@ export const MAX_TABLE_ROWS = 500;
 export function cappedTable(
   headers: string[],
   rows: Array<Array<string | number>>,
-  caption?: string
+  caption?: string,
+  colWidthsPct?: number[]
 ): ReportSection[] {
   if (rows.length <= MAX_TABLE_ROWS) {
-    return [{ type: 'table', headers, rows, caption }];
+    return [{ type: 'table', headers, rows, caption, colWidthsPct }];
   }
   const omitted = rows.length - MAX_TABLE_ROWS;
   return [
-    { type: 'table', headers, rows: rows.slice(0, MAX_TABLE_ROWS), caption },
+    { type: 'table', headers, rows: rows.slice(0, MAX_TABLE_ROWS), caption, colWidthsPct },
     {
       type: 'callout',
       tone: 'info',

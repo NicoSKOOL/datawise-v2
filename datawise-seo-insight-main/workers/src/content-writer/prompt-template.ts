@@ -29,6 +29,12 @@ export interface WriterPromptContextInput {
   };
   metadata?: Record<string, unknown>;
   now?: Date;
+  /**
+   * Client's local calendar date (YYYY-MM-DD). The worker only knows UTC, so
+   * without this a user ahead of UTC gets yesterday's date baked into
+   * generated documents (bug 56bd3cb3). Takes precedence over `now`.
+   */
+  currentDate?: string;
 }
 
 export interface WriterPromptContext {
@@ -102,7 +108,10 @@ export function buildWriterPromptContext(input: WriterPromptContextInput): Write
     fallbackKeys.add(key);
   };
 
-  set('current_date', now.toISOString().slice(0, 10));
+  const clientDate = typeof input.currentDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.currentDate)
+    ? input.currentDate
+    : null;
+  set('current_date', clientDate ?? now.toISOString().slice(0, 10));
   set('business_name', findFirst([
     extractLineValue(kb.brand_guidelines, ['business name', 'exact name']),
     extractLineValue(kb.service_details, ['business name']),

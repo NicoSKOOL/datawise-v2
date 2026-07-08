@@ -27,6 +27,7 @@ import { StatItem } from '@/components/llm-mentions/StatItem';
 import { downloadCSV } from '@/lib/csvUtils';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { useDefaults } from '@/hooks/use-defaults';
+import { usePersistentState } from '@/hooks/use-persistent-state';
 import { AddToPlannerButton } from '@/components/planner/AddToPlannerButton';
 import { BulkSaveToPlannerButton } from '@/components/planner/BulkSaveToPlannerButton';
 import { normalizePlannerKeyword } from '@/lib/planner-keyword-selection';
@@ -106,17 +107,19 @@ function Sparkline({ data }: { data: LlmMonthlySearch[] }) {
 
 export default function FanOutQueries() {
   const { defaultLocation, defaultLanguage } = useDefaults();
-  const [seed, setSeed] = useState('');
+  const [seed, setSeed] = usePersistentState<string>('fan-out:seed', '');
   // Fan-out queries are only populated on ChatGPT rows. Google AI Overview does
   // not expose fan_out_queries[] in the DFS LLM Mentions index.
-  const [platform, setPlatform] = useState<Platform>('chat_gpt');
+  const [platform, setPlatform] = usePersistentState<Platform>('fan-out:platform', 'chat_gpt');
   const [location, setLocation] = useState(defaultLocation);
   const [language, setLanguage] = useState(defaultLanguage);
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
-  const [rows, setRows] = useState<FanOutRow[]>([]);
+  // Results persist so switching Keyword Research tabs (which unmounts this
+  // component) doesn't discard the run.
+  const [rows, setRows] = usePersistentState<FanOutRow[]>('fan-out:rows', []);
   const [error, setError] = useState<string | null>(null);
-  const [lastSearched, setLastSearched] = useState('');
+  const [lastSearched, setLastSearched] = usePersistentState<string>('fan-out:last-searched', '');
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
