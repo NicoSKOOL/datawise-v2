@@ -84,6 +84,22 @@ export async function fetchBulkTrafficEstimation(params: {
   return api('/api/competitors/traffic', { method: 'POST', body: params });
 }
 
+export async function fetchTrafficHistory(params: {
+  targets: string[];
+  months: number;
+  location_code?: number;
+  language_code?: string;
+}): Promise<{
+  date_from: string;
+  date_to: string;
+  targets: Array<{
+    target: string;
+    months: Array<{ date: string; organic_etv: number; organic_count: number; paid_etv: number; paid_count: number }>;
+  }>;
+}> {
+  return api('/api/competitors/traffic-history', { method: 'POST', body: params });
+}
+
 export async function fetchCompetitorsDomain(params: {
   target: string;
   location_code: number;

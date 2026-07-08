@@ -149,6 +149,101 @@ export async function handleBulkTrafficEstimation(request: Request, env: Env): P
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
 }
 
+// Monthly history never changes intraday, so cache a full day instead of the
+// usual 6h to halve repeat DFS spend on the same domains.
+const TRAFFIC_HISTORY_TTL_SECONDS = 86400;
+const TRAFFIC_HISTORY_MAX_TARGETS = 10;
+
+function sanitizeTrafficTarget(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/[/?#].*$/, '');
+}
+
+interface DfsMonthlyMetric {
+  year: number;
+  month: number;
+  etv: number | null;
+  count: number | null;
+}
+
+export interface TrafficHistoryMonth {
+  date: string; // YYYY-MM-01
+  organic_etv: number;
+  organic_count: number;
+  paid_etv: number;
+  paid_count: number;
+}
+
+// Flatten a DFS historical_bulk_traffic_estimation item list into one sorted
+// monthly series per target. metrics.organic / metrics.paid are arrays of
+// { year, month, etv, count }; months missing from one type still appear with
+// zeros so every series has the same x-axis.
+export function buildTrafficHistorySeries(
+  items: Array<{ target?: string; metrics?: { organic?: DfsMonthlyMetric[]; paid?: DfsMonthlyMetric[] } }>,
+): Array<{ target: string; months: TrafficHistoryMonth[] }> {
+  return (items || []).map((item) => {
+    const byDate = new Map<string, TrafficHistoryMonth>();
+    const fold = (entries: DfsMonthlyMetric[] | undefined, kind: 'organic' | 'paid') => {
+      for (const e of entries || []) {
+        if (!e || typeof e.year !== 'number' || typeof e.month !== 'number') continue;
+        const date = `${e.year}-${String(e.month).padStart(2, '0')}-01`;
+        const row = byDate.get(date) ?? { date, organic_etv: 0, organic_count: 0, paid_etv: 0, paid_count: 0 };
+        row[`${kind}_etv`] = Math.round(e.etv || 0);
+        row[`${kind}_count`] = e.count || 0;
+        byDate.set(date, row);
+      }
+    };
+    fold(item.metrics?.organic, 'organic');
+    fold(item.metrics?.paid, 'paid');
+    return {
+      target: item.target || '',
+      months: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    };
+  });
+}
+
+// POST /api/competitors/traffic-history
+// Historical estimated traffic (Ahrefs-style trend) for up to 10 domains.
+// Omitting location/language asks DFS for worldwide traffic, which is the
+// right default when researching a domain whose market you don't know.
+export async function handleTrafficHistory(request: Request, env: Env): Promise<Response> {
+  const { targets, location_code, language_code, months = 12 } = await request.json() as any;
+  if (!Array.isArray(targets) || targets.length === 0) {
+    return new Response(JSON.stringify({ error: 'Targets array is required' }), { status: 400 });
+  }
+
+  const cleanTargets = [...new Set(targets.map((t: unknown) => sanitizeTrafficTarget(String(t))).filter(Boolean))]
+    .slice(0, TRAFFIC_HISTORY_MAX_TARGETS);
+  if (cleanTargets.length === 0) {
+    return new Response(JSON.stringify({ error: 'No valid domains in targets' }), { status: 400 });
+  }
+
+  const monthsBack = Math.min(Math.max(Number(months) || 12, 1), 24);
+  const now = new Date();
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (monthsBack - 1), 1));
+  const dateFrom = from.toISOString().slice(0, 10);
+  const dateTo = now.toISOString().slice(0, 10);
+
+  const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/historical_bulk_traffic_estimation/live', [{
+    targets: cleanTargets,
+    date_from: dateFrom,
+    date_to: dateTo,
+    item_types: ['organic', 'paid'],
+    ...(location_code ? { location_code, language_code: language_code || 'en' } : {}),
+  }], { ttlSeconds: TRAFFIC_HISTORY_TTL_SECONDS });
+
+  const items = (data as any)?.tasks?.[0]?.result?.[0]?.items || [];
+  return new Response(JSON.stringify({
+    date_from: dateFrom,
+    date_to: dateTo,
+    targets: buildTrafficHistorySeries(items),
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
 // POST /api/competitors/domains
 export async function handleCompetitorsDomain(request: Request, env: Env): Promise<Response> {
   const { target, location_code = 2840, language_code = 'en' } = await request.json() as any;

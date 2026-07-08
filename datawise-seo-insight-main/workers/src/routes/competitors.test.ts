@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildGapAnalysisPrompt } from './competitors';
+import { buildGapAnalysisPrompt, buildTrafficHistorySeries } from './competitors';
 
 // The gap-analysis "AI Powered Insights" button used to call a Supabase edge
 // function (keyword-analysis-ai) whose Lovable LLM key was removed during the
@@ -75,5 +75,44 @@ describe('buildGapAnalysisPrompt', () => {
     expect(p).toContain('gapkw0');
     expect(p).toContain('gapkw9');
     expect(p).not.toContain('gapkw10'); // 11th item excluded by the cap
+  });
+});
+
+// Traffic Trends (feature request a369f5f2): buildTrafficHistorySeries folds
+// DFS historical_bulk_traffic_estimation items (metrics.organic / metrics.paid
+// are arrays of { year, month, etv, count }) into one sorted monthly series
+// per target, zero-filling whichever type is missing for a month.
+describe('buildTrafficHistorySeries', () => {
+  it('merges organic and paid entries by month, sorted ascending', () => {
+    const [series] = buildTrafficHistorySeries([{
+      target: 'calixpert.com',
+      metrics: {
+        organic: [
+          { year: 2026, month: 6, etv: 1234.7, count: 89 },
+          { year: 2026, month: 5, etv: 1100.2, count: 80 },
+        ],
+        paid: [
+          { year: 2026, month: 6, etv: 55.4, count: 3 },
+        ],
+      },
+    }]);
+    expect(series.target).toBe('calixpert.com');
+    expect(series.months.map((m) => m.date)).toEqual(['2026-05-01', '2026-06-01']);
+    expect(series.months[1]).toEqual({
+      date: '2026-06-01', organic_etv: 1235, organic_count: 89, paid_etv: 55, paid_count: 3,
+    });
+    // May has no paid entry: zero-filled, not dropped.
+    expect(series.months[0].paid_etv).toBe(0);
+  });
+
+  it('tolerates null etv/count and missing metrics', () => {
+    const result = buildTrafficHistorySeries([
+      { target: 'a.com', metrics: { organic: [{ year: 2026, month: 1, etv: null, count: null }] } },
+      { target: 'b.com' },
+    ]);
+    expect(result[0].months).toEqual([
+      { date: '2026-01-01', organic_etv: 0, organic_count: 0, paid_etv: 0, paid_count: 0 },
+    ]);
+    expect(result[1].months).toEqual([]);
   });
 });
