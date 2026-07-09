@@ -18,7 +18,8 @@ function DeltaBadge({ current, previous, invert = false }: { current: number | n
 
   // For position, lower is better (invert=true)
   const isGood = invert ? diff < 0 : diff > 0;
-  const displayValue = invert ? Math.abs(diff) : Math.abs(diff);
+  // Number() strips trailing zeros so integers render without decimals
+  const displayValue = Number(Math.abs(diff).toFixed(2));
 
   if (isGood) {
     return (

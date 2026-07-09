@@ -577,6 +577,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
 }
 
 // GET /gsc/queries?property_id=xxx&filter=all|top10|page2|opportunities&search=...&sort=clicks&order=desc&limit=100&offset=0
+// With filter=page2&page=<url>: returns the queries behind that single page (mode 'page_queries')
 export async function handleGSCQueries(request: Request, env: Env, userId: string): Promise<Response> {
   const url = new URL(request.url);
   const propertyId = url.searchParams.get('property_id');
@@ -608,6 +609,32 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
 
   // "page2" groups by page URL; everything else groups by query
   if (filter === 'page2') {
+    // Drill-down: ?page=<url> returns the individual queries behind one
+    // Page 2 row, using the same baseWhere so numbers reconcile with the
+    // parent aggregate.
+    const drillPage = url.searchParams.get('page');
+    if (drillPage) {
+      const drillSql = `
+        SELECT query,
+               SUM(clicks) as clicks,
+               SUM(impressions) as impressions,
+               ROUND(AVG(position), 1) as avg_position,
+               ROUND(AVG(ctr), 4) as avg_ctr
+        FROM gsc_search_data WHERE ${baseWhere} AND page = ?
+        GROUP BY query
+        ORDER BY impressions DESC
+        LIMIT 50
+      `;
+      const drillResult = await env.DB.prepare(drillSql).bind(propertyId, drillPage).all();
+      return new Response(JSON.stringify({
+        rows: drillResult.results,
+        mode: 'page_queries',
+        total: drillResult.results.length,
+        limit: 50,
+        offset: 0,
+      }), { headers: { 'Content-Type': 'application/json' } });
+    }
+
     const searchClause = search ? 'AND page LIKE ?' : '';
     const searchParam = search ? `%${search}%` : null;
     const whereClause = `${baseWhere} ${searchClause}`;

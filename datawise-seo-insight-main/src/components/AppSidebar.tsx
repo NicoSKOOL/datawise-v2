@@ -307,6 +307,7 @@ export function AppSidebar() {
               <SelectContent>
                 {properties
                   .filter((prop) => prop.is_enabled !== 0)
+                  .sort((a, b) => cleanDomain(a.site_url).localeCompare(cleanDomain(b.site_url)))
                   .map((prop) => (
                   <SelectItem key={prop.id} value={prop.id}>
                     <span className="flex items-center gap-2 w-full">
