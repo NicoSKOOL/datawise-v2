@@ -14,7 +14,7 @@ import {
   checkProjectRankings, fetchKeywordHistory, fetchProjectReport,
 } from '@/lib/dataforseo';
 import {
-  getGSCData, syncGSCProperty, getGSCQueries,
+  getGSCData, syncGSCProperty, getGSCQueries, getGSCPageQueries,
   type GSCOverviewData, type GSCQueryFilter, type GSCQuerySort, type GSCResultRow,
 } from '@/lib/gsc';
 import {
@@ -1065,6 +1065,11 @@ export default function RankTracking() {
                           limit={100}
                           onLoadMore={() => loadFilteredQueries(true)}
                           trackedKeywords={trackedGSCKeywords}
+                          onLoadPageQueries={
+                            selectedPropertyId
+                              ? (page) => getGSCPageQueries(selectedPropertyId, page).then((r) => r.rows)
+                              : undefined
+                          }
                         />
                       ) : (
                         <GSCQueryTable

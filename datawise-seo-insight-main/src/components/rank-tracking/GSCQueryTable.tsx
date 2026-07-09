@@ -1,5 +1,6 @@
+import { Fragment, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronRight } from 'lucide-react';
 import type { GSCResultRow, GSCQuerySort } from '@/lib/gsc';
 import type { Project } from '@/types/rank-tracking';
 import TrackKeywordButton from './TrackKeywordButton';
@@ -22,6 +23,7 @@ interface GSCQueryTableProps {
   limit: number;
   onLoadMore: () => void;
   trackedKeywords?: Set<string>;
+  onLoadPageQueries?: (page: string) => Promise<GSCResultRow[]>;
 }
 
 function formatPercent(value: number | null | undefined, multiplier = 1) {
@@ -47,8 +49,32 @@ function SortIcon({ column, sort }: { column: GSCQuerySort; sort: SortConfig }) 
 
 export default function GSCQueryTable({
   rows, mode, loading, sort, onSort, onTrack, projects,
-  total, offset, limit, onLoadMore, trackedKeywords,
+  total, offset, limit, onLoadMore, trackedKeywords, onLoadPageQueries,
 }: GSCQueryTableProps) {
+  const [expandedPage, setExpandedPage] = useState<string | null>(null);
+  const [pageQueries, setPageQueries] = useState<Record<string, GSCResultRow[]>>({});
+  const [loadingPage, setLoadingPage] = useState<string | null>(null);
+
+  const togglePage = async (page: string) => {
+    if (!onLoadPageQueries) return;
+    if (expandedPage === page) {
+      setExpandedPage(null);
+      return;
+    }
+    setExpandedPage(page);
+    if (pageQueries[page]) return;
+    setLoadingPage(page);
+    try {
+      const queries = await onLoadPageQueries(page);
+      setPageQueries((prev) => ({ ...prev, [page]: queries }));
+    } catch (err) {
+      console.error('Page queries fetch failed:', err);
+      setExpandedPage(null);
+    } finally {
+      setLoadingPage(null);
+    }
+  };
+
   if (loading && rows.length === 0) {
     return (
       <div className="flex justify-center py-20">
@@ -108,41 +134,102 @@ export default function GSCQueryTable({
           <tbody className="divide-y divide-muted/50">
             {rows.map((row, i) => {
               const label = isPages ? (row.page || '') : (row.query || '');
+              const expandable = isPages && !!onLoadPageQueries;
+              const isExpanded = expandable && expandedPage === label;
               return (
-                <tr key={label || i} className="hover:bg-secondary/40 transition-colors">
-                  <td className="px-8 py-5 max-w-[400px]">
-                    <div>
-                      <p className="font-bold text-sm truncate" title={label}>
-                        {isPages ? stripOrigin(label) : label}
-                      </p>
-                      {isPages && (
-                        <p className="text-xs text-muted-foreground truncate mt-0.5" title={label}>{label}</p>
-                      )}
-                    </div>
-                  </td>
-                  {isPages && (
-                    <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{row.query_count ?? '--'}</td>
-                  )}
-                  <td className="px-8 py-5">
-                    <span className="font-headline font-extrabold text-lg tabular-nums">{row.clicks.toLocaleString()}</span>
-                  </td>
-                  <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{row.impressions.toLocaleString()}</td>
-                  <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{formatPercent(row.avg_ctr, 100)}</td>
-                  <td className="px-8 py-5">
-                    <span className="font-headline font-extrabold text-lg tabular-nums">{row.avg_position}</span>
-                  </td>
-                  {!isPages && (
-                    <td className="px-8 py-5 text-right">
-                      <TrackKeywordButton
-                        keyword={row.query || ''}
-                        position={row.avg_position}
-                        projects={projects}
-                        onTrack={onTrack}
-                        isTracked={trackedKeywords?.has(row.query || '')}
-                      />
+                <Fragment key={label || i}>
+                  <tr
+                    className={`hover:bg-secondary/40 transition-colors ${expandable ? 'cursor-pointer' : ''}`}
+                    onClick={expandable ? () => togglePage(label) : undefined}
+                  >
+                    <td className="px-8 py-5 max-w-[400px]">
+                      <div className="flex items-start gap-2">
+                        {expandable && (
+                          <span className="mt-0.5 text-muted-foreground flex-shrink-0">
+                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </span>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm truncate" title={label}>
+                            {isPages ? stripOrigin(label) : label}
+                          </p>
+                          {isPages && (
+                            <p className="text-xs text-muted-foreground truncate mt-0.5" title={label}>{label}</p>
+                          )}
+                        </div>
+                      </div>
                     </td>
+                    {isPages && (
+                      <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{row.query_count ?? '--'}</td>
+                    )}
+                    <td className="px-8 py-5">
+                      <span className="font-headline font-extrabold text-lg tabular-nums">{row.clicks.toLocaleString()}</span>
+                    </td>
+                    <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{row.impressions.toLocaleString()}</td>
+                    <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{formatPercent(row.avg_ctr, 100)}</td>
+                    <td className="px-8 py-5">
+                      <span className="font-headline font-extrabold text-lg tabular-nums">{row.avg_position}</span>
+                    </td>
+                    {!isPages && (
+                      <td className="px-8 py-5 text-right">
+                        <TrackKeywordButton
+                          keyword={row.query || ''}
+                          position={row.avg_position}
+                          projects={projects}
+                          onTrack={onTrack}
+                          isTracked={trackedKeywords?.has(row.query || '')}
+                        />
+                      </td>
+                    )}
+                  </tr>
+                  {isExpanded && (
+                    <tr className="bg-secondary/20">
+                      <td colSpan={6} className="px-8 py-4">
+                        {loadingPage === label ? (
+                          <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Loading queries...
+                          </div>
+                        ) : (pageQueries[label] || []).length === 0 ? (
+                          <p className="py-3 text-sm text-muted-foreground">No queries found for this page.</p>
+                        ) : (
+                          <table className="w-full text-left">
+                            <thead>
+                              <tr className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+                                <th className="py-2 pr-4">Keyword</th>
+                                <th className="py-2 pr-4">Clicks</th>
+                                <th className="py-2 pr-4">Impressions</th>
+                                <th className="py-2 pr-4">CTR</th>
+                                <th className="py-2 pr-4">Position</th>
+                                <th className="py-2 text-right"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-muted/30">
+                              {(pageQueries[label] || []).map((q, qi) => (
+                                <tr key={q.query || qi}>
+                                  <td className="py-2.5 pr-4 text-sm font-semibold max-w-[360px] truncate" title={q.query}>{q.query}</td>
+                                  <td className="py-2.5 pr-4 text-sm tabular-nums">{q.clicks.toLocaleString()}</td>
+                                  <td className="py-2.5 pr-4 text-sm text-muted-foreground tabular-nums">{q.impressions.toLocaleString()}</td>
+                                  <td className="py-2.5 pr-4 text-sm text-muted-foreground tabular-nums">{formatPercent(q.avg_ctr, 100)}</td>
+                                  <td className="py-2.5 pr-4 text-sm font-bold tabular-nums">{q.avg_position}</td>
+                                  <td className="py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                                    <TrackKeywordButton
+                                      keyword={q.query || ''}
+                                      position={q.avg_position}
+                                      projects={projects}
+                                      onTrack={onTrack}
+                                      isTracked={trackedKeywords?.has(q.query || '')}
+                                    />
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </td>
+                    </tr>
                   )}
-                </tr>
+                </Fragment>
               );
             })}
           </tbody>

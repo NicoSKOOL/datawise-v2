@@ -198,6 +198,14 @@ export interface GSCQueriesResponse {
   offset: number;
 }
 
+export interface GSCPageQueriesResponse {
+  rows: GSCResultRow[];
+  mode: 'page_queries';
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export async function getGSCQueries(
   propertyId: string,
   filter: GSCQueryFilter = 'all',
@@ -217,6 +225,11 @@ export async function getGSCQueries(
     offset: String(offset),
   });
   return api<GSCQueriesResponse>(`/gsc/queries?${params}`);
+}
+
+export async function getGSCPageQueries(propertyId: string, page: string) {
+  const params = new URLSearchParams({ property_id: propertyId, filter: 'page2', page });
+  return api<GSCPageQueriesResponse>(`/gsc/queries?${params}`);
 }
 
 export async function disconnectGSC() {
