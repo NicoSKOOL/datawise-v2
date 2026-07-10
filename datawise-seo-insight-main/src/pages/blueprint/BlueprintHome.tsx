@@ -226,7 +226,11 @@ export default function BlueprintHome() {
   // cancel-requested. Runs that reach a terminal status (partial, succeeded,
   // failed, cancelled) simply stop being included in the poll batch; the
   // interval itself is cleared once on unmount.
+  // Track consecutive failures per runId to avoid toast spam: only show on
+  // first failure, stop polling after 3 consecutive failures.
   useEffect(() => {
+    const failureCountsRef = useRef<Record<string, number>>({});
+
     const interval = setInterval(async () => {
       const current = activeRunsRef.current;
       const toPoll = Object.entries(current).filter(([, run]) =>
@@ -241,12 +245,36 @@ export default function BlueprintHome() {
               `/api/blueprint/v1/research-runs/${run.id}`
             );
             setActiveRuns((prev) => ({ ...prev, [projectId]: response.data }));
+            // Reset failure count on success
+            failureCountsRef.current[run.id] = 0;
           } catch (err) {
-            toast({
-              title: 'Run status check failed',
-              description: (err as Error).message,
-              variant: 'destructive',
-            });
+            const currentCount = failureCountsRef.current[run.id] ?? 0;
+            const newCount = currentCount + 1;
+            failureCountsRef.current[run.id] = newCount;
+
+            // Show toast only on first failure (0 to 1 transition)
+            if (currentCount === 0) {
+              toast({
+                title: 'Run status check failed',
+                description: (err as Error).message,
+                variant: 'destructive',
+              });
+            }
+
+            // Stop polling after 3 consecutive failures
+            if (newCount >= 3) {
+              setActiveRuns((prev) => {
+                const updated = { ...prev };
+                delete updated[projectId];
+                return updated;
+              });
+              const shortId = run.id.slice(0, 8);
+              toast({
+                title: 'Stopped polling run ' + shortId,
+                description: 'After repeated errors. Reload the page to resume.',
+                variant: 'destructive',
+              });
+            }
           }
         })
       );
