@@ -153,6 +153,7 @@ import {
   handleBusinessCategoriesPublic,
 } from './routes/public-tools';
 import { handlePageview, prunePageviews } from './routes/track';
+import { handleBlueprintRequest } from './blueprint/routes/router';
 import {
   handleGetAITracking, handleUpdateAISettings, handleAddAIQueries,
   handleDeleteAIQuery, handleRunAICheck, handleAIReport, handleGetAIAnswer,
@@ -372,6 +373,11 @@ export default {
 
       // All API routes require auth
       if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
+
+      // Blueprint module: admin-gated, all sub-routing inside the module
+      if (path.startsWith('/api/blueprint/')) {
+        return addCors(await handleBlueprintRequest(request, env, user, path, method));
+      }
 
       // --- White-label export branding (auth-required, not credit-gated) ---
       if (path === '/api/branding' && method === 'GET') {
