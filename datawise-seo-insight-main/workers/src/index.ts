@@ -26,6 +26,11 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   KIMI_API_KEY: string;
   OPENROUTER_API_KEY: string;
+  // Blueprint module (admin-gated)
+  BLUEPRINT_DB: D1Database;
+  BLUEPRINT_KV: KVNamespace;
+  BLUEPRINT_ARTIFACTS: R2Bucket;
+  BLUEPRINT_QUEUE: Queue;
 }
 
 import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe, handleUpdateDefaults } from './auth/google';
@@ -1121,6 +1126,11 @@ export default {
       }
       return addCors(json({ error: 'internal_error', request_id: requestId }, 500));
     }
+  },
+
+  async queue(batch: MessageBatch<unknown>, _env: Env, _ctx: ExecutionContext): Promise<void> {
+    // Blueprint research stages are wired in Phase 2. Ack so messages don't retry forever.
+    for (const message of batch.messages) message.ack();
   },
 };
 
