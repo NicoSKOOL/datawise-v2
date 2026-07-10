@@ -5,8 +5,15 @@ export function canonicalize(value: unknown): string {
 }
 
 function sortValue(v: unknown): unknown {
+  if (typeof v === 'number' && !Number.isFinite(v)) {
+    throw new TypeError('canonicalize: non-finite numbers are not supported');
+  }
   if (Array.isArray(v)) return v.map(sortValue);
   if (v && typeof v === 'object') {
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) {
+      throw new TypeError('canonicalize: only plain objects, arrays, and JSON primitives are supported');
+    }
     const obj = v as Record<string, unknown>;
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(obj).sort()) out[key] = sortValue(obj[key]);

@@ -32,3 +32,13 @@ describe('buildStageInputHash', () => {
     expect(h1).not.toBe(h3);
   });
 });
+
+describe('canonicalize guards', () => {
+  it('rejects non-plain objects and non-finite numbers', () => {
+    expect(() => canonicalize(new Date())).toThrow(TypeError);
+    expect(() => canonicalize(new Map())).toThrow(TypeError);
+    expect(() => canonicalize({ a: NaN })).toThrow(TypeError);
+    expect(() => canonicalize({ a: Infinity })).toThrow(TypeError);
+    expect(canonicalize({ a: null, b: [1, 'x', true] })).toBe('{"a":null,"b":[1,"x",true]}');
+  });
+});
