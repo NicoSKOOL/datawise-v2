@@ -32,6 +32,10 @@ describe('scoreKeywordRelevance', () => {
     const excluded = scoreKeywordRelevance(kw('plumber jobs'), brief, relevanceRules);
     const clean = scoreKeywordRelevance(kw('plumber'), brief, relevanceRules);
     expect(excluded.total).toBeLessThan(clean.total);
+    const compound = scoreKeywordRelevance(kw('plumber jobsite cleanup'), brief, relevanceRules);
+    const exact = scoreKeywordRelevance(kw('plumber jobs'), brief, relevanceRules);
+    expect(compound.components.find((c) => c.key === 'excluded_topic_penalty')!.rawValue).toBe(0);
+    expect(exact.components.find((c) => c.key === 'excluded_topic_penalty')!.rawValue).toBeGreaterThan(0);
   });
 });
 

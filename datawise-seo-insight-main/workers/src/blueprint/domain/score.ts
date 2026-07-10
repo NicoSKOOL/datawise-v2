@@ -31,7 +31,10 @@ export function scoreKeywordRelevance(
   const serviceScore = Math.max(0, ...brief.services.map((s) => tokenOverlap(tokens, s.normalizedName)));
   const areaScore = Math.max(0, ...brief.serviceAreas.map((a) => tokenOverlap(tokens, a.city)));
   const categoryScore = tokenOverlap(tokens, brief.category);
-  const excludedPenalty = brief.excludedTopics.some((t) => keyword.normalizedKeyword.includes(t))
+  const excludedPenalty = brief.excludedTopics.some((topic) => {
+    const topicTokens = topic.split(/\s+/).filter(Boolean);
+    return topicTokens.length > 0 && topicTokens.every((t) => tokens.has(t));
+  })
     ? rules.excludedTopicPenalty
     : 0;
 
