@@ -272,10 +272,15 @@ export async function updateProject(
   const briefVersionId = newId('briefver');
   const now = nowIso();
 
-  // The fenced CAS update runs FIRST, before the brief-version insert. A
-  // racing loser (stale project.version) is rejected here with 409 before it
-  // ever reaches the INSERT, so it can no longer collide with the winner on
-  // UNIQUE(project_id, version_number) and surface as a raw 500.
+  // The fenced CAS update and the brief-version insert commit in a single
+  // batch() so they land or fail together. Previously the fenced update ran
+  // first as its own statement and committed immediately; if the insert
+  // then failed (a stray row already occupying (project_id, newVersion), or
+  // any transient error), the project row was left durably pointing
+  // active_brief_version_id at a brief-version that was never created,
+  // bricking every subsequent GET with "Active brief version missing".
+  // Batching makes that outcome impossible: either both statements commit
+  // or neither does.
   //
   // Research becomes stale only when the normalized brief actually changed;
   // a no-op PATCH (identical content, new version number) leaves the
@@ -283,7 +288,7 @@ export async function updateProject(
   const staleClause = hashChanged
     ? ', latest_run_id = NULL, latest_blueprint_version_id = NULL, latest_blueprint_revision_id = NULL'
     : '';
-  const update = await env.BLUEPRINT_DB
+  const updateStmt = env.BLUEPRINT_DB
     .prepare(
       `UPDATE projects
        SET name = ?, mode = ?, website_domain = ?, country_iso = ?, language_code = ?,
@@ -301,40 +306,35 @@ export async function updateProject(
       now,
       project.id,
       project.version
+    );
+  const insertStmt = env.BLUEPRINT_DB
+    .prepare(
+      `INSERT INTO project_brief_versions
+        (id, project_id, version_number, input_json, normalized_json, input_hash, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run();
-
-  if (update.meta.changes === 0) {
-    // Someone else's write landed between our If-Match check and this CAS
-    // update; the client's If-Match is now stale too.
-    throw new BlueprintApiError('stage_conflict', 'Project was updated concurrently; retry with a fresh If-Match');
-  }
+    .bind(
+      briefVersionId,
+      project.id,
+      newVersion,
+      JSON.stringify(parsedBrief),
+      JSON.stringify(normalized),
+      normalized.inputHash,
+      actor.userId,
+      now
+    );
 
   try {
-    await env.BLUEPRINT_DB
-      .prepare(
-        `INSERT INTO project_brief_versions
-          (id, project_id, version_number, input_json, normalized_json, input_hash, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        briefVersionId,
-        project.id,
-        newVersion,
-        JSON.stringify(parsedBrief),
-        JSON.stringify(normalized),
-        normalized.inputHash,
-        actor.userId,
-        now
-      )
-      .run();
+    await env.BLUEPRINT_DB.batch([updateStmt, insertStmt]);
   } catch (err) {
-    // Belt-and-braces: the fenced update above already prevents two
-    // concurrent PATCHes from computing the same newVersion, so this only
-    // fires if a project_brief_versions row already occupies
-    // (project_id, newVersion) some other way. Disambiguate (rather than
-    // pattern-matching the driver's error shape) by checking for that row
-    // directly; anything else is a genuine unexpected error and rethrows.
+    // The batch is transactional: a throw here means nothing committed, so
+    // the fenced update never took effect either and the project still
+    // points at its original brief version (never bricked). Disambiguate
+    // (rather than pattern-matching the driver's error shape) by checking
+    // whether a project_brief_versions row already occupies
+    // (project_id, newVersion) — either a racing PATCH that won first, or a
+    // stray pre-existing row; anything else is a genuine unexpected error
+    // and rethrows.
     const collision = await env.BLUEPRINT_DB
       .prepare('SELECT id FROM project_brief_versions WHERE project_id = ? AND version_number = ?')
       .bind(project.id, newVersion)
@@ -343,6 +343,21 @@ export async function updateProject(
       throw new BlueprintApiError('stage_conflict', 'Concurrent brief update');
     }
     throw err;
+  }
+
+  // batch() succeeding does not by itself prove the fenced UPDATE matched a
+  // row: an UPDATE ... WHERE that matches zero rows is not an error, so a
+  // stale-If-Match CAS miss would otherwise slip through silently here (the
+  // test D1 adapter's batch() is transactional but always returns
+  // changes: 0 stubs, so per-statement meta can't be trusted either way).
+  // Re-read the project row and confirm the CAS actually landed before
+  // treating the update as successful.
+  const postBatch = await env.BLUEPRINT_DB
+    .prepare('SELECT version, active_brief_version_id FROM projects WHERE id = ?')
+    .bind(project.id)
+    .first<{ version: number; active_brief_version_id: string | null }>();
+  if (!postBatch || postBatch.version !== newVersion || postBatch.active_brief_version_id !== briefVersionId) {
+    throw new BlueprintApiError('stage_conflict', 'Concurrent brief update');
   }
 
   const refreshed = await assertProjectAccess(env.BLUEPRINT_DB, actor, project.id);

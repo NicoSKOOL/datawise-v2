@@ -310,6 +310,17 @@ describe('PATCH /api/blueprint/v1/projects/:id', () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as ApiFailure;
     expect(body.error.code).toBe('stage_conflict');
+
+    // The fenced update and the brief-version insert commit in one batch(),
+    // so the failed insert (stray row collision) rolls the fenced update
+    // back too. The project must still resolve normally and still point at
+    // its original brief, not be bricked with "Active brief version
+    // missing" by a dangling active_brief_version_id pointer.
+    const getRes = await call(env, `/api/blueprint/v1/projects/${projectId}`);
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()) as ApiSuccess<ProjectView>;
+    expect(getBody.data.version).toBe(1);
+    expect(getBody.data.name).toBe('Aqua Plumbing');
   });
 
   it('does not clear the latest run pointer when the normalized brief is unchanged', async () => {
@@ -510,10 +521,10 @@ describe('POST /api/blueprint/v1/projects/:id/research-runs', () => {
       body: requestBody,
       headers: { 'Idempotency-Key': key },
     });
-    // The run row + queue send both fail to enqueue, but the run itself was
-    // already durably created before the send was attempted, so the route
-    // still returns 202 (a stalled queued run is recoverable via retry)
-    // instead of surfacing the send failure as a 500.
+    // The queue send fails, but the run itself was already durably created
+    // before the send was attempted, so the route still returns 202 (the
+    // run exists; recovery is starting a new run with a new key) instead of
+    // surfacing the send failure as a 500.
     expect(res.status).toBe(202);
     const body = (await res.json()) as any;
     expect(body.data.status).toBe('queued');
