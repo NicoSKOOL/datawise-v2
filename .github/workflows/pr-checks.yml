@@ -47,6 +47,10 @@ jobs:
         working-directory: datawise-seo-insight-main
         run: npx tsc --noEmit
 
+      - name: Blueprint boundary check
+        working-directory: datawise-seo-insight-main
+        run: node scripts/check-blueprint-boundary.mjs
+
       - name: Unit tests
         working-directory: datawise-seo-insight-main
         run: npm test

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const SCAN_ROOT = join(ROOT, 'workers', 'src');
 const ALLOWED = new Set(['workers/src/index.ts']);
-const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"][^'"]*\bblueprint(?:\/[^'"]*)?['"]/;
+const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"`][^'"`]*\bblueprint(?:\/[^'"`]*)?['"`]/;
 const violations = [];
 
 function walk(dir) {
