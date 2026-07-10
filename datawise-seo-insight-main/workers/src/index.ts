@@ -1134,8 +1134,12 @@ export default {
     }
   },
 
-  async queue(batch: MessageBatch<unknown>, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Blueprint research stages are wired in Phase 2. Ack so messages don't retry forever.
+  async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (batch.queue === 'blueprint-research') {
+      const { handleBlueprintQueueBatch } = await import('./blueprint/orchestration/consumer');
+      await handleBlueprintQueueBatch(batch, env);
+      return;
+    }
     for (const message of batch.messages) message.ack();
   },
 };

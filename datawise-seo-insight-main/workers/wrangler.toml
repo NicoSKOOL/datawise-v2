@@ -68,3 +68,4 @@ queue = "blueprint-research"
 max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3
+dead_letter_queue = "blueprint-research-dlq"
