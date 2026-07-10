@@ -250,6 +250,68 @@ describe('PATCH /api/blueprint/v1/projects/:id', () => {
     expect(versionRow?.c).toBe(2);
   });
 
+  it('returns 409 stage_conflict, not 500, when a second PATCH races with an already-applied one', async () => {
+    const env = fakeEnv();
+    const { json } = await createProject(env);
+    const projectId = json.data.id;
+
+    // First PATCH wins the race and bumps the project to version 2.
+    const first = await call(env, `/api/blueprint/v1/projects/${projectId}`, {
+      method: 'PATCH',
+      body: { ...validBrief, businessName: 'Aqua Plumbing Co' },
+      headers: { 'If-Match': '1' },
+    });
+    expect(first.status).toBe(200);
+
+    // Second PATCH racing against the first still carries the now-stale
+    // If-Match value ('1'). Before the fix, the fenced version check ran
+    // AFTER an unconditional brief-version insert, so a losing racer with a
+    // colliding version_number could hit the UNIQUE constraint and surface
+    // a raw 500 instead of the fenced 409. The fence now runs first, so this
+    // is rejected as a clean 409 before any brief-version row is written.
+    const second = await call(env, `/api/blueprint/v1/projects/${projectId}`, {
+      method: 'PATCH',
+      body: { ...validBrief, businessName: 'Aqua Plumbing Racer' },
+      headers: { 'If-Match': '1' },
+    });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as ApiFailure;
+    expect(body.error.code).toBe('stage_conflict');
+
+    const versionRow = (await env.BLUEPRINT_DB.prepare(
+      'SELECT COUNT(*) as c FROM project_brief_versions WHERE project_id = ?'
+    )
+      .bind(projectId)
+      .first()) as { c: number } | null;
+    expect(versionRow?.c).toBe(2);
+  });
+
+  it('returns 409 stage_conflict, not 500, when a brief_version row already occupies the target version_number', async () => {
+    const env = fakeEnv();
+    const { json } = await createProject(env);
+    const projectId = json.data.id;
+
+    // Simulate a stray/pre-existing brief_version row at the version_number
+    // this PATCH would otherwise claim (project.version is still 1, so the
+    // fenced update below will succeed and try to insert version_number 2).
+    await env.BLUEPRINT_DB.prepare(
+      `INSERT INTO project_brief_versions
+        (id, project_id, version_number, input_json, normalized_json, input_hash, created_by, created_at)
+       VALUES (?, ?, 2, '{}', '{}', 'stray-hash', 'u1', ?)`
+    )
+      .bind(newId('briefver'), projectId, nowIso())
+      .run();
+
+    const res = await call(env, `/api/blueprint/v1/projects/${projectId}`, {
+      method: 'PATCH',
+      body: { ...validBrief, businessName: 'Aqua Plumbing Co' },
+      headers: { 'If-Match': '1' },
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as ApiFailure;
+    expect(body.error.code).toBe('stage_conflict');
+  });
+
   it('does not clear the latest run pointer when the normalized brief is unchanged', async () => {
     const env = fakeEnv();
     const { json } = await createProject(env);
@@ -427,6 +489,64 @@ describe('POST /api/blueprint/v1/projects/:id/research-runs', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as ApiFailure;
     expect(body.error.code).toBe('invalid_input');
+  });
+
+  it('still returns 202 and survives a queue.send failure without creating a duplicate run on replay', async () => {
+    const env = fakeEnv();
+    env.BLUEPRINT_QUEUE.send = async () => {
+      throw new Error('queue unavailable');
+    };
+    const { json } = await createProject(env);
+    const estimate = await createEstimate(env, json.data.id);
+    const key = newId('idem');
+    const requestBody = {
+      estimateId: estimate.estimateId,
+      acceptedDataForSeoCeilingUsd: '5.00',
+      acceptedOpenRouterCeilingUsd: '2.00',
+    };
+
+    const res = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-runs`, {
+      method: 'POST',
+      body: requestBody,
+      headers: { 'Idempotency-Key': key },
+    });
+    // The run row + queue send both fail to enqueue, but the run itself was
+    // already durably created before the send was attempted, so the route
+    // still returns 202 (a stalled queued run is recoverable via retry)
+    // instead of surfacing the send failure as a 500.
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as any;
+    expect(body.data.status).toBe('queued');
+    expect(body.meta).toEqual({ enqueue: 'failed' });
+
+    const runRows = (await env.BLUEPRINT_DB.prepare('SELECT COUNT(*) as c FROM research_runs WHERE project_id = ?')
+      .bind(json.data.id)
+      .first()) as { c: number } | null;
+    expect(runRows?.c).toBe(1);
+
+    const idemRow = (await env.BLUEPRINT_DB.prepare(
+      "SELECT status FROM idempotency_records WHERE idempotency_key = ?"
+    )
+      .bind(key)
+      .first()) as { status: string } | null;
+    expect(idemRow?.status).toBe('completed');
+
+    // A retry with the same key replays the stored response: no second run,
+    // no second (attempted) send.
+    const replay = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-runs`, {
+      method: 'POST',
+      body: requestBody,
+      headers: { 'Idempotency-Key': key },
+    });
+    const replayBody = (await replay.json()) as any;
+    expect(replayBody.data.id).toBe(body.data.id);
+
+    const runRowsAfterReplay = (await env.BLUEPRINT_DB.prepare(
+      'SELECT COUNT(*) as c FROM research_runs WHERE project_id = ?'
+    )
+      .bind(json.data.id)
+      .first()) as { c: number } | null;
+    expect(runRowsAfterReplay?.c).toBe(1);
   });
 
   it('rejects an estimate id belonging to a different project (400 invalid_input)', async () => {

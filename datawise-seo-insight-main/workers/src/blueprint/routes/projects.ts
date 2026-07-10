@@ -19,7 +19,12 @@ function idempotencyExpiry(): string {
 }
 
 const ROUTE_KEY_CREATE_PROJECT = 'POST /projects';
-const ROUTE_KEY_START_RUN = 'POST /projects/:id/research-runs';
+// Computed per request (includes the project id) rather than a shared
+// literal: two different projects must not collide on the same idempotency
+// route key even if a caller (incorrectly) reused an Idempotency-Key value.
+function routeKeyStartRun(projectId: string): string {
+  return `POST /projects/${projectId}/research-runs`;
+}
 
 async function buildProjectView(d1: D1Database, project: ProjectRow): Promise<ProjectView> {
   if (!project.active_brief_version_id) {
@@ -96,14 +101,21 @@ export async function createProject(
     throw new BlueprintApiError('stage_conflict', 'Idempotency-Key was reused with a different payload');
   }
 
+  let projectId: string;
+  let normalized: NormalizedProjectBrief;
+  let now: string;
   try {
     const parsedBrief = parseProjectBrief(rawBody);
-    const normalized = await normalizeProjectBrief(parsedBrief, V1_LIMITS);
+    normalized = await normalizeProjectBrief(parsedBrief, V1_LIMITS);
 
-    const projectId = newId('proj');
+    projectId = newId('proj');
     const briefVersionId = newId('briefver');
-    const now = nowIso();
+    now = nowIso();
 
+    // Side effects begin here (the batch is atomic: either both rows land or
+    // neither does), so a failure of the batch itself still means nothing
+    // was written and it is safe to release the idempotency key below for a
+    // clean retry.
     await env.BLUEPRINT_DB.batch([
       env.BLUEPRINT_DB
         .prepare(
@@ -141,32 +153,40 @@ export async function createProject(
           now
         ),
     ]);
+  } catch (err) {
+    await failIdempotentRequest(env.BLUEPRINT_DB, begin.recordId, true);
+    throw err;
+  }
 
-    const view: ProjectView = {
-      id: projectId,
-      name: normalized.businessName,
-      mode: normalized.mode,
-      brief: normalized,
-      createdAt: now,
-      updatedAt: now,
-      latestRunId: null,
-      latestBlueprintVersionId: null,
-      latestBlueprintRevisionId: null,
-      version: 1,
-    };
+  // Past this point the project + brief version are durably committed.
+  // The idempotency key must never be deleted again: a retry after this
+  // point would otherwise create a second project. Best-effort persist the
+  // completion record and return 201 regardless of whether it succeeds.
+  const view: ProjectView = {
+    id: projectId,
+    name: normalized.businessName,
+    mode: normalized.mode,
+    brief: normalized,
+    createdAt: now,
+    updatedAt: now,
+    latestRunId: null,
+    latestBlueprintVersionId: null,
+    latestBlueprintRevisionId: null,
+    version: 1,
+  };
+  const responseJson = JSON.stringify(successEnvelope(view));
 
-    const responseJson = JSON.stringify(successEnvelope(view));
+  try {
     await completeIdempotentRequest(env.BLUEPRINT_DB, begin.recordId, {
       resourceType: 'project',
       resourceId: projectId,
       responseStatus: 201,
       responseJson,
     });
-    return new Response(responseJson, { status: 201, headers: JSON_HEADERS });
   } catch (err) {
-    await failIdempotentRequest(env.BLUEPRINT_DB, begin.recordId, true);
-    throw err;
+    console.error(`Blueprint: failed to persist idempotency completion for project ${projectId}`, err);
   }
+  return new Response(responseJson, { status: 201, headers: JSON_HEADERS });
 }
 
 const PAGE_SIZE = 20;
@@ -252,24 +272,11 @@ export async function updateProject(
   const briefVersionId = newId('briefver');
   const now = nowIso();
 
-  await env.BLUEPRINT_DB
-    .prepare(
-      `INSERT INTO project_brief_versions
-        (id, project_id, version_number, input_json, normalized_json, input_hash, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      briefVersionId,
-      project.id,
-      newVersion,
-      JSON.stringify(parsedBrief),
-      JSON.stringify(normalized),
-      normalized.inputHash,
-      actor.userId,
-      now
-    )
-    .run();
-
+  // The fenced CAS update runs FIRST, before the brief-version insert. A
+  // racing loser (stale project.version) is rejected here with 409 before it
+  // ever reaches the INSERT, so it can no longer collide with the winner on
+  // UNIQUE(project_id, version_number) and surface as a raw 500.
+  //
   // Research becomes stale only when the normalized brief actually changed;
   // a no-op PATCH (identical content, new version number) leaves the
   // project's latest run/blueprint pointers intact.
@@ -301,6 +308,41 @@ export async function updateProject(
     // Someone else's write landed between our If-Match check and this CAS
     // update; the client's If-Match is now stale too.
     throw new BlueprintApiError('stage_conflict', 'Project was updated concurrently; retry with a fresh If-Match');
+  }
+
+  try {
+    await env.BLUEPRINT_DB
+      .prepare(
+        `INSERT INTO project_brief_versions
+          (id, project_id, version_number, input_json, normalized_json, input_hash, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        briefVersionId,
+        project.id,
+        newVersion,
+        JSON.stringify(parsedBrief),
+        JSON.stringify(normalized),
+        normalized.inputHash,
+        actor.userId,
+        now
+      )
+      .run();
+  } catch (err) {
+    // Belt-and-braces: the fenced update above already prevents two
+    // concurrent PATCHes from computing the same newVersion, so this only
+    // fires if a project_brief_versions row already occupies
+    // (project_id, newVersion) some other way. Disambiguate (rather than
+    // pattern-matching the driver's error shape) by checking for that row
+    // directly; anything else is a genuine unexpected error and rethrows.
+    const collision = await env.BLUEPRINT_DB
+      .prepare('SELECT id FROM project_brief_versions WHERE project_id = ? AND version_number = ?')
+      .bind(project.id, newVersion)
+      .first<{ id: string }>();
+    if (collision) {
+      throw new BlueprintApiError('stage_conflict', 'Concurrent brief update');
+    }
+    throw err;
   }
 
   const refreshed = await assertProjectAccess(env.BLUEPRINT_DB, actor, project.id);
@@ -448,7 +490,7 @@ export async function startResearchRun(
   const requestHash = await hashNormalizedInput(rawBody);
   const begin = await beginIdempotentRequest(env.BLUEPRINT_DB, {
     organizationId: actor.organizationId,
-    routeKey: ROUTE_KEY_START_RUN,
+    routeKey: routeKeyStartRun(project.id),
     idempotencyKey,
     requestHash,
     expiresAt: idempotencyExpiry(),
@@ -463,7 +505,10 @@ export async function startResearchRun(
     throw new BlueprintApiError('stage_conflict', 'Idempotency-Key was reused with a different payload');
   }
 
+  let runId: string;
   try {
+    // Validation only, no side effects: safe to release the idempotency key
+    // on any failure here for a clean client retry.
     const input = parseStartRunInput(rawBody);
 
     const estimate = await env.BLUEPRINT_DB
@@ -487,46 +532,70 @@ export async function startResearchRun(
     const dataForSeoBudgetMicro = toMicroOrThrow('acceptedDataForSeoCeilingUsd', input.acceptedDataForSeoCeilingUsd);
     const openRouterBudgetMicro = toMicroOrThrow('acceptedOpenRouterCeilingUsd', input.acceptedOpenRouterCeilingUsd);
 
-    const runId = newId('run');
+    runId = newId('run');
     const now = nowIso();
 
-    await env.BLUEPRINT_DB
-      .prepare(
-        `INSERT INTO research_runs
-          (id, project_id, brief_version_id, estimate_id, status,
-           dataforseo_budget_usd_micro, openrouter_budget_usd_micro, created_by, created_at)
-         VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`
-      )
-      .bind(
-        runId,
-        project.id,
-        project.active_brief_version_id,
-        estimate.id,
-        dataForSeoBudgetMicro,
-        openRouterBudgetMicro,
-        actor.userId,
-        now
-      )
-      .run();
+    // Side effects begin here. The run insert + latest_run_id pointer update
+    // land in one atomic batch, so a failure of the batch itself rolls back
+    // cleanly (nothing durably written) and it is still safe to release the
+    // idempotency key in the catch below. Once this batch has executed
+    // successfully, the key must never be released again: a retry past this
+    // point would enqueue (and create) a second run for the same request.
+    await env.BLUEPRINT_DB.batch([
+      env.BLUEPRINT_DB
+        .prepare(
+          `INSERT INTO research_runs
+            (id, project_id, brief_version_id, estimate_id, status,
+             dataforseo_budget_usd_micro, openrouter_budget_usd_micro, created_by, created_at)
+           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`
+        )
+        .bind(
+          runId,
+          project.id,
+          project.active_brief_version_id,
+          estimate.id,
+          dataForSeoBudgetMicro,
+          openRouterBudgetMicro,
+          actor.userId,
+          now
+        ),
+      env.BLUEPRINT_DB
+        .prepare('UPDATE projects SET latest_run_id = ?, updated_at = ? WHERE id = ?')
+        .bind(runId, now, project.id),
+    ]);
+  } catch (err) {
+    await failIdempotentRequest(env.BLUEPRINT_DB, begin.recordId, true);
+    throw err;
+  }
 
-    await env.BLUEPRINT_DB
-      .prepare('UPDATE projects SET latest_run_id = ?, updated_at = ? WHERE id = ?')
-      .bind(runId, now, project.id)
-      .run();
+  // Past this point the run row + project pointer are durably committed.
+  // Nothing below may delete the idempotency key: a retry after this point
+  // must replay the stored response, not create a second run or a second
+  // queue send. Queue-send and completion-write failures are logged and
+  // absorbed rather than surfaced as a 500 (the run itself exists and is
+  // recoverable: a stalled queued run can be retried via POST .../retry).
+  const view = await buildRunView(env.BLUEPRINT_DB, runId);
 
+  let meta: Record<string, unknown> | undefined;
+  try {
     await env.BLUEPRINT_QUEUE.send({ runId });
+  } catch (err) {
+    meta = { enqueue: 'failed' };
+    console.error(`Blueprint: failed to enqueue research run ${runId}`, err);
+  }
 
-    const view = await buildRunView(env.BLUEPRINT_DB, runId);
-    const responseJson = JSON.stringify(successEnvelope(view));
+  const responseJson = JSON.stringify(successEnvelope(view, meta));
+
+  try {
     await completeIdempotentRequest(env.BLUEPRINT_DB, begin.recordId, {
       resourceType: 'research_run',
       resourceId: runId,
       responseStatus: 202,
       responseJson,
     });
-    return new Response(responseJson, { status: 202, headers: JSON_HEADERS });
   } catch (err) {
-    await failIdempotentRequest(env.BLUEPRINT_DB, begin.recordId, true);
-    throw err;
+    console.error(`Blueprint: failed to persist idempotency completion for research run ${runId}`, err);
   }
+
+  return new Response(responseJson, { status: 202, headers: JSON_HEADERS });
 }

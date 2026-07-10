@@ -6,8 +6,8 @@ import { BlueprintValidationError } from '../domain/errors';
 
 export const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-export function successEnvelope<T>(data: T): ApiSuccess<T> {
-  return { requestId: crypto.randomUUID(), data };
+export function successEnvelope<T>(data: T, meta?: Record<string, unknown>): ApiSuccess<T> {
+  return { requestId: crypto.randomUUID(), data, ...(meta ? { meta } : {}) };
 }
 
 export function ok<T>(data: T, status = 200): Response {
