@@ -40,6 +40,15 @@ describe('validateBlueprintGraph', () => {
     const twoRoots = [...validTree, page('root2', null, '/root2/', null, 'home')];
     expect(validateBlueprintGraph(twoRoots).errors.some((e) => e.code === 'multiple_roots')).toBe(true);
   });
+  it('attributes cycles to only the cyclic nodes, once, regardless of order', () => {
+    const intoCycle = [page('c', 'a', '/c/'), page('a', 'b', '/a/'), page('b', 'a', '/b/')];
+    for (const ordering of [intoCycle, [...intoCycle].reverse()]) {
+      const result = validateBlueprintGraph(ordering);
+      const cycles = result.errors.filter((e) => e.code === 'cycle');
+      expect(cycles).toHaveLength(1);
+      expect([...cycles[0].pageIds].sort()).toEqual(['a', 'b']);
+    }
+  });
   it('ignores rejected pages for slug/keyword uniqueness', () => {
     const rejected = { ...page('z', 'home', '/services/drain-cleaning/', 'drain cleaning austin'), approval: 'rejected' as const };
     expect(validateBlueprintGraph([...validTree, rejected]).valid).toBe(true);

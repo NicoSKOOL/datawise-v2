@@ -41,17 +41,26 @@ export function validateBlueprintGraph(pages: readonly BlueprintPageNode[]): { v
   }
 
   const inCycle = new Set<string>();
+  const reportedCycles = new Set<string>();
   for (const p of pages) {
-    if (inCycle.has(p.id)) continue;
-    const seen = new Set<string>([p.id]);
+    const path: string[] = [p.id];
+    const pathIndex = new Map<string, number>([[p.id, 0]]);
     let cursor = p.parentId;
     while (cursor !== null) {
-      if (seen.has(cursor)) {
-        for (const id of seen) inCycle.add(id);
-        errors.push({ code: 'cycle', pageIds: [...seen], message: `Hierarchy cycle involving ${[...seen].join(', ')}.` });
+      const repeatIndex = pathIndex.get(cursor);
+      if (repeatIndex !== undefined) {
+        const cycleIds = path.slice(repeatIndex);
+        const cycleKey = [...cycleIds].sort().join('|');
+        if (!reportedCycles.has(cycleKey)) {
+          reportedCycles.add(cycleKey);
+          for (const id of cycleIds) inCycle.add(id);
+          errors.push({ code: 'cycle', pageIds: cycleIds, message: `Hierarchy cycle involving ${cycleIds.join(', ')}.` });
+        }
         break;
       }
-      seen.add(cursor);
+      if (inCycle.has(cursor)) break;
+      pathIndex.set(cursor, path.length);
+      path.push(cursor);
       cursor = byId.get(cursor)?.parentId ?? null;
     }
   }
