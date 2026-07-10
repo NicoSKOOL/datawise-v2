@@ -162,6 +162,75 @@ describe('releaseProviderBudget', () => {
   });
 });
 
+describe('reconcile/release status guard', () => {
+  it('double release throws stage_conflict and run reserved stays 0, not negative', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    const { reservationId } = await reserveProviderBudget(d1, runId, 'dataforseo', 600_000, 'op-1');
+
+    await releaseProviderBudget(d1, reservationId);
+    await expect(releaseProviderBudget(d1, reservationId)).rejects.toMatchObject({
+      code: 'stage_conflict',
+    });
+
+    const run = await getRun(d1, runId);
+    expect(run?.dataforseo_reserved_usd_micro).toBe(0);
+  });
+
+  it('double reconcile throws stage_conflict and run actual is counted once', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    const { reservationId } = await reserveProviderBudget(d1, runId, 'dataforseo', 600_000, 'op-1');
+
+    await reconcileProviderBudget(d1, reservationId, 550_000);
+    await expect(reconcileProviderBudget(d1, reservationId, 550_000)).rejects.toMatchObject({
+      code: 'stage_conflict',
+    });
+
+    const run = await getRun(d1, runId);
+    expect(run?.dataforseo_reserved_usd_micro).toBe(0);
+    expect(run?.dataforseo_actual_usd_micro).toBe(550_000);
+  });
+
+  it('release after reconcile throws stage_conflict', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    const { reservationId } = await reserveProviderBudget(d1, runId, 'dataforseo', 600_000, 'op-1');
+
+    await reconcileProviderBudget(d1, reservationId, 550_000);
+
+    await expect(releaseProviderBudget(d1, reservationId)).rejects.toMatchObject({
+      code: 'stage_conflict',
+    });
+
+    const run = await getRun(d1, runId);
+    expect(run?.dataforseo_reserved_usd_micro).toBe(0);
+    expect(run?.dataforseo_actual_usd_micro).toBe(550_000);
+  });
+
+  it('after a double-release attempt, a new reservation cannot exceed the remaining true ceiling', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1, { dataforseoBudgetUsdMicro: 1_000_000 });
+    const { reservationId } = await reserveProviderBudget(d1, runId, 'dataforseo', 600_000, 'op-1');
+
+    await releaseProviderBudget(d1, reservationId);
+    await expect(releaseProviderBudget(d1, reservationId)).rejects.toMatchObject({
+      code: 'stage_conflict',
+    });
+
+    // reserved is back to 0 after the single successful release, so a fresh
+    // reservation up to the full budget should succeed...
+    await reserveProviderBudget(d1, runId, 'dataforseo', 1_000_000, 'op-2');
+
+    // ...and one more dollar of reservation must still be rejected by the
+    // ceiling guard. If the double-release had double-decremented reserved
+    // (going negative), this next reservation would wrongly succeed.
+    await expect(reserveProviderBudget(d1, runId, 'dataforseo', 1, 'op-3')).rejects.toMatchObject({
+      code: 'budget_exceeded',
+    });
+  });
+});
+
 describe('assertRunWithinBudget', () => {
   it('(f) throws budget_exceeded once actual cost reaches the budget, and not before', async () => {
     const { d1 } = createTestDb();

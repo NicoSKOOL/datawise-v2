@@ -84,43 +84,79 @@ async function loadReservation(d1: D1Database, reservationId: string): Promise<R
   return row;
 }
 
+// Claim-first pattern (mirrors the reserveProviderBudget ceiling guard above):
+// the conditional UPDATE below is the ONLY place a reservation transitions
+// out of 'reserved', and it is unconditionally the first statement run. A
+// second call against the same reservation id (double reconcile, double
+// release, or release-after-reconcile / reconcile-after-release) always
+// finds status != 'reserved', sees meta.changes === 0, and throws
+// 'stage_conflict' before the research_runs adjustment ever runs.
+//
+// Crash-safety property: if the process dies between the claim UPDATE and
+// the research_runs adjustment that follows it, the reservation is left
+// 'reconciled'/'released' but the run's reserved total was never
+// decremented for it. That leaves `reserved` OVER-stated relative to true
+// outstanding reservations, which is conservative (it can only make future
+// reservations more likely to hit the ceiling, never allow one to sneak
+// past it). The statement order guarantees `reserved` can never be
+// double-decremented into a negative balance that would defeat the
+// ceiling guard, because the claim step makes retries and races on the
+// same reservation a no-op.
 export async function reconcileProviderBudget(
   d1: D1Database,
   reservationId: string,
   actualUsdMicro: number
 ): Promise<void> {
+  const claim = await d1
+    .prepare(
+      `UPDATE provider_budget_reservations
+       SET status = 'reconciled', actual_cost_usd_micro = ?, reconciled_at = ?
+       WHERE id = ? AND status = 'reserved'`
+    )
+    .bind(actualUsdMicro, nowIso(), reservationId)
+    .run();
+  if (claim.meta.changes === 0) {
+    throw new BlueprintApiError('stage_conflict', 'Reservation already reconciled or released');
+  }
+
+  // Row is now claimed (status != 'reserved'), so it is immutable: no other
+  // caller can race this read.
   const reservation = await loadReservation(d1, reservationId);
   const col = columnPrefix(reservation.provider);
 
-  await d1.batch([
-    d1
-      .prepare(
-        `UPDATE research_runs
-         SET ${col}_reserved_usd_micro = ${col}_reserved_usd_micro - ?,
-             ${col}_actual_usd_micro = ${col}_actual_usd_micro + ?
-         WHERE id = ?`
-      )
-      .bind(reservation.estimated_cost_usd_micro, actualUsdMicro, reservation.run_id),
-    d1
-      .prepare(
-        `UPDATE provider_budget_reservations
-         SET status = 'reconciled', actual_cost_usd_micro = ?, reconciled_at = ?
-         WHERE id = ?`
-      )
-      .bind(actualUsdMicro, nowIso(), reservationId),
-  ]);
+  await d1
+    .prepare(
+      `UPDATE research_runs
+       SET ${col}_reserved_usd_micro = ${col}_reserved_usd_micro - ?,
+           ${col}_actual_usd_micro = ${col}_actual_usd_micro + ?
+       WHERE id = ?`
+    )
+    .bind(reservation.estimated_cost_usd_micro, actualUsdMicro, reservation.run_id)
+    .run();
 }
 
 export async function releaseProviderBudget(d1: D1Database, reservationId: string): Promise<void> {
+  // See reconcileProviderBudget above for the full crash-safety argument;
+  // same claim-first shape applies here.
+  const claim = await d1
+    .prepare(
+      `UPDATE provider_budget_reservations
+       SET status = 'released'
+       WHERE id = ? AND status = 'reserved'`
+    )
+    .bind(reservationId)
+    .run();
+  if (claim.meta.changes === 0) {
+    throw new BlueprintApiError('stage_conflict', 'Reservation already reconciled or released');
+  }
+
   const reservation = await loadReservation(d1, reservationId);
   const col = columnPrefix(reservation.provider);
 
-  await d1.batch([
-    d1
-      .prepare(`UPDATE research_runs SET ${col}_reserved_usd_micro = ${col}_reserved_usd_micro - ? WHERE id = ?`)
-      .bind(reservation.estimated_cost_usd_micro, reservation.run_id),
-    d1.prepare(`UPDATE provider_budget_reservations SET status = 'released' WHERE id = ?`).bind(reservationId),
-  ]);
+  await d1
+    .prepare(`UPDATE research_runs SET ${col}_reserved_usd_micro = ${col}_reserved_usd_micro - ? WHERE id = ?`)
+    .bind(reservation.estimated_cost_usd_micro, reservation.run_id)
+    .run();
 }
 
 export async function assertRunWithinBudget(
