@@ -7,7 +7,7 @@ import { acquireStageLease, completeStage, failStage } from '../db/leases';
 import { STAGE_HANDLERS } from './handlers';
 import type { StageContext, StageHandler } from './handlers';
 import { stageMeta } from './stages';
-import { nextRunnableStage, deriveRunStatus } from './run-status';
+import { nextRunnableStage, deriveRunStatus, loadGapStageNames } from './run-status';
 import type { StageRowLite } from './run-status';
 
 export interface BlueprintQueueEnv {
@@ -22,12 +22,23 @@ const LEASE_MS = 5 * 60_000;
 const RETRY_BACKOFF_MS = 30_000;
 const MAX_ATTEMPTS = 3;
 
+// Fences every run-status write below against a cancellation that landed
+// concurrently (Task 8 Fix 1): 'cancel_requested'/'cancelled' are sticky and
+// must never be clobbered back to 'running' (or any other terminal status)
+// by a stage attempt that was already in flight when the cancel landed.
+const RUN_STATUS_NOT_CANCELLED = `status NOT IN ('cancel_requested','cancelled')`;
+
+export interface ProcessRunResult {
+  advanced: boolean;
+  runStatus: RunStatus;
+  waitUntil?: string;
+}
+
 interface RunRow {
   id: string;
   project_id: string;
   brief_version_id: string;
   status: RunStatus;
-  partial_reasons_json: string;
 }
 
 interface BriefVersionRow {
@@ -43,42 +54,52 @@ async function loadStageRows(d1: D1Database, runId: string): Promise<StageRowLit
   return result.results;
 }
 
-async function appendPartialReason(d1: D1Database, runId: string, stage: BlueprintStage): Promise<void> {
-  const row = await d1
-    .prepare(`SELECT partial_reasons_json FROM research_runs WHERE id = ?`)
-    .bind(runId)
-    .first<{ partial_reasons_json: string }>();
-  const reasons: string[] = row ? JSON.parse(row.partial_reasons_json) : [];
-  if (!reasons.includes(stage)) reasons.push(stage);
-  await d1
-    .prepare(`UPDATE research_runs SET partial_reasons_json = ? WHERE id = ?`)
-    .bind(JSON.stringify(reasons), runId)
-    .run();
+// Re-reads the run's real status after a fenced write reported zero
+// matched rows, so callers report what's actually true in the DB (e.g. a
+// concurrently-landed 'cancel_requested'/'cancelled') rather than the stale
+// in-memory status they started this invocation with.
+async function reloadRunStatus(d1: D1Database, runId: string, fallback: RunStatus): Promise<RunStatus> {
+  const row = await d1.prepare(`SELECT status FROM research_runs WHERE id = ?`).bind(runId).first<{ status: RunStatus }>();
+  return row?.status ?? fallback;
 }
 
 // Single place that decides what happens to the run row after a stage
 // attempt (success, retry_wait, or terminal failure) resolves. Re-derives
 // state from freshly reloaded rows via the Task 7 state machine rather than
 // hand-tracking progress, so this stays correct however the attempt ended.
+// Every write here is fenced against a concurrent cancellation and derives
+// partial_reasons_json fresh from the stage rows (Task 8 Fix 1 + Fix 2): if
+// the run was cancelled or a cancel was requested while this stage attempt
+// was in flight, the UPDATE simply does not match, and we return the run's
+// real (reloaded) status instead of clobbering it back to 'running'.
 async function finalizeStageAttempt(
   env: BlueprintQueueEnv,
   runId: string,
   currentStatus: RunStatus,
   stageJustProcessed: BlueprintStage
-): Promise<{ advanced: boolean; runStatus: RunStatus }> {
+): Promise<ProcessRunResult> {
   const d1 = env.BLUEPRINT_DB;
   const rows = await loadStageRows(d1, runId);
   const next = nextRunnableStage(rows, new Date());
+  const now = nowIso();
+  const partialReasonsJson = JSON.stringify(await loadGapStageNames(d1, runId));
 
   if (next.kind === 'run' || next.kind === 'wait') {
     // More work exists (or is blocked on a future retry): the run is
     // (still) in flight. Only 'run' means there is something immediately
     // actionable, so only that case re-enqueues; a 'wait' stage is picked
     // up on its own future enqueue (queue consumer lands in Task 9).
-    await d1
-      .prepare(`UPDATE research_runs SET current_stage = ?, status = 'running' WHERE id = ?`)
-      .bind(stageJustProcessed, runId)
+    const update = await d1
+      .prepare(
+        `UPDATE research_runs
+         SET current_stage = ?, status = 'running', partial_reasons_json = ?, started_at = COALESCE(started_at, ?)
+         WHERE id = ? AND ${RUN_STATUS_NOT_CANCELLED}`
+      )
+      .bind(stageJustProcessed, partialReasonsJson, now, runId)
       .run();
+    if (update.meta.changes === 0) {
+      return { advanced: false, runStatus: await reloadRunStatus(d1, runId, currentStatus) };
+    }
     if (next.kind === 'run') {
       await env.BLUEPRINT_QUEUE.send({ runId });
     }
@@ -86,10 +107,17 @@ async function finalizeStageAttempt(
   }
 
   const finalStatus: RunStatus = next.kind === 'failed' ? 'failed' : deriveRunStatus(rows, currentStatus);
-  await d1
-    .prepare(`UPDATE research_runs SET current_stage = ?, status = ?, finished_at = COALESCE(finished_at, ?) WHERE id = ?`)
-    .bind(stageJustProcessed, finalStatus, nowIso(), runId)
+  const update = await d1
+    .prepare(
+      `UPDATE research_runs
+       SET current_stage = ?, status = ?, partial_reasons_json = ?, started_at = COALESCE(started_at, ?), finished_at = COALESCE(finished_at, ?)
+       WHERE id = ? AND ${RUN_STATUS_NOT_CANCELLED}`
+    )
+    .bind(stageJustProcessed, finalStatus, partialReasonsJson, now, now, runId)
     .run();
+  if (update.meta.changes === 0) {
+    return { advanced: false, runStatus: await reloadRunStatus(d1, runId, currentStatus) };
+  }
   return { advanced: true, runStatus: finalStatus };
 }
 
@@ -103,16 +131,22 @@ export async function processResearchRun(
   runId: string,
   workerId: string,
   overrides?: Partial<Record<BlueprintStage, StageHandler>>
-): Promise<{ advanced: boolean; runStatus: RunStatus }> {
+): Promise<ProcessRunResult> {
   const d1 = env.BLUEPRINT_DB;
 
   const run = await d1
-    .prepare(
-      `SELECT id, project_id, brief_version_id, status, partial_reasons_json FROM research_runs WHERE id = ?`
-    )
+    .prepare(`SELECT id, project_id, brief_version_id, status FROM research_runs WHERE id = ?`)
     .bind(runId)
     .first<RunRow>();
   if (!run) throw new NotFoundError(`Research run not found: ${runId}`);
+
+  // Cancellation is sticky: once a run has finished cancelling, every later
+  // invocation (including a duplicate queue delivery of a stage message
+  // that was already in flight when the cancel landed) is an idempotent
+  // no-op. Do not touch stage rows, do not enqueue, do not execute a stage.
+  if (run.status === 'cancelled') {
+    return { advanced: false, runStatus: 'cancelled' };
+  }
 
   // Cancellation is checked before selecting the next stage (and therefore
   // before any paid provider call a real handler would make).
@@ -138,15 +172,24 @@ export async function processResearchRun(
   if (next.kind === 'wait') {
     // Another worker holds the next stage's lease, or it is backing off; do
     // not sleep or poll, just report no progress this invocation.
-    return { advanced: false, runStatus: run.status };
+    return { advanced: false, runStatus: run.status, waitUntil: next.until };
   }
 
   if (next.kind === 'done' || next.kind === 'failed') {
     const finalStatus: RunStatus = next.kind === 'failed' ? 'failed' : deriveRunStatus(rows, run.status);
-    await d1
-      .prepare(`UPDATE research_runs SET status = ?, finished_at = COALESCE(finished_at, ?) WHERE id = ?`)
-      .bind(finalStatus, nowIso(), runId)
+    const partialReasonsJson = JSON.stringify(await loadGapStageNames(d1, runId));
+    const now = nowIso();
+    const update = await d1
+      .prepare(
+        `UPDATE research_runs
+         SET status = ?, partial_reasons_json = ?, finished_at = COALESCE(finished_at, ?)
+         WHERE id = ? AND ${RUN_STATUS_NOT_CANCELLED}`
+      )
+      .bind(finalStatus, partialReasonsJson, now, runId)
       .run();
+    if (update.meta.changes === 0) {
+      return { advanced: false, runStatus: await reloadRunStatus(d1, runId, run.status) };
+    }
     return { advanced: false, runStatus: finalStatus };
   }
 
@@ -176,8 +219,12 @@ export async function processResearchRun(
     required: meta.required,
   });
 
-  if (lease.kind === 'busy' || lease.kind === 'wait') {
+  if (lease.kind === 'busy') {
     return { advanced: false, runStatus: run.status };
+  }
+
+  if (lease.kind === 'wait') {
+    return { advanced: false, runStatus: run.status, waitUntil: lease.nextRetryAt };
   }
 
   if (lease.kind === 'acquired') {
@@ -204,7 +251,6 @@ export async function processResearchRun(
         await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'failed' });
       } else {
         await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'skipped' });
-        await appendPartialReason(d1, runId, stage);
       }
     }
   }

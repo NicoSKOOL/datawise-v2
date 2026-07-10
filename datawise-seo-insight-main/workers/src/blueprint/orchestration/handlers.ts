@@ -5,6 +5,7 @@ import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { hashNormalizedInput } from '../domain/hash';
 import { V1_LIMITS } from '../contracts/limits';
 import { newId, nowIso } from '../db/util';
+import { loadGapStageNames } from './run-status';
 
 export interface StageContext {
   d1: D1Database;
@@ -79,7 +80,6 @@ async function collectUsFanoutHandler(): Promise<{
 
 interface RunPublishRow {
   created_by: string;
-  partial_reasons_json: string;
 }
 
 // Real persistence, not a stub: this is the only stage that writes outside
@@ -92,18 +92,26 @@ async function publishBlueprintHandler(ctx: StageContext) {
   const { d1, runId, projectId } = ctx;
 
   const runRow = await d1
-    .prepare(`SELECT created_by, partial_reasons_json FROM research_runs WHERE id = ?`)
+    .prepare(`SELECT created_by FROM research_runs WHERE id = ?`)
     .bind(runId)
     .first<RunPublishRow>();
   if (!runRow) throw new Error(`Research run not found: ${runId}`);
 
-  const countRow = await d1
-    .prepare(`SELECT COUNT(*) AS c FROM blueprint_versions WHERE project_id = ?`)
+  const maxVersionRow = await d1
+    .prepare(`SELECT MAX(version_number) AS maxVersion FROM blueprint_versions WHERE project_id = ?`)
     .bind(projectId)
-    .first<{ c: number }>();
-  const versionNumber = (countRow?.c ?? 0) + 1;
-  const partialReasons: string[] = JSON.parse(runRow.partial_reasons_json);
-  const completeness = partialReasons.length > 0 ? 'partial' : 'complete';
+    .first<{ maxVersion: number | null }>();
+  const versionNumber = (maxVersionRow?.maxVersion ?? 0) + 1;
+
+  // Same derivation the processor uses to finalize the run's own status
+  // (Task 8 Fix 2): completeness and partial_reasons must never disagree
+  // with the run row, so both are computed directly from the stage rows
+  // rather than trusted off the run row's partial_reasons_json, which is
+  // not yet authoritative for this invocation (the processor's own finalize
+  // write for this stage attempt happens after this handler returns).
+  const gapStages = await loadGapStageNames(d1, runId);
+  const partialReasonsJson = JSON.stringify(gapStages);
+  const completeness = gapStages.length > 0 ? 'partial' : 'complete';
   const publishedAt = nowIso();
 
   let versionId = newId('bpv');
@@ -121,7 +129,7 @@ async function publishBlueprintHandler(ctx: StageContext) {
         runId,
         versionNumber,
         completeness,
-        runRow.partial_reasons_json,
+        partialReasonsJson,
         publishedAt,
         publishedAt
       )

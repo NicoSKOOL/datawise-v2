@@ -109,3 +109,23 @@ export function deriveRunStatus(rows: StageRowLite[], current: RunStatus): RunSt
   const hasGap = rows.some((row) => !row.required && GAP_STATUSES.has(row.status));
   return hasGap ? 'partial' : 'succeeded';
 }
+
+// Shared derivation used both when the processor finalizes a run's status
+// and when publish_blueprint computes the published version's completeness
+// (Task 8 Fix 2), so the two can never disagree: a "gap" is any stage left
+// skipped/partial, or an optional stage that exhausted retries and failed
+// outright (required-stage failures already fail the whole run via
+// deriveRunStatus and are not "gaps"). Cancelled rows are deliberately
+// excluded: they only occur on a cancelled run, where deriveRunStatus
+// already short-circuits before gaps matter.
+export async function loadGapStageNames(d1: D1Database, runId: string): Promise<string[]> {
+  const result = await d1
+    .prepare(
+      `SELECT stage_name FROM research_stage_runs WHERE run_id = ? AND status IN ('skipped','partial')
+       UNION
+       SELECT stage_name FROM research_stage_runs WHERE run_id = ? AND status = 'failed' AND required = 0`
+    )
+    .bind(runId, runId)
+    .all<{ stage_name: string }>();
+  return result.results.map((row) => row.stage_name);
+}

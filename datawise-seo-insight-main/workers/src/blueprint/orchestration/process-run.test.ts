@@ -173,6 +173,10 @@ describe('processResearchRun', () => {
     // this test asserts the actual, already-tested state-machine contract.
     expect(finalRun.status).toBe('partial');
     expect(finalRun.finished_at).toBeTruthy();
+    // Task 8 Fix 2: partial_reasons is derived from stage rows, not
+    // incrementally appended, so it must already list collect_us_fanout's
+    // clean skip by the time the run finishes.
+    expect(JSON.parse(finalRun.partial_reasons_json)).toEqual(['collect_us_fanout']);
 
     const finalStageRows = await getStageRows(d1, runId);
     expect(finalStageRows.length).toBe(19);
@@ -188,11 +192,14 @@ describe('processResearchRun', () => {
       .all<BlueprintVersionRow>();
     expect(versions.results.length).toBe(1);
     expect(versions.results[0].run_id).toBe(runId);
-    // collect_us_fanout's skip is a clean success-with-status-skipped, not a
-    // throw-and-exhaust; only the throw/exhaust path appends to
-    // partial_reasons_json (see handler-throw design decision), so
-    // completeness is 'complete' even though the run status is 'partial'.
-    expect(versions.results[0].completeness).toBe('complete');
+    // Task 8 Fix 2: completeness/partial_reasons are derived directly from
+    // the stage rows (any skipped/partial stage, or an exhausted optional
+    // failure), not from an incrementally-appended run column, so a clean
+    // collect_us_fanout skip counts as a gap the same as a throw-and-exhaust
+    // would. Status ('partial'), run.partial_reasons_json, and version
+    // completeness must all agree.
+    expect(versions.results[0].completeness).toBe('partial');
+    expect(JSON.parse(versions.results[0].partial_reasons_json)).toEqual(['collect_us_fanout']);
     expect(versions.results[0].latest_revision_id).toBeTruthy();
 
     const revisions = await d1
@@ -402,5 +409,74 @@ describe('processResearchRun', () => {
     expect(versions.results.length).toBe(1);
     expect(versions.results[0].completeness).toBe('partial');
     expect(JSON.parse(versions.results[0].partial_reasons_json)).toContain('discover_competitors');
+  });
+
+  it('behavior 7 (Task 8 Fix 1): a cancel_requested set concurrently mid-stage is not clobbered back to running, and the next invocation finishes the cancellation', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { sent, queue } = makeQueue();
+    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_intake: async (ctx) => {
+        // Simulate a cancel request landing on the D1 row while this
+        // stage's handler is still executing (e.g. the user hit Cancel
+        // mid-request). The in-memory `run.status` this invocation started
+        // with is now stale.
+        await d1.prepare(`UPDATE research_runs SET status = 'cancel_requested' WHERE id = ?`).bind(ctx.runId).run();
+        return { output: { stage: 'validate_intake' as const, valid: true } };
+      },
+    };
+
+    const result = await processResearchRun(env, runId, 'w1', overrides);
+
+    // The stage's own row write is not fenced (completeStage is a CAS on
+    // the lease, not on run status), so it still completes. But the
+    // finalize write that would set the run row back to 'running' and
+    // enqueue the next stage must be fenced out by the concurrent cancel.
+    expect(result).toEqual({ advanced: false, runStatus: 'cancel_requested' });
+    expect(sent.length).toBe(0);
+
+    const stageRows = await getStageRows(d1, runId);
+    expect(stageRows.find((r) => r.stage_name === 'validate_intake')?.status).toBe('succeeded');
+
+    const runAfterFirst = await getRun(d1, runId);
+    expect(runAfterFirst.status).toBe('cancel_requested');
+    expect(runAfterFirst.current_stage).toBeNull();
+
+    // The next invocation sees the sticky cancel_requested at the entry
+    // guard and finishes the cancellation as normal (behavior 4's path).
+    const second = await processResearchRun(env, runId, 'w1');
+    expect(second).toEqual({ advanced: false, runStatus: 'cancelled' });
+    expect(sent.length).toBe(0);
+
+    const runFinal = await getRun(d1, runId);
+    expect(runFinal.status).toBe('cancelled');
+    expect(runFinal.finished_at).toBeTruthy();
+
+    const stageRowsFinal = await getStageRows(d1, runId);
+    expect(stageRowsFinal.find((r) => r.stage_name === 'validate_intake')?.status).toBe('succeeded');
+  });
+
+  it('behavior 8 (Task 8 Fix 1): duplicate delivery on an already-cancelled run is a pure no-op', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { sent, queue } = makeQueue();
+    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+
+    await d1
+      .prepare(`UPDATE research_runs SET status = 'cancelled', finished_at = ? WHERE id = ?`)
+      .bind(nowIso(), runId)
+      .run();
+
+    const result = await processResearchRun(env, runId, 'w1');
+    expect(result).toEqual({ advanced: false, runStatus: 'cancelled' });
+    expect(sent.length).toBe(0);
+
+    const stageRows = await getStageRows(d1, runId);
+    expect(stageRows.length).toBe(0);
+
+    const run = await getRun(d1, runId);
+    expect(run.status).toBe('cancelled');
   });
 });
