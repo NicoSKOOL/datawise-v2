@@ -21,12 +21,12 @@ export async function handleBlueprintRequest(
   method: string
 ): Promise<Response> {
   // Non-allowlisted users get 404: the feature does not exist for them.
-  if (!isBlueprintAuthorized(user)) return json({ error: 'Not found' }, 404);
+  if (!isBlueprintAuthorized(user)) return json({ error: 'Not Found' }, 404);
 
   if (path === '/api/blueprint/v1/health' && method === 'GET') {
     return handleHealth(env);
   }
-  return json({ error: 'Not found' }, 404);
+  return json({ error: 'Not Found' }, 404);
 }
 
 async function handleHealth(env: Env): Promise<Response> {
