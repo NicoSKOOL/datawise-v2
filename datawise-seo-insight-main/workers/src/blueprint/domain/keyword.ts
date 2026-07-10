@@ -5,7 +5,7 @@ export function normalizeKeyword(input: string, locale: string): string {
     .normalize('NFKC')
     .toLocaleLowerCase(locale)
     .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, ' ')
+    .replace(/[\u201c\u201d"]/g, ' ')
     .replace(/[!?.,;:()\[\]{}<>|@#$%^*+=~`\\/]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

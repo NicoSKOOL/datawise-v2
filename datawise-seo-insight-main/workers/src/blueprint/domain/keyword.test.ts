@@ -6,9 +6,11 @@ describe('normalizeKeyword', () => {
     expect(normalizeKeyword('  Plumber   Near Me!! ', 'en-US')).toBe('plumber near me');
     expect(normalizeKeyword('\u201cbest\u201d plumber, austin?', 'en-US')).toBe('best plumber austin');
   });
-  it('canonicalizes curly apostrophes and strips curly double quotes', () => {
+  it('canonicalizes curly quotes and strips double quotes', () => {
     expect(normalizeKeyword('women\u2019s co-working space', 'en-US')).toBe("women's co-working space");
+    expect(normalizeKeyword('\u2018quoted\u2019 term', 'en-US')).toBe("'quoted' term");
     expect(normalizeKeyword('\u201csmart\u201d quotes', 'en-US')).toBe('smart quotes');
+    expect(normalizeKeyword('"straight" quotes', 'en-US')).toBe('straight quotes');
   });
   it('preserves meaningful tokens: hyphens, apostrophes, accents, locality', () => {
     expect(normalizeKeyword("women's co-working space", 'en-US')).toBe("women's co-working space");
