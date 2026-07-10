@@ -181,6 +181,19 @@ export async function cancelRun(
     throw new BlueprintApiError('stage_conflict', `Run cannot be cancelled from status: ${run.status}`);
   }
 
+  // Prompt the cancel_requested -> cancelled conversion instead of waiting
+  // for whatever message is already in flight (there may be none, e.g. a
+  // run parked in retry_wait between queue deliveries). Non-fatal: a queue
+  // outage here must not block returning the 202 the client is waiting on;
+  // the next production wake-up (see orchestration/consumer.ts) or a later
+  // retry will still pick up the cancellation.
+  try {
+    await env.BLUEPRINT_QUEUE.send({ runId: params.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Blueprint cancelRun: failed to send wake-up for run ${params.id}: ${message}`);
+  }
+
   const view = await buildRunView(env.BLUEPRINT_DB, params.id);
   return ok(view, 202);
 }

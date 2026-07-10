@@ -12,7 +12,7 @@ import type { StageRowLite } from './run-status';
 
 export interface BlueprintQueueEnv {
   BLUEPRINT_DB: D1Database;
-  BLUEPRINT_QUEUE: { send(body: unknown): Promise<void> };
+  BLUEPRINT_QUEUE: { send(body: unknown, options?: { delaySeconds?: number }): Promise<void> };
 }
 
 // Leases outlive a single Worker invocation only in spirit (Phase 2 has no
@@ -102,8 +102,13 @@ async function finalizeStageAttempt(
     }
     if (next.kind === 'run') {
       await env.BLUEPRINT_QUEUE.send({ runId });
+      return { advanced: true, runStatus: 'running' };
     }
-    return { advanced: true, runStatus: 'running' };
+    // next.kind === 'wait': a stage just landed in retry_wait (or is held by
+    // another worker's lease). Surface the computed next_retry_at so the
+    // queue consumer can schedule a delayed wake-up instead of relying on a
+    // client poll to ever come back and re-drive this run.
+    return { advanced: true, runStatus: 'running', waitUntil: next.until };
   }
 
   const finalStatus: RunStatus = next.kind === 'failed' ? 'failed' : deriveRunStatus(rows, currentStatus);

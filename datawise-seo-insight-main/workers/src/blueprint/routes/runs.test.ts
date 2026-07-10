@@ -155,6 +155,12 @@ describe('POST /api/blueprint/v1/research-runs/:id/cancel', () => {
       status: string;
     } | null;
     expect(row?.status).toBe('cancel_requested');
+
+    // seedQueuedRun's run creation already enqueued one { runId } message;
+    // cancel prompts the cancel_requested -> cancelled conversion by
+    // enqueueing a second one, rather than relying solely on whatever
+    // message may already be in flight.
+    expect(env.BLUEPRINT_QUEUE.sent).toEqual([{ runId }, { runId }]);
   });
 
   it('returns 409 run_cancelled for an already-terminal (succeeded) run', async () => {

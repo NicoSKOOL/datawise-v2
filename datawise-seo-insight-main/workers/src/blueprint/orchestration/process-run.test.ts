@@ -343,6 +343,13 @@ describe('processResearchRun', () => {
       expect(result.advanced).toBe(true);
       if (attempt < 3) {
         expect(result.runStatus).toBe('running');
+        // The finalize path surfaces the computed next_retry_at as
+        // waitUntil so the queue consumer has something to schedule a
+        // delayed wake-up against (RETRY_BACKOFF_MS is 30s).
+        expect(result.waitUntil).toBeTruthy();
+        const waitUntilMs = Date.parse(result.waitUntil!);
+        expect(waitUntilMs).toBeGreaterThan(Date.now());
+        expect(waitUntilMs).toBeLessThanOrEqual(Date.now() + 30_000 + 5_000);
         const row = await getStageRows(d1, runId);
         const resolveMarketRow = row.find((r) => r.stage_name === 'resolve_market');
         expect(resolveMarketRow?.status).toBe('retry_wait');

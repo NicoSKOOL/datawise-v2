@@ -198,6 +198,9 @@ export default function BlueprintHome() {
   const [startingRunFor, setStartingRunFor] = useState<Record<string, boolean>>({});
   const [activeRuns, setActiveRuns] = useState<Record<string, ResearchRunView>>({});
   const activeRunsRef = useRef(activeRuns);
+  // Track consecutive failures per runId to avoid toast spam: only show on
+  // first failure, stop polling after 3 consecutive failures.
+  const failureCountsRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     activeRunsRef.current = activeRuns;
@@ -226,11 +229,7 @@ export default function BlueprintHome() {
   // cancel-requested. Runs that reach a terminal status (partial, succeeded,
   // failed, cancelled) simply stop being included in the poll batch; the
   // interval itself is cleared once on unmount.
-  // Track consecutive failures per runId to avoid toast spam: only show on
-  // first failure, stop polling after 3 consecutive failures.
   useEffect(() => {
-    const failureCountsRef = useRef<Record<string, number>>({});
-
     const interval = setInterval(async () => {
       const current = activeRunsRef.current;
       const toPoll = Object.entries(current).filter(([, run]) =>
