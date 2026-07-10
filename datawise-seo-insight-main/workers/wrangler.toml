@@ -43,3 +43,28 @@ preview_id = "30288cb442c84e038406b0e174f90398"
 [[r2_buckets]]
 binding = "TASK_ATTACHMENTS"
 bucket_name = "datawise-task-attachments"
+
+# --- Blueprint module bindings (admin-gated feature, see workers/src/blueprint/README.md) ---
+
+[[d1_databases]]
+binding = "BLUEPRINT_DB"
+database_name = "blueprint-db"
+database_id = "ec2c0572-1ab9-482f-8c56-d4ed11f8734e"
+
+[[kv_namespaces]]
+binding = "BLUEPRINT_KV"
+id = "2e39413c266e4d9e804ca34e901259f7"
+
+[[r2_buckets]]
+binding = "BLUEPRINT_ARTIFACTS"
+bucket_name = "blueprint-artifacts"
+
+[[queues.producers]]
+binding = "BLUEPRINT_QUEUE"
+queue = "blueprint-research"
+
+[[queues.consumers]]
+queue = "blueprint-research"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3

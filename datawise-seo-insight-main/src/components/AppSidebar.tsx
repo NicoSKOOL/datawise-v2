@@ -513,6 +513,21 @@ export function AppSidebar() {
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink
+                      to="/blueprint"
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                          isActive ? activeClass : inactiveClass
+                        }`
+                      }
+                    >
+                      <Map className="h-4 w-4 flex-shrink-0" />
+                      <span>Blueprint</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

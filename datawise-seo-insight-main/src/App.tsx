@@ -49,16 +49,17 @@ const AdminPromoCodes = lazy(() => import('./pages/AdminPromoCodes'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminActivity = lazy(() => import('./pages/AdminActivity'));
 const AdminContentWriterPrompts = lazy(() => import('./pages/AdminContentWriterPrompts'));
+const BlueprintHome = lazy(() => import('./pages/blueprint/BlueprintHome'));
 
 const queryClient = new QueryClient();
 
-function ProtectedPage({ children }: { children: React.ReactNode }) {
+function ProtectedPage({ children, requireAdmin = false }: { children: React.ReactNode; requireAdmin?: boolean }) {
   // key resets the boundary on navigation so a crash on one page does not
   // leave the next page stuck on the fallback. Sidebar and header live in
   // Layout, outside the boundary, so they survive page crashes.
   const location = useLocation();
   return (
-    <ProtectedRoute>
+    <ProtectedRoute requireAdmin={requireAdmin}>
       <Layout>
         <AppErrorBoundary variant="route" key={location.pathname}>
           <Suspense fallback={<RouteLoadingFallback />}>{children}</Suspense>
@@ -181,6 +182,7 @@ const App = () => (
             <Route path="/admin/analytics" element={<ProtectedPage><AdminAnalytics /></ProtectedPage>} />
             <Route path="/admin/activity" element={<ProtectedPage><AdminActivity /></ProtectedPage>} />
             <Route path="/admin/content-writer-prompts" element={<ProtectedPage><AdminContentWriterPrompts /></ProtectedPage>} />
+            <Route path="/blueprint" element={<ProtectedPage requireAdmin><BlueprintHome /></ProtectedPage>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -26,6 +26,11 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   KIMI_API_KEY: string;
   OPENROUTER_API_KEY: string;
+  // Blueprint module (admin-gated)
+  BLUEPRINT_DB: D1Database;
+  BLUEPRINT_KV: KVNamespace;
+  BLUEPRINT_ARTIFACTS: R2Bucket;
+  BLUEPRINT_QUEUE: Queue;
 }
 
 import { handleGoogleAuth, handleGoogleCallback, handleLogout, handleMe, handleUpdateDefaults } from './auth/google';
@@ -148,6 +153,7 @@ import {
   handleBusinessCategoriesPublic,
 } from './routes/public-tools';
 import { handlePageview, prunePageviews } from './routes/track';
+import { handleBlueprintRequest } from './blueprint/routes/router';
 import {
   handleGetAITracking, handleUpdateAISettings, handleAddAIQueries,
   handleDeleteAIQuery, handleRunAICheck, handleAIReport, handleGetAIAnswer,
@@ -367,6 +373,11 @@ export default {
 
       // All API routes require auth
       if (!user) return addCors(json({ error: 'Unauthorized' }, 401));
+
+      // Blueprint module: admin-gated, all sub-routing inside the module
+      if (path.startsWith('/api/blueprint/')) {
+        return addCors(await handleBlueprintRequest(request, env, user, path, method));
+      }
 
       // --- White-label export branding (auth-required, not credit-gated) ---
       if (path === '/api/branding' && method === 'GET') {
@@ -1121,6 +1132,11 @@ export default {
       }
       return addCors(json({ error: 'internal_error', request_id: requestId }, 500));
     }
+  },
+
+  async queue(batch: MessageBatch<unknown>, _env: Env, _ctx: ExecutionContext): Promise<void> {
+    // Blueprint research stages are wired in Phase 2. Ack so messages don't retry forever.
+    for (const message of batch.messages) message.ack();
   },
 };
 
