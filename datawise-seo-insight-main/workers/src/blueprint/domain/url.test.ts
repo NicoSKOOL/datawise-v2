@@ -15,6 +15,12 @@ describe('normalizeDomain', () => {
     expect(() => normalizeDomain('not a domain')).toThrow(BlueprintValidationError);
     expect(() => normalizeDomain('')).toThrow(BlueprintValidationError);
   });
+  it('canonicalizes trailing dots and rejects empty labels', () => {
+    expect(normalizeDomain('example.com.')).toBe('example.com');
+    expect(() => normalizeDomain('.')).toThrow(BlueprintValidationError);
+    expect(() => normalizeDomain('a.')).toThrow(BlueprintValidationError);
+    expect(() => normalizeDomain('a..b.com')).toThrow(BlueprintValidationError);
+  });
 });
 
 describe('normalizeAbsoluteUrl', () => {

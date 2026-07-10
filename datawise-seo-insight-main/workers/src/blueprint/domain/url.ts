@@ -12,6 +12,11 @@ export function normalizeDomain(input: string): string {
     throw new BlueprintValidationError('invalid_domain', [{ path: 'domain', message: `Invalid domain: ${input}` }]);
   }
   let host = url.hostname;
+  // Canonicalize a single trailing dot (FQDN form) and reject empty labels.
+  if (host.endsWith('.')) host = host.slice(0, -1);
+  if (!host || host.split('.').some((label) => label.length === 0)) {
+    throw new BlueprintValidationError('invalid_domain', [{ path: 'domain', message: `Invalid domain: ${input}` }]);
+  }
   if (!host.includes('.')) {
     throw new BlueprintValidationError('invalid_domain', [{ path: 'domain', message: `Invalid domain: ${input}` }]);
   }
