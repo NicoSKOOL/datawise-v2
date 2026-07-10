@@ -1,4 +1,4 @@
-# Blueprint V1 — Phase 0 + Phase 1 Implementation Plan
+# Blueprint V1: Phase 0 + Phase 1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -24,7 +24,7 @@
 
 ---
 
-## Phase 0 — Scaffolding, bindings, admin gate
+## Phase 0: Scaffolding, bindings, admin gate
 
 ### Task 1: Worktree, branch, module skeleton, boundary check
 
@@ -595,7 +595,7 @@ gh pr create --base production --title "Blueprint Phase 0: bindings, admin gate,
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
 
-- [ ] **Step 2: CHECKPOINT — confirm with Nicolas before deploying the worker** (this ships the gated routes + queue consumer to the production worker `datawise-api`).
+- [ ] **Step 2: CHECKPOINT: confirm with Nicolas before deploying the worker** (this ships the gated routes + queue consumer to the production worker `datawise-api`).
 
 - [ ] **Step 3: Deploy the worker**
 
@@ -639,7 +639,7 @@ Live site note: merging to production makes the SPA code deployable, but datawis
 
 ---
 
-## Phase 1 — Contracts and deterministic domain engine (fixtures only)
+## Phase 1: Contracts and deterministic domain engine (fixtures only)
 
 All tasks below run in the same worktree on a new branch. No paid calls, no network, pure functions + vitest.
 
@@ -2290,7 +2290,7 @@ cd .. && node scripts/check-blueprint-boundary.mjs
 
 Expected: all Blueprint tests pass, typecheck clean, boundary check passes.
 
-- [ ] **Step 3: Run the FULL worker suite** (`cd workers && npm test`) — no regressions outside Blueprint.
+- [ ] **Step 3: Run the FULL worker suite** (`cd workers && npm test`). No regressions outside Blueprint.
 
 - [ ] **Step 4: Commit**
 

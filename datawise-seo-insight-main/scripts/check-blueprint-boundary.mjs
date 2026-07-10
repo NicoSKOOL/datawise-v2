@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 const SCAN_ROOT = join(ROOT, 'workers', 'src');
 const ALLOWED = new Set(['workers/src/index.ts']);
-const IMPORT_RE = /from\s+['"][^'"]*\bblueprint\//;
+const IMPORT_RE = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"][^'"]*\bblueprint(?:\/[^'"]*)?['"]/;
 const violations = [];
 
 function walk(dir) {
@@ -18,7 +18,7 @@ function walk(dir) {
     if (statSync(full).isDirectory()) {
       if (rel === 'workers/src/blueprint' || entry === 'node_modules') continue;
       walk(full);
-    } else if (/\.tsx?$/.test(entry) && !ALLOWED.has(rel)) {
+    } else if (/\.(?:m|c)?[tj]sx?$/.test(entry) && !ALLOWED.has(rel)) {
       if (IMPORT_RE.test(readFileSync(full, 'utf8'))) violations.push(rel);
     }
   }

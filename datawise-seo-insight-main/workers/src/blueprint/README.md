@@ -5,7 +5,7 @@ Spec: docs/superpowers/specs/2026-07-10-blueprint-v1-integration-design.md
 Handoff: blueprint-v1-developer-handoff/ (repo root of the main checkout)
 
 Boundary rules:
-- This module MAY import shared infra: middleware/auth, routes/admin (isAdmin),
+- This module MAY import shared infra: middleware/auth, auth/google (AuthUser), routes/admin (isAdmin),
   dataforseo/, llm/, and the Env type from ../index.
 - Nothing outside this folder may import from it, except the single route mount
   in workers/src/index.ts. Enforced by scripts/check-blueprint-boundary.mjs.

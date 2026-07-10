@@ -70,7 +70,7 @@ There is no staging worker; staging.datawise-118.pages.dev talks to the producti
 
 ## Acceptance highlights (from the handoff, unchanged)
 
-Missing metrics render as null/`—` never 0; same idempotency key returns one run; stale workers cannot persist; concurrent reservations cannot cross the ceiling; no two active pages share a slug or primary keyword; invalid AI output cannot publish; a previous complete blueprint stays readable during a new run; CSV/XLSX formula injection neutralized; cross-tenant and SSRF tests pass.
+Missing metrics render as null/`--` never 0; same idempotency key returns one run; stale workers cannot persist; concurrent reservations cannot cross the ceiling; no two active pages share a slug or primary keyword; invalid AI output cannot publish; a previous complete blueprint stays readable during a new run; CSV/XLSX formula injection neutralized; cross-tenant and SSRF tests pass.
 
 ## Open items (from the handoff's open questions, resolved for this integration)
 
