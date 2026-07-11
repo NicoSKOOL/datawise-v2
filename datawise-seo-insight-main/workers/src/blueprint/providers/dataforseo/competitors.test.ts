@@ -8,6 +8,8 @@ import {
   discoverCompetitorsForDomain,
   discoverSerpCompetitors,
   filterCompetitorCandidates,
+  fetchRankedKeywords,
+  fetchRelevantPages,
   EXCLUDED_COMPETITOR_DOMAINS,
 } from './competitors';
 import type { CompetitorCandidate } from './competitors';
@@ -216,6 +218,129 @@ describe('discoverSerpCompetitors', () => {
     const candidates = await discoverSerpCompetitors(ctx, MARKET, ['ac repair austin'], COSTS);
 
     expect(candidates[0].visibilityMetric).toBeNull();
+  });
+});
+
+describe('fetchRankedKeywords', () => {
+  it('issues exactly one blueprintDfsCall with the Sec 9 verbatim body incl. the exact filters array', async () => {
+    const ctx = await buildCtx();
+    const calls = stubFetchCapturing(
+      okResponse([
+        {
+          keyword_data: {
+            keyword: 'hvac installation austin',
+            keyword_info: { search_volume: 90, cpc: 6.2 },
+            keyword_properties: { keyword_difficulty: 55 },
+          },
+          ranked_serp_element: {
+            serp_item: { url: 'https://rival.com/hvac', rank_group: 4, type: 'organic', etv: 12.5 },
+          },
+        },
+      ])
+    );
+
+    const result = await fetchRankedKeywords(ctx, MARKET, 'rival.com', 'comp_1', COSTS);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain('/dataforseo_labs/google/ranked_keywords/live');
+    expect(calls[0].body).toMatchObject({
+      target: 'rival.com',
+      location_code: 2840,
+      language_code: 'en',
+      ignore_synonyms: true,
+      item_types: ['organic', 'featured_snippet', 'local_pack'],
+      limit: 500,
+    });
+    expect(calls[0].body.filters).toEqual([
+      ['keyword_data.keyword_info.search_volume', '>', 0],
+      'and',
+      ['ranked_serp_element.serp_item.rank_group', '<=', 30],
+    ]);
+    expect(calls[0].body.tag).toMatch(/^run:/);
+
+    expect(result.records).toHaveLength(1);
+    expect(result.evidenceRefId).toBeTruthy();
+    expect(result.costUsdMicro).toBe(50_000);
+    expect(result.records[0].candidate).toEqual({
+      keyword: 'hvac installation austin',
+      source: 'ranked_keywords',
+      metrics: { searchVolume: 90, cpcUsd: 6.2, difficulty: 55 },
+      evidenceRefs: [result.evidenceRefId],
+    });
+    expect(result.records[0].rankingUrl).toBe('https://rival.com/hvac');
+    expect(result.records[0].rankGroup).toBe(4);
+    expect(result.records[0].serpType).toBe('organic');
+    expect(result.records[0].trafficEstimate).toBe(12.5);
+  });
+
+  it('leaves rankingUrl/rankGroup/serpType/trafficEstimate null when the serp_item fields are absent, never coerced to 0', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(
+      okResponse([{ keyword_data: { keyword: 'ac repair austin' } }])
+    );
+
+    const result = await fetchRankedKeywords(ctx, MARKET, 'rival.com', 'comp_1', COSTS);
+
+    expect(result.records).toHaveLength(1);
+    expect(result.records[0].rankingUrl).toBeNull();
+    expect(result.records[0].rankGroup).toBeNull();
+    expect(result.records[0].serpType).toBeNull();
+    expect(result.records[0].trafficEstimate).toBeNull();
+  });
+
+  it('drops items with no keyword at all rather than crashing the batch', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(okResponse([{ ranked_serp_element: { serp_item: { rank_group: 1 } } }]));
+
+    const result = await fetchRankedKeywords(ctx, MARKET, 'rival.com', 'comp_1', COSTS);
+
+    expect(result.records).toEqual([]);
+  });
+});
+
+describe('fetchRelevantPages', () => {
+  it('issues exactly one blueprintDfsCall with the Sec 10 verbatim body', async () => {
+    const ctx = await buildCtx();
+    const calls = stubFetchCapturing(
+      okResponse([
+        { page_address: 'https://rival.com/ac-repair/', metrics: { organic: { count: 12, etv: 40.1 } } },
+      ])
+    );
+
+    const result = await fetchRelevantPages(ctx, MARKET, 'rival.com', 'comp_1', COSTS);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain('/dataforseo_labs/google/relevant_pages/live');
+    expect(calls[0].body).toMatchObject({
+      target: 'rival.com',
+      location_code: 2840,
+      language_code: 'en',
+      item_types: ['organic', 'featured_snippet', 'local_pack'],
+      limit: 100,
+    });
+    expect(calls[0].body.tag).toMatch(/^run:/);
+
+    expect(result.evidenceRefId).toBeTruthy();
+    expect(result.costUsdMicro).toBe(50_000);
+    expect(result.records).toEqual([{ url: 'https://rival.com/ac-repair/', keywordCount: 12, trafficEstimate: 40.1 }]);
+  });
+
+  it('leaves keywordCount/trafficEstimate null when metrics.organic is absent, never coerced to 0', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(okResponse([{ page_address: 'https://rival.com/' }]));
+
+    const result = await fetchRelevantPages(ctx, MARKET, 'rival.com', 'comp_1', COSTS);
+
+    expect(result.records).toEqual([{ url: 'https://rival.com/', keywordCount: null, trafficEstimate: null }]);
+  });
+
+  it('drops items with no page_address at all rather than crashing the batch', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(okResponse([{ metrics: { organic: { count: 5 } } }]));
+
+    const result = await fetchRelevantPages(ctx, MARKET, 'rival.com', 'comp_1', COSTS);
+
+    expect(result.records).toEqual([]);
   });
 });
 

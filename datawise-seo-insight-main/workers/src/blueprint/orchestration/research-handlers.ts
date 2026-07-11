@@ -23,8 +23,10 @@ import {
   discoverSerpCompetitors,
   filterCompetitorCandidates,
   isExcludedCompetitorDomain,
+  fetchRankedKeywords,
+  fetchRelevantPages,
 } from '../providers/dataforseo/competitors';
-import type { CompetitorCandidate } from '../providers/dataforseo/competitors';
+import type { CompetitorCandidate, RelevantPageRecord } from '../providers/dataforseo/competitors';
 
 // Catalog Sec 3: max 8 keyword_suggestions seeds per run (one per
 // service-in-primary-area seed). This module is the home for every real
@@ -85,14 +87,27 @@ function appendMissingUserSeeds(universe: KeywordUniverse, seeds: SeedQuery[], l
   return { keywords: [...universe.keywords, ...appended] };
 }
 
-async function persistKeywordUniverse(
-  ctx: StageContext,
+// Shared by BOTH collect_keyword_evidence (Task 10, seed-query provenance:
+// which service/service-area seed produced this keyword) and
+// collect_competitor_evidence (Task 12, no seed provenance at all -- a
+// keyword discovered via a competitor's ranked keywords has no
+// service/service-area of its own to join). `seedProvenance` defaults to an
+// empty map so a caller with nothing to report (Task 12) simply skips the
+// keyword_services/keyword_service_areas inserts, while Task 10 passes its
+// real seed-grouped map and behaves exactly as before this extraction.
+// Idempotent and merge-safe by construction (ON CONFLICT DO NOTHING + a
+// re-read of the existing row's id): calling this twice for the same run
+// with overlapping keywords -- whether from two collect_keyword_evidence
+// retries, or from Task 10 and Task 12 both touching the same normalized
+// keyword -- never violates UNIQUE(run_id, normalized_keyword); the second
+// caller's evidence just gets attached (INSERT OR IGNORE) to the row the
+// first caller already created.
+async function persistKeywordCandidates(
+  d1: D1Database,
+  runId: string,
   universe: KeywordUniverse,
-  seeds: SeedQuery[],
-  locale: string
+  seedProvenance: Map<string, SeedQuery[]> = new Map()
 ): Promise<number> {
-  const { d1, runId } = ctx;
-  const seedProvenance = groupSeedsByNormalizedQuery(seeds, locale);
   let persistedCount = 0;
 
   for (const kw of universe.keywords) {
@@ -217,7 +232,8 @@ export const collectKeywordEvidenceHandler: StageHandler = async (ctx: StageCont
   stageCostUsdMicro += enrichmentCostUsdMicro;
 
   const mergedCount = enriched.keywords.length;
-  const persistedCount = await persistKeywordUniverse(ctx, enriched, seeds, locale);
+  const seedProvenance = groupSeedsByNormalizedQuery(seeds, locale);
+  const persistedCount = await persistKeywordCandidates(ctx.d1, ctx.runId, enriched, seedProvenance);
 
   const output: CollectKeywordEvidenceOutput = {
     candidateCount,
@@ -440,4 +456,111 @@ export const discoverCompetitorsHandler: StageHandler = async (ctx: StageContext
   };
 
   return { output, status: 'succeeded' as const };
+};
+
+// Phase 4 reads `topPages` off of THIS stage's output directly (not off any
+// table), per this task's brief -- relevant_pages results are not persisted
+// into their own table this phase, only surfaced here.
+export interface CollectCompetitorEvidenceOutput {
+  perCompetitor: Array<{
+    domain: string;
+    rankedCount: number | null;
+    pagesCount: number | null;
+    topPages: RelevantPageRecord[];
+  }>;
+  stageCostUsdMicro: number;
+}
+
+// Catalog Sec 10: "V1 cap 100 per selected competitor" -- the adapter's own
+// `limit: 100` request already caps the provider response at this ceiling,
+// but topPages is capped again defensively here at the boundary Phase 4
+// actually reads.
+const MAX_TOP_PAGES = 100;
+
+// Real collect_competitor_evidence, not a stub. Optional stage (stages.ts):
+// even so, this handler does NOT rely on the processor's optional-stage
+// throw-to-partial behavior for per-competitor failures -- with up to 5
+// selected competitors, a single provider hiccup on one of them must not
+// discard the ranked keywords/pages evidence this handler already collected
+// for every OTHER competitor. So each competitor's two calls (ranked
+// keywords, relevant pages) are individually try/caught; a failure records
+// that one field as null on that competitor's row and flips the whole
+// stage's returned status to 'partial', but the loop keeps going.
+//
+// Reads selected competitors directly from the `competitors` table (not
+// from discover_competitors' stage output) because `selected = 1` is the
+// live, retry-safe source of truth discoverCompetitorsHandler itself
+// maintains (including its own reset-then-apply retry safety); re-deriving
+// the same list from a possibly-stale stage output would risk drifting from
+// it.
+export const collectCompetitorEvidenceHandler: StageHandler = async (ctx: StageContext) => {
+  const market = await loadStageOutput<ResolvedMarket>(ctx.d1, ctx.runId, 'resolve_market');
+  if (!market) {
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+
+  const costs = await loadDfsCostEstimates(ctx.env.KV);
+  const selectedRows = await ctx.d1
+    .prepare(`SELECT id, domain FROM competitors WHERE run_id = ? AND selected = 1`)
+    .bind(ctx.runId)
+    .all<{ id: string; domain: string }>();
+  const competitors = selectedRows.results ?? [];
+
+  let stageCostUsdMicro = 0;
+  let anyFailure = false;
+  const candidateBatches: KeywordCandidate[][] = [];
+  const perCompetitor: CollectCompetitorEvidenceOutput['perCompetitor'] = [];
+
+  for (const competitor of competitors) {
+    let rankedCount: number | null = null;
+    let pagesCount: number | null = null;
+    let topPages: RelevantPageRecord[] = [];
+
+    try {
+      const ranked = await fetchRankedKeywords(ctx, market, competitor.domain, competitor.id, costs);
+      stageCostUsdMicro += ranked.costUsdMicro;
+      await ctx.d1
+        .prepare(`INSERT OR IGNORE INTO competitor_evidence_refs (competitor_id, evidence_ref_id) VALUES (?, ?)`)
+        .bind(competitor.id, ranked.evidenceRefId)
+        .run();
+      candidateBatches.push(ranked.records.map((r) => r.candidate));
+      rankedCount = ranked.records.length;
+    } catch {
+      // A single competitor's provider failure degrades that competitor's
+      // reported count, never the whole handler -- per this task's brief.
+      anyFailure = true;
+    }
+
+    try {
+      const pages = await fetchRelevantPages(ctx, market, competitor.domain, competitor.id, costs);
+      stageCostUsdMicro += pages.costUsdMicro;
+      await ctx.d1
+        .prepare(`INSERT OR IGNORE INTO competitor_evidence_refs (competitor_id, evidence_ref_id) VALUES (?, ?)`)
+        .bind(competitor.id, pages.evidenceRefId)
+        .run();
+      pagesCount = pages.records.length;
+      topPages = pages.records.slice(0, MAX_TOP_PAGES);
+    } catch {
+      anyFailure = true;
+    }
+
+    perCompetitor.push({ domain: competitor.domain, rankedCount, pagesCount, topPages });
+  }
+
+  // Every competitor's surviving ranked-keyword candidates merge into ONE
+  // universe before persistence, so a keyword two different competitors
+  // both rank for collapses to a single keywords row (evidence from both
+  // attached) instead of the second competitor's insert racing the first's
+  // under UNIQUE(run_id, normalized_keyword) -- persistKeywordCandidates'
+  // own ON CONFLICT DO NOTHING + re-read makes this safe either way, but
+  // merging first means the SAME evidence-accumulation logic
+  // mergeKeywordCandidates already provides for Task 10 applies here too.
+  if (candidateBatches.length > 0) {
+    const locale = `${ctx.normalizedBrief.languageCode}-${ctx.normalizedBrief.countryIso}`;
+    const universe = mergeKeywordCandidates(candidateBatches, locale);
+    await persistKeywordCandidates(ctx.d1, ctx.runId, universe);
+  }
+
+  const output: CollectCompetitorEvidenceOutput = { perCompetitor, stageCostUsdMicro };
+  return { output, status: anyFailure ? ('partial' as const) : ('succeeded' as const) };
 };

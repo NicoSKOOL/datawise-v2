@@ -1,8 +1,10 @@
 import type { StageContext } from '../../orchestration/handlers';
+import type { KeywordCandidate } from '../../contracts/types';
 import { BlueprintApiError } from '../../domain/api-errors';
 import { blueprintDfsCall } from './call';
 import type { DfsCallResult } from './call';
 import { safeErrorMessage } from './envelope';
+import { normalizeKeywordItem } from './normalize';
 import type { ResolvedMarket } from './catalogs';
 import type { DfsCostEstimates } from './costs';
 import { normalizeDomain } from '../../domain/url';
@@ -15,6 +17,25 @@ const DISCOVERY_EMPTY_TTL_SECONDS = 21_600;
 
 // Catalog Sec 8: "Max 200 representative keywords" for serp_competitors.
 const MAX_SERP_COMPETITOR_KEYWORDS = 200;
+
+// Ranked Keywords / Relevant Pages Labs cache TTLs (catalog Sec 9/10):
+// positive 7 days, empty 6 hours -- same convention as discovery above.
+const RANKED_KEYWORDS_TTL_SECONDS = 604_800;
+const RANKED_KEYWORDS_EMPTY_TTL_SECONDS = 21_600;
+const RELEVANT_PAGES_TTL_SECONDS = 604_800;
+const RELEVANT_PAGES_EMPTY_TTL_SECONDS = 21_600;
+
+// Catalog Sec 10: "V1 cap 100 per selected competitor" for relevant_pages.
+const RELEVANT_PAGES_LIMIT = 100;
+
+// Catalog Sec 9 filters array, verbatim: only keywords with real search
+// volume AND a rank_group inside the top 30 enter the universe via this
+// endpoint -- deep, likely-irrelevant rankings never do.
+const RANKED_KEYWORDS_FILTERS: unknown[] = [
+  ['keyword_data.keyword_info.search_volume', '>', 0],
+  'and',
+  ['ranked_serp_element.serp_item.rank_group', '<=', 30],
+];
 
 export interface CompetitorCandidate {
   domain: string;
@@ -181,6 +202,151 @@ export async function discoverSerpCompetitors(
   return result.items
     .map((item) => normalizeSerpCompetitorsItem(item, evidenceRefId))
     .filter((c): c is CompetitorCandidate => c !== null);
+}
+
+export interface RankedKeywordRecord {
+  candidate: KeywordCandidate;
+  rankingUrl: string | null;
+  rankGroup: number | null;
+  serpType: string | null;
+  trafficEstimate: number | null;
+}
+
+// This task's brief documents fetchRankedKeywords/fetchRelevantPages as
+// returning a bare RankedKeywordRecord[]/RelevantPageRecord[]. Wrapping the
+// return value in {records, costUsdMicro, evidenceRefId} is the same
+// minimally-invasive deviation Task 9's keywords.ts already made to
+// KeywordFetchResult for the identical reason: collect_competitor_evidence
+// (like collect_keyword_evidence) needs to accumulate its own real DFS
+// spend inline as it loops over competitors (not read it back afterward via
+// a provider_usage SUM, per this task's explicit design choice), and needs
+// the evidenceRefId to record competitor_evidence_refs -- a table
+// RelevantPageRecord has no field to carry that reference through on its
+// own. Every other field on RankedKeywordRecord/RelevantPageRecord matches
+// the brief exactly.
+export interface RankedKeywordFetchResult {
+  records: RankedKeywordRecord[];
+  costUsdMicro: number;
+  evidenceRefId: string;
+}
+
+function normalizeRankedKeywordItem(item: any, source: string, evidenceRefId: string): RankedKeywordRecord | null {
+  const candidate = normalizeKeywordItem(item, source, evidenceRefId);
+  if (!candidate) return null;
+  const serpItem = item?.ranked_serp_element?.serp_item ?? {};
+  return {
+    candidate,
+    rankingUrl: typeof serpItem.url === 'string' ? serpItem.url : null,
+    rankGroup: typeof serpItem.rank_group === 'number' ? serpItem.rank_group : null,
+    serpType: typeof serpItem.type === 'string' ? serpItem.type : null,
+    // DataForSEO's ranked_keywords items expose an estimated-traffic-value
+    // field (etv) on the serp_item; this is my best-effort field-name
+    // mapping (not directly itemized in catalog Sec 18 beyond "traffic
+    // estimate"), same documented-assumption caveat Task 11 flagged for
+    // visibilityMetric -- spot-check against a real response in Task 15's
+    // staging smoke run.
+    trafficEstimate: typeof serpItem.etv === 'number' ? serpItem.etv : null,
+  };
+}
+
+// Catalog Sec 9 verbatim body. `competitorId` scopes the tag/budget key
+// (`run:{runId}:ranked_keywords:{competitorId}` via blueprintDfsCall) so
+// each selected competitor's ranked-keywords call is independently cached,
+// budgeted, and billed.
+export async function fetchRankedKeywords(
+  ctx: StageContext,
+  market: ResolvedMarket,
+  domain: string,
+  competitorId: string,
+  costs: DfsCostEstimates
+): Promise<RankedKeywordFetchResult> {
+  const result = await blueprintDfsCall(ctx, {
+    method: 'POST',
+    endpoint: '/dataforseo_labs/google/ranked_keywords/live',
+    body: {
+      target: domain,
+      location_code: market.labsLocationCode,
+      language_code: market.languageCode,
+      ignore_synonyms: true,
+      item_types: ['organic', 'featured_snippet', 'local_pack'],
+      filters: RANKED_KEYWORDS_FILTERS,
+      limit: 500,
+    },
+    ttlSeconds: RANKED_KEYWORDS_TTL_SECONDS,
+    emptyTtlSeconds: RANKED_KEYWORDS_EMPTY_TTL_SECONDS,
+    kind: 'ranking',
+    operation: 'ranked_keywords',
+    scopeId: competitorId,
+    estimateUsdMicro: costs.labsTaskUsdMicro,
+  });
+  const evidenceRefId = requireEvidenceRefId(result);
+  const records = result.items
+    .map((item) => normalizeRankedKeywordItem(item, 'ranked_keywords', evidenceRefId))
+    .filter((r): r is RankedKeywordRecord => r !== null);
+  return { records, costUsdMicro: result.costUsdMicro, evidenceRefId };
+}
+
+export interface RelevantPageRecord {
+  url: string;
+  keywordCount: number | null;
+  trafficEstimate: number | null;
+}
+
+export interface RelevantPageFetchResult {
+  records: RelevantPageRecord[];
+  costUsdMicro: number;
+  evidenceRefId: string;
+}
+
+// The catalog does not itemize relevant_pages' response fields (Sec 18 only
+// covers ranked_keywords in detail). This mapping (page_address for the
+// URL, metrics.organic.count for keywordCount, metrics.organic.etv for
+// trafficEstimate) is my best-effort read of DataForSEO's documented
+// Relevant Pages schema -- same documented-assumption caveat as
+// normalizeRankedKeywordItem's trafficEstimate above; spot-check in Task
+// 15's staging smoke run.
+function normalizeRelevantPageItem(item: any): RelevantPageRecord | null {
+  if (!item || typeof item !== 'object') return null;
+  const url = typeof item.page_address === 'string' ? item.page_address : null;
+  if (!url) return null;
+  const organic = item.metrics?.organic ?? {};
+  return {
+    url,
+    keywordCount: typeof organic.count === 'number' ? organic.count : null,
+    trafficEstimate: typeof organic.etv === 'number' ? organic.etv : null,
+  };
+}
+
+// Catalog Sec 10 verbatim body.
+export async function fetchRelevantPages(
+  ctx: StageContext,
+  market: ResolvedMarket,
+  domain: string,
+  competitorId: string,
+  costs: DfsCostEstimates
+): Promise<RelevantPageFetchResult> {
+  const result = await blueprintDfsCall(ctx, {
+    method: 'POST',
+    endpoint: '/dataforseo_labs/google/relevant_pages/live',
+    body: {
+      target: domain,
+      location_code: market.labsLocationCode,
+      language_code: market.languageCode,
+      item_types: ['organic', 'featured_snippet', 'local_pack'],
+      limit: RELEVANT_PAGES_LIMIT,
+    },
+    ttlSeconds: RELEVANT_PAGES_TTL_SECONDS,
+    emptyTtlSeconds: RELEVANT_PAGES_EMPTY_TTL_SECONDS,
+    kind: 'competitor_page',
+    operation: 'relevant_pages',
+    scopeId: competitorId,
+    estimateUsdMicro: costs.labsTaskUsdMicro,
+  });
+  const evidenceRefId = requireEvidenceRefId(result);
+  const records = result.items
+    .map((item) => normalizeRelevantPageItem(item))
+    .filter((r): r is RelevantPageRecord => r !== null);
+  return { records, costUsdMicro: result.costUsdMicro, evidenceRefId };
 }
 
 // Subdomain-aware excluded-domain check (m.yelp.com matches yelp.com).
