@@ -432,6 +432,37 @@ describe('POST /api/blueprint/v1/projects/:id/research-estimates', () => {
     expect(operations).toContain('serp_task_post');
   });
 
+  it('floors the min cost above zero for a serp-less plan (zero service areas)', async () => {
+    const env = fakeEnv();
+    const { json } = await createProject(env, newId('idem'), {
+      ...validBrief,
+      websiteUrl: undefined, // greenfield
+      serviceAreas: [],
+    });
+    const res = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-estimates`, {
+      method: 'POST',
+      body: {},
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as ApiSuccess<ResearchEstimate>;
+    expect(Number(body.data.totals.dataForSeoMinUsd)).toBeGreaterThan(0);
+    expect(Number(body.data.totals.dataForSeoMaxUsd)).toBeGreaterThanOrEqual(
+      Number(body.data.totals.dataForSeoMinUsd)
+    );
+    const serpStage = body.data.plannedStages.find((s) => s.stage === 'validate_serps_and_questions')!;
+    expect(serpStage.estimatedTasks).toBe(0);
+
+    const row = (await env.BLUEPRINT_DB.prepare(
+      'SELECT min_cost_usd_micro, max_cost_usd_micro, plan_json FROM research_estimates WHERE id = ?'
+    )
+      .bind(body.data.estimateId)
+      .first()) as any;
+    expect(row.min_cost_usd_micro).toBeGreaterThan(0);
+    expect(row.min_cost_usd_micro).toBeLessThanOrEqual(row.max_cost_usd_micro);
+    const plan = JSON.parse(row.plan_json) as { lines: Array<{ operation: string }> };
+    expect(plan.lines.map((line) => line.operation)).not.toContain('serp_task_post');
+  });
+
   it('rejects run-start with an estimate bound to a since-superseded brief version (409 stage_conflict)', async () => {
     const env = fakeEnv();
     const { json } = await createProject(env);

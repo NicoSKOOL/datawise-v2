@@ -41,10 +41,19 @@ function isCacheEligibleForEstimate(operation: string): boolean {
 // min = cost floor assuming every cache-eligible (labs) call is a cache hit,
 // i.e. only the always-live serp_task_post line is priced. max = the full
 // plan total (every line priced, the worst case with no cache hits at all).
+//
+// A plan can legally have no serp_task_post line at all (a brief with zero
+// service areas produces no primary-area seeds). The serp-only sum is then 0,
+// but at least one uncached provider call always executes on a fresh run, so
+// a zero min would be dishonest: floor it to the cheapest single planned task
+// across all lines instead (tasks is always > 0 for surviving lines).
 function buildEstimateTotals(plan: CallPlan): { minUsdMicro: number; maxUsdMicro: number } {
-  const minUsdMicro = plan.lines
+  let minUsdMicro = plan.lines
     .filter((line) => !isCacheEligibleForEstimate(line.operation))
     .reduce((sum, line) => sum + line.estimatedUsdMicro, 0);
+  if (minUsdMicro === 0 && plan.totalUsdMicro > 0) {
+    minUsdMicro = Math.min(...plan.lines.map((line) => Math.round(line.estimatedUsdMicro / line.tasks)));
+  }
   return { minUsdMicro, maxUsdMicro: plan.totalUsdMicro };
 }
 
