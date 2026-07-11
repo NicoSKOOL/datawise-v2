@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { createTestDb } from '../test-support/d1';
 import { handleBlueprintRequest } from '../routes/router';
 import { newId } from '../db/util';
 import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
+import { fakeEnv, drainQueue } from '../test-support/env';
 import type { AuthUser } from '../../auth/google';
 import type {
   ApiSuccess,
@@ -38,33 +38,6 @@ const adminUser = {
   is_admin: true,
   credits_used: 0,
 } as AuthUser;
-
-export function fakeEnv(): BlueprintProviderEnv & { BLUEPRINT_KV: unknown; BLUEPRINT_QUEUE: { sent: unknown[]; send: (body: unknown) => Promise<void> } } {
-  const { d1 } = createTestDb();
-  const sent: unknown[] = [];
-  return {
-    BLUEPRINT_DB: d1,
-    BLUEPRINT_QUEUE: { sent, send: async (body: unknown) => void sent.push(body) },
-    BLUEPRINT_KV: { put: async () => undefined },
-    KV: (() => {
-      const m = new Map<string, string>();
-      return {
-        get: async (k: string) => m.get(k) ?? null,
-        put: async (k: string, v: string) => { m.set(k, v); },
-        delete: async (k: string) => { m.delete(k); },
-      };
-    })() as unknown as KVNamespace,
-    BLUEPRINT_ARTIFACTS: (() => {
-      const m = new Map<string, string>();
-      return {
-        put: async (k: string, v: string) => { m.set(k, v); },
-        get: async (k: string) => (m.has(k) ? { text: async () => m.get(k)! } : null),
-      };
-    })() as unknown as R2Bucket,
-    DATAFORSEO_EMAIL: 'test@example.com',
-    DATAFORSEO_PASSWORD: 'test-password',
-  } as any;
-}
 
 function makeRequest(
   path: string,
@@ -143,29 +116,6 @@ async function startRun(
   });
   const json = (await res.json()) as ApiSuccess<ResearchRunView>;
   return { res, json };
-}
-
-// Standard drain: pops every queued message and runs it to completion. This
-// is correct whenever every stage attempt either advances immediately or
-// terminates the run outright -- i.e. whenever nothing lands in retry_wait,
-// since a 'wait' outcome is never re-enqueued by processResearchRun itself
-// (see process-run.ts's finalizeStageAttempt: the 'wait' branch updates the
-// run row but does not call BLUEPRINT_QUEUE.send).
-export async function drainQueue(
-  env: BlueprintProviderEnv,
-  sent: unknown[],
-  workerId = 'w1',
-  overrides?: Partial<Record<BlueprintStage, StageHandler>>,
-  maxIterations = 200
-): Promise<void> {
-  let iterations = 0;
-  while (sent.length) {
-    if (iterations++ > maxIterations) {
-      throw new Error(`drainQueue exceeded ${maxIterations} iterations without settling`);
-    }
-    const msg = sent.pop() as { runId: string };
-    await processResearchRun(env, msg.runId, workerId, overrides);
-  }
 }
 
 async function getRunStatus(d1: D1Database, runId: string): Promise<string> {

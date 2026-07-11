@@ -5,7 +5,7 @@ import { V1_LIMITS } from '../contracts/limits';
 import { processResearchRun } from './process-run';
 import type { StageHandler } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
-import { fakeEnv } from './acceptance.e2e.test';
+import { fakeEnv } from '../test-support/env';
 
 // Same sample brief used by process-run.test.ts / domain/brief.test.ts.
 const SAMPLE_BRIEF_INPUT = {
