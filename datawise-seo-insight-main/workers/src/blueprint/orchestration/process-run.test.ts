@@ -10,6 +10,7 @@ import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
 import { BlueprintApiError } from '../domain/api-errors';
+import { BlueprintValidationError } from '../domain/errors';
 import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
@@ -429,6 +430,42 @@ describe('processResearchRun', () => {
     expect(resolveMarketRow?.safe_error_message).not.toContain('ops@client-example.com');
     expect(resolveMarketRow?.safe_error_message).not.toContain('internal-provider.example.com');
     expect(resolveMarketRow?.safe_error_message).toBe('The research step failed.');
+  });
+
+  it('a BlueprintValidationError from a REQUIRED stage fails immediately on attempt 1 (permanent, no retry_wait) with code invalid_input', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { sent, queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        throw new BlueprintValidationError('invalid_input', [
+          { path: 'languageCode', message: 'Unsupported market: language "xx" is not available for SERP research in US.' },
+        ]);
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    sent.pop();
+    const result = await processResearchRun(env, runId, 'w1', overrides); // resolve_market throws validation error
+
+    // Permanent user-correctable failure: no retry_wait, the run fails on
+    // the FIRST attempt with the validation signal preserved (retrying an
+    // unsupported market can never succeed; only a brief change can).
+    expect(result.runStatus).toBe('failed');
+
+    const rows = await getStageRows(d1, runId);
+    const resolveMarketRow = rows.find((r) => r.stage_name === 'resolve_market');
+    expect(resolveMarketRow?.status).toBe('failed');
+    expect(resolveMarketRow?.attempt_count).toBe(1);
+    expect(resolveMarketRow?.safe_error_code).toBe('invalid_input');
+    expect(resolveMarketRow?.safe_error_message).toBe(
+      'Unsupported market: language "xx" is not available for SERP research in US.'
+    );
+
+    const run = await getRun(d1, runId);
+    expect(run.status).toBe('failed');
+    expect(run.finished_at).toBeTruthy();
   });
 
   it('preserves the code and message of a stage failure that already threw a BlueprintApiError', async () => {

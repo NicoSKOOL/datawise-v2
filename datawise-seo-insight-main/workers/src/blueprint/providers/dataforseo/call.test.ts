@@ -88,12 +88,15 @@ async function seedRun(
 
 function fakeProviderEnv() {
   const kv = new Map<string, string>();
+  const kvPuts: Array<{ key: string; options?: { expirationTtl?: number } }> = [];
   const artifacts = new Map<string, string>();
   return {
+    kvPuts,
     KV: {
       get: async (k: string) => kv.get(k) ?? null,
-      put: async (k: string, v: string) => {
+      put: async (k: string, v: string, options?: { expirationTtl?: number }) => {
         kv.set(k, v);
+        kvPuts.push({ key: k, options });
       },
       delete: async (k: string) => {
         kv.delete(k);
@@ -306,6 +309,74 @@ describe('blueprintDfsCall', () => {
       .first<{ stage: string; operation: string }>();
     expect(row?.stage).toBe('collect_keyword_evidence');
     expect(row?.operation).toBe('keyword_ideas');
+  });
+
+  it('a catalog-shaped response (flat records in result, no items) caches under ttlSeconds, not emptyTtlSeconds', async () => {
+    const { ctx } = await buildCtx();
+    const catalogSpec: DfsCallSpec = {
+      method: 'GET',
+      endpoint: '/serp/google/languages',
+      ttlSeconds: 604_800,
+      emptyTtlSeconds: 21_600,
+      kind: 'serp_snapshot',
+      operation: 'serp_languages_catalog',
+      scopeId: 'catalog',
+      estimateUsdMicro: 0,
+    };
+    // Real catalog/reference endpoints return each record directly in
+    // tasks[].result -- there is NO per-record `items` wrapper, so
+    // parsed.items is empty while parsed.results holds the records. The TTL
+    // selector must treat that as a NON-empty response (7d), not an empty
+    // one (6h).
+    stubFetchJson({
+      status_code: 20000,
+      tasks: [
+        {
+          id: 'task-1',
+          status_code: 20000,
+          status_message: 'Ok.',
+          cost: 0,
+          result: [
+            { language_code: 'en', language_name: 'English' },
+            { language_code: 'es', language_name: 'Spanish' },
+          ],
+        },
+      ],
+    });
+
+    const result = await blueprintDfsCall(ctx, catalogSpec);
+    expect(result.items).toEqual([]);
+    expect(result.results).toHaveLength(2);
+
+    const kvPuts = (ctx.env as any).kvPuts as Array<{ key: string; options?: { expirationTtl?: number } }>;
+    const cachePut = kvPuts.find((p) => p.key.startsWith('bp:dfs:'));
+    expect(cachePut).toBeTruthy();
+    expect(cachePut!.options?.expirationTtl).toBe(604_800);
+  });
+
+  it('a genuinely empty response (no items AND no results) caches under emptyTtlSeconds', async () => {
+    const { ctx } = await buildCtx();
+    const catalogSpec: DfsCallSpec = {
+      method: 'GET',
+      endpoint: '/serp/google/languages',
+      ttlSeconds: 604_800,
+      emptyTtlSeconds: 21_600,
+      kind: 'serp_snapshot',
+      operation: 'serp_languages_catalog',
+      scopeId: 'catalog',
+      estimateUsdMicro: 0,
+    };
+    stubFetchJson({
+      status_code: 20000,
+      tasks: [{ id: 'task-1', status_code: 20000, status_message: 'Ok.', cost: 0, result: [] }],
+    });
+
+    await blueprintDfsCall(ctx, catalogSpec);
+
+    const kvPuts = (ctx.env as any).kvPuts as Array<{ key: string; options?: { expirationTtl?: number } }>;
+    const cachePut = kvPuts.find((p) => p.key.startsWith('bp:dfs:'));
+    expect(cachePut).toBeTruthy();
+    expect(cachePut!.options?.expirationTtl).toBe(21_600);
   });
 
   it('a call with estimateUsdMicro: 0 never touches budget tables', async () => {

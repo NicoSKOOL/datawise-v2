@@ -1,5 +1,6 @@
 import type { BlueprintStage, RunStatus } from '../contracts/enums';
 import { BlueprintApiError, NotFoundError } from '../domain/api-errors';
+import { BlueprintValidationError } from '../domain/errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { buildStageInputHash, hashNormalizedInput } from '../domain/hash';
 import type { NormalizedProjectBrief } from '../contracts/types';
@@ -264,23 +265,34 @@ export async function processResearchRun(
       const outputHash = await hashNormalizedInput(result.output);
       await completeStage(d1, lease.lease, outputJson, outputHash, { status: result.status ?? 'succeeded' });
     } catch (err) {
-      // Only a BlueprintApiError has already been through a sanitizer (e.g.
-      // mapDfsFailure) and carries a code/message safe to persist verbatim.
-      // Anything else (raw provider errors, thrown strings, bugs) could
-      // contain account emails, internal URLs, or other provider-body text,
-      // so it is always collapsed to the fixed internal_error message
-      // before it reaches the stage row (never store `err.message` as-is).
-      const { code, message } =
-        err instanceof BlueprintApiError
-          ? { code: err.code, message: err.message }
-          : { code: 'internal_error' as const, message: safeErrorMessage('internal_error') };
-      if (lease.attemptCount < MAX_ATTEMPTS) {
-        const nextRetryAt = new Date(Date.now() + RETRY_BACKOFF_MS).toISOString();
-        await failStage(d1, lease.lease, { code, message }, { kind: 'retry_wait', nextRetryAt });
-      } else if (meta.required) {
-        await failStage(d1, lease.lease, { code, message }, { kind: 'failed' });
+      if (err instanceof BlueprintValidationError) {
+        // Permanent, user-correctable failure (e.g. resolve_market's
+        // unsupported-language throw): retrying can never succeed, only a
+        // brief change can, so fail/skip the stage immediately instead of
+        // burning MAX_ATTEMPTS retry cycles and then masking the real reason
+        // behind a generic internal_error. The message is our own validation
+        // text (never raw provider output), so it is safe to persist.
+        const decision = meta.required ? ({ kind: 'failed' } as const) : ({ kind: 'skipped' } as const);
+        await failStage(d1, lease.lease, { code: 'invalid_input', message: err.message }, decision);
       } else {
-        await failStage(d1, lease.lease, { code, message }, { kind: 'skipped' });
+        // Only a BlueprintApiError has already been through a sanitizer (e.g.
+        // mapDfsFailure) and carries a code/message safe to persist verbatim.
+        // Anything else (raw provider errors, thrown strings, bugs) could
+        // contain account emails, internal URLs, or other provider-body text,
+        // so it is always collapsed to the fixed internal_error message
+        // before it reaches the stage row (never store `err.message` as-is).
+        const { code, message } =
+          err instanceof BlueprintApiError
+            ? { code: err.code, message: err.message }
+            : { code: 'internal_error' as const, message: safeErrorMessage('internal_error') };
+        if (lease.attemptCount < MAX_ATTEMPTS) {
+          const nextRetryAt = new Date(Date.now() + RETRY_BACKOFF_MS).toISOString();
+          await failStage(d1, lease.lease, { code, message }, { kind: 'retry_wait', nextRetryAt });
+        } else if (meta.required) {
+          await failStage(d1, lease.lease, { code, message }, { kind: 'failed' });
+        } else {
+          await failStage(d1, lease.lease, { code, message }, { kind: 'skipped' });
+        }
       }
     }
   }

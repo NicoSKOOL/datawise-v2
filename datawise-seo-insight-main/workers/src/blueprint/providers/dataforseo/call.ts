@@ -205,9 +205,14 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       .run();
 
     // 7: KV put, only when the response is cacheable (never pin a transient
-    // task failure for the full TTL).
+    // task failure for the full TTL). "Non-empty" must consider BOTH items
+    // and results: catalog/reference endpoints (locations, languages) return
+    // flat records in tasks[].result with no per-record items wrapper, so
+    // parsed.items is empty for a perfectly full catalog response and only
+    // parsed.results reflects the payload.
     if (isCacheableDfsResponse(response)) {
-      const ttl = parsed.items.length > 0 ? spec.ttlSeconds : spec.emptyTtlSeconds;
+      const hasData = parsed.items.length > 0 || parsed.results.length > 0;
+      const ttl = hasData ? spec.ttlSeconds : spec.emptyTtlSeconds;
       await env.KV.put(cacheKey, rawJson, { expirationTtl: ttl });
     }
 
