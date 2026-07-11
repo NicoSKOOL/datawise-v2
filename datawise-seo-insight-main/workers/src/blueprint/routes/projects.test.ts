@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { createTestDb } from '../test-support/d1';
 import { handleBlueprintRequest } from './router';
 import { newId, nowIso } from '../db/util';
 import { processResearchRun } from '../orchestration/process-run';
+import { fakeEnv } from '../test-support/env';
 import type { AuthUser } from '../../auth/google';
 import type { ApiSuccess, ApiFailure, ProjectView, ResearchEstimate } from '../contracts/api';
 
@@ -17,16 +17,6 @@ const adminUser = {
   is_admin: true,
   credits_used: 0,
 } as AuthUser;
-
-function fakeEnv() {
-  const { d1 } = createTestDb();
-  const sent: unknown[] = [];
-  return {
-    BLUEPRINT_DB: d1,
-    BLUEPRINT_QUEUE: { sent, send: async (body: unknown) => void sent.push(body) },
-    BLUEPRINT_KV: { put: async () => undefined },
-  } as any;
-}
 
 function makeRequest(
   path: string,
@@ -411,11 +401,13 @@ describe('POST /api/blueprint/v1/projects/:id/research-estimates', () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as ApiSuccess<ResearchEstimate>;
     expect(body.data.plannedStages).toHaveLength(19);
-    expect(body.data.plannedStages[0].estimatedTasks).toBe(0);
-    expect(body.data.plannedStages[0].estimatedMinUsd).toBe('0.00');
-    expect(body.data.totals.dataForSeoMinUsd).toBe('0.00');
+    expect(Number(body.data.totals.dataForSeoMinUsd)).toBeGreaterThan(0);
+    expect(Number(body.data.totals.dataForSeoMaxUsd)).toBeGreaterThan(0);
+    expect(Number(body.data.totals.dataForSeoMaxUsd)).toBeGreaterThanOrEqual(
+      Number(body.data.totals.dataForSeoMinUsd)
+    );
     expect(body.data.limitations).toEqual([
-      'Cost estimation is stubbed until provider adapters ship in Phase 3',
+      'US fan-out, content parsing, and clustering land in later phases; costs shown cover keyword, competitor, and SERP research.',
     ]);
     expect(body.data.fanoutAvailability).toBe('disabled');
     expect(body.data.estimateId).toBeTruthy();
@@ -426,6 +418,49 @@ describe('POST /api/blueprint/v1/projects/:id/research-estimates', () => {
       .first()) as any;
     expect(row).toBeTruthy();
     expect(row.project_id).toBe(json.data.id);
+    expect(row.min_cost_usd_micro).toBeGreaterThan(0);
+    expect(row.max_cost_usd_micro).toBeGreaterThan(0);
+
+    const project = (await env.BLUEPRINT_DB.prepare('SELECT active_brief_version_id FROM projects WHERE id = ?')
+      .bind(json.data.id)
+      .first()) as any;
+    expect(row.brief_version_id).toBe(project.active_brief_version_id);
+
+    const plan = JSON.parse(row.plan_json) as { lines: Array<{ operation: string }> };
+    const operations = plan.lines.map((line) => line.operation);
+    expect(operations).toContain('keyword_ideas');
+    expect(operations).toContain('serp_task_post');
+  });
+
+  it('rejects run-start with an estimate bound to a since-superseded brief version (409 stage_conflict)', async () => {
+    const env = fakeEnv();
+    const { json } = await createProject(env);
+    const estimateRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-estimates`, {
+      method: 'POST',
+      body: {},
+    });
+    const estimate = ((await estimateRes.json()) as ApiSuccess<ResearchEstimate>).data;
+
+    // Supersede the active brief version: the estimate above is now stale.
+    const patchRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}`, {
+      method: 'PATCH',
+      body: { ...validBrief, businessName: 'Aqua Plumbing Co' },
+      headers: { 'If-Match': String(json.data.version) },
+    });
+    expect(patchRes.status).toBe(200);
+
+    const runRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-runs`, {
+      method: 'POST',
+      body: {
+        estimateId: estimate.estimateId,
+        acceptedDataForSeoCeilingUsd: '100.00',
+        acceptedOpenRouterCeilingUsd: '10.00',
+      },
+      headers: { 'Idempotency-Key': newId('idem') },
+    });
+    expect(runRes.status).toBe(409);
+    const runBody = (await runRes.json()) as ApiFailure;
+    expect(runBody.error.code).toBe('stage_conflict');
   });
 
   it('returns the invisible 404 body for a foreign project', async () => {

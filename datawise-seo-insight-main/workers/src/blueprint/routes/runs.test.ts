@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createTestDb } from '../test-support/d1';
 import { handleBlueprintRequest } from './router';
 import { newId, nowIso } from '../db/util';
+import { fakeEnv } from '../test-support/env';
 import type { AuthUser } from '../../auth/google';
 import type { ApiSuccess, ApiFailure, ProjectView, ResearchEstimate, ResearchRunView } from '../contracts/api';
 
@@ -16,16 +16,6 @@ const adminUser = {
   is_admin: true,
   credits_used: 0,
 } as AuthUser;
-
-function fakeEnv() {
-  const { d1 } = createTestDb();
-  const sent: unknown[] = [];
-  return {
-    BLUEPRINT_DB: d1,
-    BLUEPRINT_QUEUE: { sent, send: async (body: unknown) => void sent.push(body) },
-    BLUEPRINT_KV: { put: async () => undefined },
-  } as any;
-}
 
 function makeRequest(
   path: string,
@@ -132,7 +122,7 @@ describe('GET /api/blueprint/v1/research-runs/:id', () => {
     const otherUser = { ...adminUser, id: 'u2' } as AuthUser;
     const res = await handleBlueprintRequest(
       makeRequest(`/api/blueprint/v1/research-runs/${runId}`),
-      env,
+      env as any,
       otherUser,
       `/api/blueprint/v1/research-runs/${runId}`,
       'GET'
