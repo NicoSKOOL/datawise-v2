@@ -207,31 +207,40 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
   }
 
   try {
-    // 6: raw artifact to R2 + artifacts row.
+    // 6: raw artifact to R2 + artifacts row -- billable calls only. Free
+    // calls (estimateUsdMicro === 0: documented-free catalog GETs and
+    // skipCache task_get polls) write NO artifact, NO artifacts row, and NO
+    // provider_usage row (step 8): a SERP polling loop alone would
+    // otherwise mint up to maxAttempts x batch-size junk objects per run
+    // for responses that are mostly "not ready yet", and catalog artifacts
+    // have no evidence_refs row pointing at them either way.
     const rawJson = JSON.stringify(response);
-    const artifactKey = `runs/${runId}/dfs/${requestHash}.json`;
-    await env.BLUEPRINT_ARTIFACTS.put(artifactKey, rawJson);
+    let artifactId: string | null = null;
+    if (!isFreeCall) {
+      const artifactKey = `runs/${runId}/dfs/${requestHash}.json`;
+      await env.BLUEPRINT_ARTIFACTS.put(artifactKey, rawJson);
 
-    const artifactId = newId('art');
-    const project = await d1
-      .prepare(`SELECT organization_id FROM projects WHERE id = ?`)
-      .bind(ctx.projectId)
-      .first<{ organization_id: string }>();
-    if (!project) {
-      // artifacts.organization_id is NOT NULL; fail with a sanitized error
-      // instead of letting the raw D1 constraint error surface.
-      throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+      artifactId = newId('art');
+      const project = await d1
+        .prepare(`SELECT organization_id FROM projects WHERE id = ?`)
+        .bind(ctx.projectId)
+        .first<{ organization_id: string }>();
+      if (!project) {
+        // artifacts.organization_id is NOT NULL; fail with a sanitized error
+        // instead of letting the raw D1 constraint error surface.
+        throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+      }
+      const sha256 = await sha256Hex(rawJson);
+      const byteSize = new TextEncoder().encode(rawJson).byteLength;
+      await d1
+        .prepare(
+          `INSERT INTO artifacts
+            (id, organization_id, run_id, kind, storage_key, sha256, content_type, byte_size, encrypted, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'application/json', ?, 0, ?)`
+        )
+        .bind(artifactId, project.organization_id, runId, spec.kind, artifactKey, sha256, byteSize, nowIso())
+        .run();
     }
-    const sha256 = await sha256Hex(rawJson);
-    const byteSize = new TextEncoder().encode(rawJson).byteLength;
-    await d1
-      .prepare(
-        `INSERT INTO artifacts
-          (id, organization_id, run_id, kind, storage_key, sha256, content_type, byte_size, encrypted, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'application/json', ?, 0, ?)`
-      )
-      .bind(artifactId, project.organization_id, runId, spec.kind, artifactKey, sha256, byteSize, nowIso())
-      .run();
 
     // 7: KV put, only when the response is cacheable (never pin a transient
     // task failure for the full TTL). "Non-empty" must consider BOTH items
@@ -245,7 +254,8 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       await env.KV.put(cacheKey, rawJson, { expirationTtl: ttl });
     }
 
-    // 8: cost, evidence_refs, provider_usage.
+    // 8: cost, evidence_refs, provider_usage -- billable calls only (see
+    // the step-6 comment for why free calls skip all bookkeeping writes).
     const costUsdMicro = dollarsToMicro(parsed.totalCostUsd);
     let evidenceRefId: string | null = null;
     if (!isFreeCall) {
@@ -258,28 +268,28 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
         costUsdMicro,
         artifactId,
       });
-    }
 
-    await d1
-      .prepare(
-        `INSERT INTO provider_usage
-          (id, run_id, stage, provider, operation, endpoint_or_model, provider_task_ids_json,
-           cache_status, request_count, returned_item_count, cost_usd_micro, latency_ms, created_at)
-         VALUES (?, ?, ?, 'dataforseo', ?, ?, ?, 'miss', 1, ?, ?, ?, ?)`
-      )
-      .bind(
-        newId('pu'),
-        runId,
-        ctx.stage,
-        spec.operation,
-        spec.endpoint,
-        JSON.stringify(parsed.tasks.map((t) => t.taskId).filter((id): id is string => id != null)),
-        parsed.items.length,
-        costUsdMicro,
-        latencyMs,
-        nowIso()
-      )
-      .run();
+      await d1
+        .prepare(
+          `INSERT INTO provider_usage
+            (id, run_id, stage, provider, operation, endpoint_or_model, provider_task_ids_json,
+             cache_status, request_count, returned_item_count, cost_usd_micro, latency_ms, created_at)
+           VALUES (?, ?, ?, 'dataforseo', ?, ?, ?, 'miss', 1, ?, ?, ?, ?)`
+        )
+        .bind(
+          newId('pu'),
+          runId,
+          ctx.stage,
+          spec.operation,
+          spec.endpoint,
+          JSON.stringify(parsed.tasks.map((t) => t.taskId).filter((id): id is string => id != null)),
+          parsed.items.length,
+          costUsdMicro,
+          latencyMs,
+          nowIso()
+        )
+        .run();
+    }
 
     // 9: reconcile last, only after everything else succeeded.
     if (reservationId) {

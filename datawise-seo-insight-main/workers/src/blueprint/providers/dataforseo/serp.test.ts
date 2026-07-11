@@ -6,6 +6,7 @@ import type { NormalizedProjectBrief } from '../../contracts/types';
 import { postSerpTasks, collectSerpTasks, SerpTasksPendingError } from './serp';
 import type { SerpQuery } from './serp';
 import { DEFAULT_DFS_COST_ESTIMATES } from './costs';
+import { DataForSeoQuotaError } from '../../../dataforseo/client';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -346,6 +347,60 @@ describe('collectSerpTasks', () => {
     expect(result).toEqual({ completed: 0, pending: 0, failed: 1 });
     const row = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE id = ?`).bind(rowId).first<{ status: string }>();
     expect(row?.status).toBe('failed');
+  });
+
+  it('a task_get whose underlying fetch throws DataForSeoQuotaError rethrows provider_quota_exhausted and leaves rows posted', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+    await seedKeywordRow(d1, runId, 'emergency plumbing austin', 'emergency plumbing austin');
+    await seedKeywordRow(d1, runId, 'drain cleaning austin', 'drain cleaning austin');
+    const rowId1 = await seedPostedRow(d1, runId, { keyword: 'emergency plumbing austin', providerTaskId: 'task-1' });
+    const rowId2 = await seedPostedRow(d1, runId, { keyword: 'drain cleaning austin', providerTaskId: 'task-2' });
+
+    globalThis.fetch = (async () => {
+      throw new DataForSeoQuotaError('daily limit reached for ops@internal.example');
+    }) as any;
+
+    await expect(collectSerpTasks(ctx)).rejects.toMatchObject({ code: 'provider_quota_exhausted' });
+
+    // Nothing was marked failed: the whole attempt aborts, rows stay
+    // 'posted' for the next (retry_wait-scheduled) attempt.
+    for (const rowId of [rowId1, rowId2]) {
+      const row = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE id = ?`).bind(rowId).first<{ status: string }>();
+      expect(row?.status).toBe('posted');
+    }
+  });
+
+  it('a non-quota, non-rate-limit task_get throw marks only that row failed; other rows still collect', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+    await seedKeywordRow(d1, runId, 'emergency plumbing austin', 'emergency plumbing austin');
+    await seedKeywordRow(d1, runId, 'drain cleaning austin', 'drain cleaning austin');
+    const rowId1 = await seedPostedRow(d1, runId, { keyword: 'emergency plumbing austin', providerTaskId: 'task-1' });
+    const rowId2 = await seedPostedRow(d1, runId, { keyword: 'drain cleaning austin', providerTaskId: 'task-2' });
+
+    globalThis.fetch = (async (url: any) => {
+      const href = String(url);
+      if (href.includes('task-1')) {
+        throw new Error('connection reset by peer');
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          readyTaskGetResponse('task-2', [{ type: 'organic', rank_group: 1, url: 'https://e.com', title: 'E', domain: 'e.com' }]),
+      } as any;
+    }) as any;
+
+    const result = await collectSerpTasks(ctx);
+
+    expect(result).toEqual({ completed: 1, pending: 0, failed: 1 });
+    const row1 = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE id = ?`).bind(rowId1).first<{ status: string }>();
+    expect(row1?.status).toBe('failed');
+    const row2 = await d1
+      .prepare(`SELECT status, snapshot_id FROM dfs_serp_tasks WHERE id = ?`)
+      .bind(rowId2)
+      .first<{ status: string; snapshot_id: string }>();
+    expect(row2?.status).toBe('completed');
+    expect(row2?.snapshot_id).toBeTruthy();
   });
 
   it('mixed posted rows: leaves not-ready pending, completes ready ones, independently', async () => {

@@ -13,6 +13,8 @@ import { BlueprintApiError } from '../domain/api-errors';
 import { BlueprintValidationError } from '../domain/errors';
 import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
+import { validateSerpsAndQuestionsHandler } from './research-handlers';
+import { DataForSeoQuotaError } from '../../dataforseo/client';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -573,6 +575,60 @@ describe('processResearchRun', () => {
       expect(row?.safe_error_code).toBe('internal_error'); // generic Error, not SerpTasksPendingError, here
       if (attempt < 4) await forceRetryNow(d1, runId, 'validate_serps_and_questions');
     }
+  });
+
+  it('Task 13: a quota error during a real task_get poll lands the stage in retry_wait with safe_error_code provider_quota_exhausted and leaves serp rows posted', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    // Run the REAL handler (it is exported but not registered until Task
+    // 14's sweep), driven through the processor so the stage row's
+    // safe_error_code is what gets asserted, not just the thrown error.
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_serps_and_questions: validateSerpsAndQuestionsHandler,
+    };
+
+    for (let i = 0; i < 10; i++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+    }
+
+    // Pre-seed one posted dfs_serp_tasks row so the handler takes the
+    // collect (task_get) path rather than the first-attempt post path.
+    const serpRowId = newId('serpt');
+    await d1
+      .prepare(
+        `INSERT INTO dfs_serp_tasks (id, run_id, keyword, service_area_id, location_code, provider_task_id, status, posted_at)
+         VALUES (?, ?, 'emergency plumbing austin', 'a1', 1023191, 'task-quota', 'posted', ?)`
+      )
+      .bind(serpRowId, runId, nowIso())
+      .run();
+
+    // task_get hits the provider quota wall; every other endpoint keeps
+    // being served by the catalog stub installed in beforeEach.
+    const stubFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init?: any) => {
+      if (String(url).includes('/serp/google/organic/task_get/')) {
+        throw new DataForSeoQuotaError('daily limit reached for ops@internal.example');
+      }
+      return (stubFetch as any)(url, init);
+    }) as any;
+
+    await processResearchRun(env, runId, 'w1', overrides);
+
+    const rows = await getStageRows(d1, runId);
+    const row = rows.find((r) => r.stage_name === 'validate_serps_and_questions');
+    expect(row?.status).toBe('retry_wait');
+    expect(row?.safe_error_code).toBe('provider_quota_exhausted');
+    expect(row?.safe_error_message).toBe(
+      'The research provider daily quota is exhausted. The run will resume when quota is available.'
+    );
+
+    const serpRow = await d1
+      .prepare(`SELECT status FROM dfs_serp_tasks WHERE id = ?`)
+      .bind(serpRowId)
+      .first<{ status: string }>();
+    expect(serpRow?.status).toBe('posted');
   });
 
   it('Task 13: a thrown SerpTasksPendingError is classified as provider_timeout (not internal_error) and lands in retry_wait', async () => {

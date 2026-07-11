@@ -1,4 +1,5 @@
 import type { StageContext } from '../../orchestration/handlers';
+import { BlueprintApiError } from '../../domain/api-errors';
 import { blueprintDfsCall } from './call';
 import type { DfsCallResult } from './call';
 import type { DfsTaskMeta } from './envelope';
@@ -276,11 +277,17 @@ async function insertManualEvidenceRef(
 // marks the row 'failed' and the loop continues (one bad task never blocks
 // the others' collection); a ready row is parsed and persisted into
 // serp_snapshots + faq_evidence, marked 'completed' with its snapshot_id,
-// and counted toward `completed`. A network-level throw from the task_get
-// call itself (as opposed to a DataForSEO-reported per-task status) is
-// treated the same as not-ready rather than a hard per-row failure: a
-// transient blip on one poll should not permanently fail a row that might
-// resolve cleanly on the very next attempt.
+// and counted toward `completed`. A THROW from the task_get call itself is
+// classified (reviewer-mandated, replacing an earlier blanket
+// treat-as-pending catch):
+//   - provider_quota_exhausted / provider_rate_limited (BlueprintApiError):
+//     RETHROWN. Both are account-wide conditions -- polling the remaining
+//     rows this attempt would burn calls that are guaranteed to hit the
+//     same wall. The whole stage attempt lands in retry_wait with the
+//     correct safe_error_code, and every row it did not get to stays
+//     'posted' for the next attempt.
+//   - anything else: marks THAT row 'failed' and continues, exactly like a
+//     DataForSEO-reported per-task error.
 export async function collectSerpTasks(ctx: StageContext): Promise<CollectSerpTasksResult> {
   const rows = await ctx.d1
     .prepare(
@@ -314,8 +321,21 @@ export async function collectSerpTasks(ctx: StageContext): Promise<CollectSerpTa
         estimateUsdMicro: 0,
         skipCache: true,
       });
-    } catch {
-      pending += 1;
+    } catch (err) {
+      if (
+        err instanceof BlueprintApiError &&
+        (err.code === 'provider_quota_exhausted' || err.code === 'provider_rate_limited')
+      ) {
+        // Account-wide condition: abort this poll pass entirely (see the
+        // function doc comment). Rows already collected stay collected;
+        // rows not yet reached stay 'posted'.
+        throw err;
+      }
+      await ctx.d1
+        .prepare(`UPDATE dfs_serp_tasks SET status = 'failed', completed_at = ? WHERE id = ?`)
+        .bind(nowIso(), row.id)
+        .run();
+      failed += 1;
       continue;
     }
 

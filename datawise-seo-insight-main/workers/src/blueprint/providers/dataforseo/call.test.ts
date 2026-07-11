@@ -90,8 +90,10 @@ function fakeProviderEnv() {
   const kv = new Map<string, string>();
   const kvPuts: Array<{ key: string; options?: { expirationTtl?: number } }> = [];
   const artifacts = new Map<string, string>();
+  const artifactPuts: string[] = [];
   return {
     kvPuts,
+    artifactPuts,
     KV: {
       get: async (k: string) => kv.get(k) ?? null,
       put: async (k: string, v: string, options?: { expirationTtl?: number }) => {
@@ -105,6 +107,7 @@ function fakeProviderEnv() {
     BLUEPRINT_ARTIFACTS: {
       put: async (k: string, v: string) => {
         artifacts.set(k, v);
+        artifactPuts.push(k);
       },
       get: async (k: string) => (artifacts.has(k) ? { text: async () => artifacts.get(k)! } : null),
     } as unknown as R2Bucket,
@@ -463,5 +466,38 @@ describe('blueprintDfsCall', () => {
     const run = await getRun(d1, runId);
     expect(run?.dataforseo_reserved_usd_micro).toBe(0);
     expect(run?.dataforseo_actual_usd_micro).toBe(0);
+  });
+
+  it('a free call writes NO R2 artifact, NO artifacts row, and NO provider_usage row (paid calls unchanged)', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+    const freeSpec: DfsCallSpec = {
+      method: 'GET',
+      endpoint: '/serp/google/locations',
+      ttlSeconds: 86400,
+      emptyTtlSeconds: 3600,
+      kind: 'serp_snapshot',
+      operation: 'locations_catalog',
+      scopeId: 'catalog',
+      estimateUsdMicro: 0,
+    };
+    stubFetchJson(okResponse([{ location_code: 1023191 }], 0));
+
+    await blueprintDfsCall(ctx, freeSpec);
+
+    const artifactPuts = (ctx.env as any).artifactPuts as string[];
+    expect(artifactPuts).toEqual([]);
+    const artifactRows = await d1.prepare(`SELECT COUNT(*) as c FROM artifacts WHERE run_id = ?`).bind(runId).first<{ c: number }>();
+    expect(artifactRows?.c).toBe(0);
+    const usageRows = await d1.prepare(`SELECT COUNT(*) as c FROM provider_usage WHERE run_id = ?`).bind(runId).first<{ c: number }>();
+    expect(usageRows?.c).toBe(0);
+
+    // Paid calls unchanged: same env, a billable call still writes all three.
+    stubFetchJson(okResponse([{ keyword: 'x' }], 0.05));
+    await blueprintDfsCall(ctx, baseSpec);
+    expect(artifactPuts).toHaveLength(1);
+    const artifactRowsAfter = await d1.prepare(`SELECT COUNT(*) as c FROM artifacts WHERE run_id = ?`).bind(runId).first<{ c: number }>();
+    expect(artifactRowsAfter?.c).toBe(1);
+    const usageRowsAfter = await d1.prepare(`SELECT COUNT(*) as c FROM provider_usage WHERE run_id = ?`).bind(runId).first<{ c: number }>();
+    expect(usageRowsAfter?.c).toBe(1);
   });
 });
