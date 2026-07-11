@@ -11,7 +11,7 @@ import { loadDfsCostEstimates, buildCallPlan } from '../providers/dataforseo/cos
 import { BlueprintApiError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { resolveMarket } from '../providers/dataforseo/catalogs';
-import { collectKeywordEvidenceHandler } from './research-handlers';
+import { collectKeywordEvidenceHandler, discoverCompetitorsHandler } from './research-handlers';
 
 export interface StageContext {
   env: BlueprintProviderEnv;
@@ -247,5 +247,6 @@ STAGE_HANDLERS.resolve_market = resolveMarketHandler;
 STAGE_HANDLERS.normalize_brief = normalizeBriefHandler;
 STAGE_HANDLERS.plan_research = planResearchHandler;
 STAGE_HANDLERS.collect_keyword_evidence = collectKeywordEvidenceHandler;
+STAGE_HANDLERS.discover_competitors = discoverCompetitorsHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
 STAGE_HANDLERS.publish_blueprint = publishBlueprintHandler;

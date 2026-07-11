@@ -18,6 +18,12 @@ import { mergeKeywordCandidates } from '../domain/merge';
 import { normalizeKeyword } from '../domain/keyword';
 import { normalizeDomain } from '../domain/url';
 import { newId, usdToMicro } from '../db/util';
+import {
+  discoverCompetitorsForDomain,
+  discoverSerpCompetitors,
+  filterCompetitorCandidates,
+} from '../providers/dataforseo/competitors';
+import type { CompetitorCandidate } from '../providers/dataforseo/competitors';
 
 // Catalog Sec 3: max 8 keyword_suggestions seeds per run (one per
 // service-in-primary-area seed). This module is the home for every real
@@ -227,4 +233,168 @@ export const collectKeywordEvidenceHandler: StageHandler = async (ctx: StageCont
   // enrichmentTruncated flag's own doc comment in providers/dataforseo/
   // keywords.ts.
   return { output, status: enrichmentTruncated ? 'partial' : 'succeeded' };
+};
+
+// Catalog Sec 8: "V1 normally 20-100 high-relevance commercial/local terms"
+// and "Max 200 representative keywords" -- the handler itself caps the
+// greenfield seed list at 100 (the adapter's own 200 ceiling is a defensive
+// backstop, not the intended operating point).
+const MAX_GREENFIELD_SERP_KEYWORDS = 100;
+
+// Final selected-competitor ceiling (catalog Sec 7/8: "selecting 3-5").
+const MAX_SELECTED_COMPETITORS = 5;
+
+export interface DiscoverCompetitorsOutput {
+  candidateCount: number;
+  selectedDomains: string[];
+  stageCostUsdMicro: number;
+}
+
+// Reuses an existing (run_id, domain) row rather than blindly inserting: the
+// only UNIQUE index on this table is the partial one on selected=1
+// (db/schema.sql), so a retried stage attempt re-running this same insert
+// path would otherwise create a second, still-selected=0, duplicate row for
+// a domain it already persisted last attempt. A single stage lease only
+// ever runs one attempt at a time (db/leases.ts), so this
+// select-then-insert is race-free in practice, not just in these tests.
+async function upsertCompetitorRow(
+  d1: D1Database,
+  runId: string,
+  domain: string,
+  source: string,
+  visibilityMetric: number | null
+): Promise<string> {
+  const existing = await d1
+    .prepare(`SELECT id FROM competitors WHERE run_id = ? AND domain = ?`)
+    .bind(runId, domain)
+    .first<{ id: string }>();
+  if (existing) return existing.id;
+
+  const id = newId('comp');
+  await d1
+    .prepare(
+      `INSERT INTO competitors (id, run_id, domain, source, selected, visibility_score)
+       VALUES (?, ?, ?, ?, 0, ?)`
+    )
+    .bind(id, runId, domain, source, visibilityMetric)
+    .run();
+  return id;
+}
+
+// Persists every surviving discovered candidate (selected = 0) plus any
+// user-supplied known competitor not already among them, then flips
+// selected = 1 for: every known competitor (uncapped -- catalog "ALWAYS
+// kept"), plus as many of the remaining discovered candidates, ranked by
+// visibilityMetric (desc, nulls last), as it takes to reach
+// MAX_SELECTED_COMPETITORS. The selected flip is a separate UPDATE
+// (never a second INSERT) specifically so a retried stage attempt can never
+// violate uq_selected_competitor_domain (run_id, domain) WHERE selected = 1:
+// UPDATE-ing an already-selected row to selected = 1 again is a no-op, not a
+// constraint violation.
+async function persistCompetitors(
+  d1: D1Database,
+  runId: string,
+  filtered: CompetitorCandidate[],
+  knownCompetitorDomains: string[]
+): Promise<{ selectedDomains: string[] }> {
+  for (const candidate of filtered) {
+    const id = await upsertCompetitorRow(d1, runId, candidate.domain, candidate.source, candidate.visibilityMetric);
+    await d1
+      .prepare(`INSERT OR IGNORE INTO competitor_evidence_refs (competitor_id, evidence_ref_id) VALUES (?, ?)`)
+      .bind(id, candidate.evidenceRefId)
+      .run();
+  }
+
+  const knownSet = new Set(knownCompetitorDomains);
+  for (const domain of knownSet) {
+    // Already persisted above if the DFS candidate pool also surfaced this
+    // domain; upsertCompetitorRow is idempotent either way.
+    await upsertCompetitorRow(d1, runId, domain, 'user_seed', null);
+  }
+
+  // Stable sort (desc by visibilityMetric, nulls last) over ONLY the
+  // discovered candidates not already guaranteed selected as a known
+  // competitor, so a known competitor is never double-counted against the
+  // MAX_SELECTED_COMPETITORS cap.
+  const ranked = filtered
+    .filter((c) => !knownSet.has(c.domain))
+    .slice()
+    .sort((a, b) => {
+      if (a.visibilityMetric === b.visibilityMetric) return 0;
+      if (a.visibilityMetric === null) return 1;
+      if (b.visibilityMetric === null) return -1;
+      return b.visibilityMetric - a.visibilityMetric;
+    });
+
+  const selectedDomains = new Set<string>(knownSet);
+  for (const candidate of ranked) {
+    if (selectedDomains.size >= MAX_SELECTED_COMPETITORS) break;
+    selectedDomains.add(candidate.domain);
+  }
+
+  for (const domain of selectedDomains) {
+    await d1
+      .prepare(`UPDATE competitors SET selected = 1 WHERE run_id = ? AND domain = ?`)
+      .bind(runId, domain)
+      .run();
+  }
+
+  return { selectedDomains: [...selectedDomains] };
+}
+
+// Real discover_competitors, not a stub. Optional stage (stages.ts): a throw
+// here degrades the run to 'partial' via the processor's own optional-stage
+// handling, it never fails the whole run -- so this only throws for a
+// genuinely broken precondition (missing resolve_market output) or a hard
+// provider failure, never for "zero competitors found" (a legitimate empty
+// result). existing_site mode discovers via the target's own domain
+// competitors; greenfield mode has no target domain to compare against, so
+// it discovers via the service-in-primary-area seed queries (the same
+// population Task 10's collect_keyword_evidence uses for keyword_suggestions),
+// capped at MAX_GREENFIELD_SERP_KEYWORDS.
+export const discoverCompetitorsHandler: StageHandler = async (ctx: StageContext) => {
+  const market = await loadStageOutput<ResolvedMarket>(ctx.d1, ctx.runId, 'resolve_market');
+  if (!market) {
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+
+  const costs = await loadDfsCostEstimates(ctx.env.KV);
+  const brief = ctx.normalizedBrief;
+  const ownDomain = brief.websiteDomain;
+
+  let candidates: CompetitorCandidate[];
+  if (brief.mode === 'existing_site' && ownDomain) {
+    candidates = await discoverCompetitorsForDomain(ctx, market, ownDomain, costs);
+  } else {
+    const { seeds } = buildSeedQueries(brief, {
+      maxTotalSeeds: V1_LIMITS.maxSeedQueries,
+      includePrimaryAreaSeeds: true,
+    });
+    const keywords = seeds
+      .filter((s) => s.source === 'service_primary_area')
+      .map((s) => s.query)
+      .slice(0, MAX_GREENFIELD_SERP_KEYWORDS);
+    candidates = keywords.length > 0 ? await discoverSerpCompetitors(ctx, market, keywords, costs) : [];
+  }
+
+  const filtered = filterCompetitorCandidates(candidates, ownDomain);
+  const { selectedDomains } = await persistCompetitors(ctx.d1, ctx.runId, filtered, brief.knownCompetitorDomains);
+
+  // Adapters here return bare CompetitorCandidate[] (no cost side-channel,
+  // unlike keywords.ts's KeywordFetchResult), so this stage's real spend is
+  // read back from provider_usage instead of accumulated inline: every real
+  // (non-cache-hit) blueprintDfsCall this handler makes writes exactly one
+  // provider_usage row tagged with ctx.stage (call.ts step 8).
+  const costRow = await ctx.d1
+    .prepare(`SELECT COALESCE(SUM(cost_usd_micro), 0) AS total FROM provider_usage WHERE run_id = ? AND stage = ?`)
+    .bind(ctx.runId, ctx.stage)
+    .first<{ total: number }>();
+
+  const output: DiscoverCompetitorsOutput = {
+    candidateCount: filtered.length,
+    selectedDomains,
+    stageCostUsdMicro: costRow?.total ?? 0,
+  };
+
+  return { output, status: 'succeeded' as const };
 };

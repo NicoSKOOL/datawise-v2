@@ -5,7 +5,7 @@ import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { V1_LIMITS } from '../contracts/limits';
 import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
-import { collectKeywordEvidenceHandler } from './research-handlers';
+import { collectKeywordEvidenceHandler, discoverCompetitorsHandler } from './research-handlers';
 import type { StageHandler, StageContext } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
 import { BlueprintApiError } from '../domain/api-errors';
@@ -350,6 +350,302 @@ describe('collectKeywordEvidenceHandler (via processResearchRun)', () => {
     // always runs first) -- loadStageOutput returns null and the handler
     // must fail loudly rather than proceed with an undefined market.
     await expect(collectKeywordEvidenceHandler(ctx)).rejects.toMatchObject({
+      code: 'provider_invalid_response',
+    } satisfies Partial<BlueprintApiError>);
+  });
+});
+
+// discoverCompetitorsHandler is exercised directly (not via processResearchRun)
+// because it has no dependency on stage_input_hash beyond loadStageOutput's
+// read of resolve_market's output_json -- inserting that one row directly is
+// enough to satisfy the handler, and avoids re-driving validate_intake ->
+// plan_research just to reach this stage for every scenario below.
+describe('discoverCompetitorsHandler', () => {
+  let restoreFetch: (() => void) | undefined;
+  afterEach(() => {
+    restoreFetch?.();
+    restoreFetch = undefined;
+  });
+
+  async function seedMarketStage(d1: D1Database, runId: string): Promise<void> {
+    await d1
+      .prepare(
+        `INSERT INTO research_stage_runs
+          (id, run_id, stage_name, stage_input_hash, status, required, attempt_count, output_json, finished_at)
+         VALUES (?, ?, 'resolve_market', 'hash-resolve-market', 'succeeded', 1, 1, ?, ?)`
+      )
+      .bind(newId('stagerun'), runId, JSON.stringify(MARKET), nowIso())
+      .run();
+  }
+
+  function buildCompetitorCtx(
+    d1: D1Database,
+    runId: string,
+    projectId: string,
+    briefVersionId: string,
+    normalizedBrief: StageContext['normalizedBrief']
+  ): StageContext {
+    return {
+      env: { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: { send: async () => undefined }, ...providerFields() } as any,
+      d1,
+      runId,
+      projectId,
+      briefVersionId,
+      normalizedBrief,
+      stage: 'discover_competitors',
+      attempt: 1,
+    };
+  }
+
+  // Answers whichever Labs discovery endpoint the handler calls with the
+  // items the test supplies, and asserts exactly one call was made -- the
+  // handler must call ONE of competitors_domain/serp_competitors per mode,
+  // never both.
+  function stubDiscoveryFetch(items: any[]): { restore: () => void; capturedBodies: Array<{ href: string; body: any }> } {
+    const original = globalThis.fetch;
+    const capturedBodies: Array<{ href: string; body: any }> = [];
+    globalThis.fetch = (async (url: any, init?: any) => {
+      const href = String(url);
+      const body = init?.body ? JSON.parse(init.body)[0] : {};
+      capturedBodies.push({ href, body });
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status_code: 20000,
+          tasks: [{ id: 't1', status_code: 20000, status_message: 'Ok.', cost: 0.05, result: [{ items }] }],
+        }),
+      } as any;
+    }) as any;
+    return { restore: () => { globalThis.fetch = original; }, capturedBodies };
+  }
+
+  it('existing_site mode posts target, filters out an excluded domain and the own domain, and auto-selects the top 5 by visibilityMetric (desc, nulls last)', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore, capturedBodies } = stubDiscoveryFetch([
+      { domain: 'yelp.com', intersections: 999 }, // excluded directory domain
+      { domain: 'aquaplumbing.com', intersections: 500 }, // own domain
+      { domain: 'd90.com', intersections: 90 },
+      { domain: 'd70.com', intersections: 70 },
+      { domain: 'd30.com', intersections: 30 },
+      { domain: 'd10.com', intersections: 10 },
+      { domain: 'd5.com', intersections: 5 },
+      { domain: 'dnull.com' }, // missing intersections -> null, sorts last
+    ]);
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output, status } = await discoverCompetitorsHandler(ctx);
+
+    expect(capturedBodies).toHaveLength(1);
+    expect(capturedBodies[0].href).toContain('/dataforseo_labs/google/competitors_domain/live');
+    expect(capturedBodies[0].body).toMatchObject({ target: 'aquaplumbing.com', exclude_top_domains: true, max_rank_group: 20, limit: 20 });
+    expect(status).toBe('succeeded');
+
+    const parsedOutput = output as { candidateCount: number; selectedDomains: string[]; stageCostUsdMicro: number };
+    // 8 raw items - yelp.com (excluded) - aquaplumbing.com (own domain) = 6 surviving candidates.
+    expect(parsedOutput.candidateCount).toBe(6);
+    expect(parsedOutput.selectedDomains.sort()).toEqual(
+      ['d90.com', 'd70.com', 'd30.com', 'd10.com', 'd5.com'].sort()
+    );
+    expect(parsedOutput.selectedDomains).not.toContain('dnull.com');
+    expect(parsedOutput.selectedDomains).not.toContain('yelp.com');
+    expect(parsedOutput.selectedDomains).not.toContain('aquaplumbing.com');
+    expect(parsedOutput.stageCostUsdMicro).toBe(50_000);
+
+    const competitorRows = raw
+      .prepare(`SELECT domain, selected, source, visibility_score FROM competitors WHERE run_id = ?`)
+      .all(runId) as Array<{ domain: string; selected: number; source: string; visibility_score: number | null }>;
+    expect(competitorRows).toHaveLength(6);
+    const dnull = competitorRows.find((r) => r.domain === 'dnull.com');
+    expect(dnull?.selected).toBe(0);
+    expect(dnull?.visibility_score).toBeNull();
+    for (const domain of ['d90.com', 'd70.com', 'd30.com', 'd10.com', 'd5.com']) {
+      expect(competitorRows.find((r) => r.domain === domain)?.selected).toBe(1);
+    }
+    for (const row of competitorRows) expect(row.source).toBe('competitors_domain');
+
+    const evidenceRows = raw
+      .prepare(`SELECT ce.evidence_ref_id FROM competitor_evidence_refs ce
+                 JOIN competitors c ON c.id = ce.competitor_id WHERE c.run_id = ?`)
+      .all(runId) as Array<{ evidence_ref_id: string }>;
+    expect(evidenceRows).toHaveLength(6);
+    expect(new Set(evidenceRows.map((r) => r.evidence_ref_id)).size).toBe(1); // one DFS call -> one evidence ref, shared
+
+    restore();
+  });
+
+  it('always selects every user-supplied known competitor even beyond the top-5-by-metric cut, on top of the metric-ranked fill', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore } = stubDiscoveryFetch([
+      { domain: 'top1.com', intersections: 90 },
+      { domain: 'top2.com', intersections: 80 },
+      { domain: 'top3.com', intersections: 70 },
+      { domain: 'top4.com', intersections: 60 },
+    ]);
+    restoreFetch = restore;
+
+    const briefInput = {
+      ...SAMPLE_BRIEF_INPUT,
+      knownCompetitorDomains: ['https://www.known1.com', 'https://www.known2.com'],
+    };
+    const parsed = parseProjectBrief(briefInput);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    expect(normalizedBrief.knownCompetitorDomains).toEqual(['known1.com', 'known2.com']);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output } = await discoverCompetitorsHandler(ctx);
+    const parsedOutput = output as { selectedDomains: string[] };
+
+    // 2 known competitors always selected + top 3 discovered by metric to
+    // reach the cap of 5 (top4.com, the 4th-ranked discovered candidate,
+    // does not make the cut).
+    expect(parsedOutput.selectedDomains.sort()).toEqual(
+      ['known1.com', 'known2.com', 'top1.com', 'top2.com', 'top3.com'].sort()
+    );
+    expect(parsedOutput.selectedDomains).not.toContain('top4.com');
+
+    const knownRows = raw
+      .prepare(`SELECT domain, selected, source FROM competitors WHERE run_id = ? AND source = 'user_seed'`)
+      .all(runId) as Array<{ domain: string; selected: number; source: string }>;
+    expect(knownRows).toHaveLength(2);
+    for (const row of knownRows) expect(row.selected).toBe(1);
+
+    restore();
+  });
+
+  it('keeps ALL user-supplied known competitors selected even when there are more than 5 of them', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore } = stubDiscoveryFetch([{ domain: 'discovered.com', intersections: 999 }]);
+    restoreFetch = restore;
+
+    const knownDomains = ['k1.com', 'k2.com', 'k3.com', 'k4.com', 'k5.com', 'k6.com'];
+    const briefInput = { ...SAMPLE_BRIEF_INPUT, knownCompetitorDomains: knownDomains };
+    const parsed = parseProjectBrief(briefInput);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output } = await discoverCompetitorsHandler(ctx);
+    const parsedOutput = output as { selectedDomains: string[] };
+
+    // All 6 known competitors are kept (never dropped to respect the cap);
+    // with 6 already selected there is no room left for the metric-ranked
+    // discovered candidate.
+    expect(parsedOutput.selectedDomains.sort()).toEqual(knownDomains.sort());
+    expect(parsedOutput.selectedDomains).not.toContain('discovered.com');
+
+    const rows = raw
+      .prepare(`SELECT selected FROM competitors WHERE run_id = ? AND domain = 'discovered.com'`)
+      .all(runId) as Array<{ selected: number }>;
+    expect(rows[0]?.selected).toBe(0);
+
+    restore();
+  });
+
+  it('greenfield mode posts keywords + item_types [organic, local_pack] from primary-area seeds', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore, capturedBodies } = stubDiscoveryFetch([{ domain: 'greenfield-rival.com', avg_position: 3 }]);
+    restoreFetch = restore;
+
+    const { websiteUrl, ...greenfieldInput } = SAMPLE_BRIEF_INPUT;
+    const parsed = parseProjectBrief(greenfieldInput);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    expect(normalizedBrief.mode).toBe('greenfield');
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output } = await discoverCompetitorsHandler(ctx);
+
+    expect(capturedBodies).toHaveLength(1);
+    expect(capturedBodies[0].href).toContain('/dataforseo_labs/google/serp_competitors/live');
+    expect(capturedBodies[0].body).toMatchObject({
+      include_subdomains: false,
+      item_types: ['organic', 'local_pack'],
+      limit: 20,
+    });
+    expect(Array.isArray(capturedBodies[0].body.keywords)).toBe(true);
+    expect(capturedBodies[0].body.keywords.length).toBeGreaterThan(0);
+    for (const kw of capturedBodies[0].body.keywords as string[]) {
+      expect(kw).toContain('austin'); // every service_primary_area seed includes the primary area's city
+    }
+
+    const parsedOutput = output as { selectedDomains: string[] };
+    expect(parsedOutput.selectedDomains).toContain('greenfield-rival.com');
+
+    restore();
+  });
+
+  it('re-running the stage does not violate UNIQUE(run_id, domain) WHERE selected=1', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore } = stubDiscoveryFetch([
+      { domain: 'd90.com', intersections: 90 },
+      { domain: 'd70.com', intersections: 70 },
+    ]);
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    // First attempt.
+    const first = await discoverCompetitorsHandler(ctx);
+    // Second attempt on the exact same run (simulating a retried stage
+    // attempt after e.g. a transient failure in a later stage forced this
+    // one to be re-driven): must not throw a UNIQUE constraint violation,
+    // and must reproduce the same selection idempotently.
+    const second = await discoverCompetitorsHandler({ ...ctx, attempt: 2 });
+
+    expect((second.output as any).selectedDomains.sort()).toEqual(
+      (first.output as any).selectedDomains.sort()
+    );
+
+    const rows = raw
+      .prepare(`SELECT domain, selected FROM competitors WHERE run_id = ?`)
+      .all(runId) as Array<{ domain: string; selected: number }>;
+    // Still exactly one row per domain -- the retry reused the existing
+    // rows (SELECT-before-INSERT) rather than creating duplicates.
+    expect(rows).toHaveLength(2);
+
+    restore();
+  });
+
+  it('throws provider_invalid_response when resolve_market has no output to read', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(discoverCompetitorsHandler(ctx)).rejects.toMatchObject({
       code: 'provider_invalid_response',
     } satisfies Partial<BlueprintApiError>);
   });

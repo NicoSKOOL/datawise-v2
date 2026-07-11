@@ -19,6 +19,13 @@
 // seed query survives with null metrics). Tests that DO care about specific
 // keyword content/cost use their own dedicated stub (see
 // orchestration/research-handlers.test.ts).
+//
+// Task 11 adds discover_competitors as the third real stage handler in this
+// same path (competitors_domain for existing_site mode, serp_competitors for
+// greenfield). Same empty-item convention applies: a full-drive test still
+// exercises the handler's known-competitor-selection path (a known
+// competitor with zero discovered candidates still gets persisted +
+// selected), it just never sees real discovered candidates.
 
 function catalogTaskResponse(records: unknown[]) {
   return {
@@ -70,6 +77,8 @@ const LABS_KEYWORD_ENDPOINTS = [
   '/dataforseo_labs/google/keywords_for_site/live',
   '/dataforseo_labs/google/keyword_overview/live',
   '/dataforseo_labs/google/bulk_keyword_difficulty/live',
+  '/dataforseo_labs/google/competitors_domain/live',
+  '/dataforseo_labs/google/serp_competitors/live',
 ];
 
 // Installs the stub and returns a restore function; callers are responsible
