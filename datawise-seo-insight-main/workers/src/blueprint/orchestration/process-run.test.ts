@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDb } from '../test-support/d1';
 import { newId, nowIso } from '../db/util';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
@@ -10,6 +10,7 @@ import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
 import { BlueprintApiError } from '../domain/api-errors';
+import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -160,6 +161,18 @@ async function forceRetryNow(d1: D1Database, runId: string, stage: string): Prom
 }
 
 describe('processResearchRun', () => {
+  // resolve_market (Task 8) makes real DataForSEO catalog GETs; every test in
+  // this file drives runs through it without overriding it (a handful of
+  // tests below DO override resolve_market to test retry/error-mapping
+  // behavior, which takes precedence and never reaches the stub fetch).
+  let restoreFetch: () => void;
+  beforeEach(() => {
+    restoreFetch = installDfsCatalogFetchStub();
+  });
+  afterEach(() => {
+    restoreFetch();
+  });
+
   it('behaviors 1-3: drives a full run stage-by-stage to a terminal status, then is a no-op', async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);

@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { handleBlueprintRequest } from '../routes/router';
 import { newId } from '../db/util';
 import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
 import { fakeEnv, drainQueue } from '../test-support/env';
+import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 import type { AuthUser } from '../../auth/google';
 import type {
   ApiSuccess,
@@ -170,6 +171,18 @@ async function driveRequiredStageToFailure(
 }
 
 describe('Phase 2 orchestration acceptance', () => {
+  // resolve_market (Task 8) makes real DataForSEO catalog GETs; this whole
+  // file drains runs through the real STAGE_HANDLERS registry (that is the
+  // point of an acceptance e2e test), so every drive needs canned catalog
+  // data instead of hitting the real network.
+  let restoreFetch: () => void;
+  beforeEach(() => {
+    restoreFetch = installDfsCatalogFetchStub();
+  });
+  afterEach(() => {
+    restoreFetch();
+  });
+
   it('acceptance: idempotent run start replays the same runId for the same key+body, 409s on same key + different body', async () => {
     const env = fakeEnv();
     const { json: project } = await createProject(env);

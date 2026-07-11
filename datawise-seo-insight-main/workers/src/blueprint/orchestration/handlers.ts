@@ -10,6 +10,7 @@ import type { BlueprintProviderEnv } from './process-run';
 import { loadDfsCostEstimates, buildCallPlan } from '../providers/dataforseo/costs';
 import { BlueprintApiError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
+import { resolveMarket } from '../providers/dataforseo/catalogs';
 
 export interface StageContext {
   env: BlueprintProviderEnv;
@@ -222,11 +223,26 @@ async function planResearchHandler(ctx: StageContext) {
   return { output: { stage: 'plan_research' as const, plan } };
 }
 
+// Real market resolution, not a stub: pins the Labs location code, the
+// per-service-area SERP location codes, and the run's language against the
+// live DataForSEO catalogs. Required stage, but never throws for an
+// individual unresolved service area -- those degrade into
+// unresolvedAreaIds (downstream stages fall back to the country-level SERP
+// code for them) rather than failing the whole run. It DOES throw for an
+// unsupported language (BlueprintValidationError, permanent/user-correctable)
+// or a country missing from a catalog (BlueprintApiError
+// provider_invalid_response, via resolveMarket).
+async function resolveMarketHandler(ctx: StageContext) {
+  const market = await resolveMarket(ctx);
+  return { output: market, status: 'succeeded' as const };
+}
+
 export const STAGE_HANDLERS: Record<BlueprintStage, StageHandler> = Object.fromEntries(
   BLUEPRINT_STAGES.map((stage) => [stage, makeStubStage(stage)])
 ) as Record<BlueprintStage, StageHandler>;
 
 STAGE_HANDLERS.validate_intake = validateIntakeHandler;
+STAGE_HANDLERS.resolve_market = resolveMarketHandler;
 STAGE_HANDLERS.normalize_brief = normalizeBriefHandler;
 STAGE_HANDLERS.plan_research = planResearchHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
