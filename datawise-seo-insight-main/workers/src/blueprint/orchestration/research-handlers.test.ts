@@ -508,7 +508,10 @@ describe('discoverCompetitorsHandler', () => {
     const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
 
     const { output } = await discoverCompetitorsHandler(ctx);
-    const parsedOutput = output as { selectedDomains: string[] };
+    const parsedOutput = output as { selectedDomains: string[]; droppedKnownCompetitors: string[] };
+
+    // Neither known competitor trips the own-domain/excluded guards.
+    expect(parsedOutput.droppedKnownCompetitors).toEqual([]);
 
     // 2 known competitors always selected + top 3 discovered by metric to
     // reach the cap of 5 (top4.com, the 4th-ranked discovered candidate,
@@ -523,6 +526,133 @@ describe('discoverCompetitorsHandler', () => {
       .all(runId) as Array<{ domain: string; selected: number; source: string }>;
     expect(knownRows).toHaveLength(2);
     for (const row of knownRows) expect(row.selected).toBe(1);
+
+    restore();
+  });
+
+  it('drops a known competitor equal to the project own domain: not persisted, not selected, reported in droppedKnownCompetitors', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore } = stubDiscoveryFetch([{ domain: 'rival.com', intersections: 50 }]);
+    restoreFetch = restore;
+
+    // aquaplumbing.com is SAMPLE_BRIEF_INPUT's own websiteUrl domain.
+    const briefInput = {
+      ...SAMPLE_BRIEF_INPUT,
+      knownCompetitorDomains: ['https://www.aquaplumbing.com', 'legit-rival.com'],
+    };
+    const parsed = parseProjectBrief(briefInput);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output } = await discoverCompetitorsHandler(ctx);
+    const parsedOutput = output as { selectedDomains: string[]; droppedKnownCompetitors: string[] };
+
+    expect(parsedOutput.droppedKnownCompetitors).toEqual(['aquaplumbing.com']);
+    expect(parsedOutput.selectedDomains).not.toContain('aquaplumbing.com');
+    expect(parsedOutput.selectedDomains.sort()).toEqual(['legit-rival.com', 'rival.com'].sort());
+
+    const ownRows = raw
+      .prepare(`SELECT id FROM competitors WHERE run_id = ? AND domain = 'aquaplumbing.com'`)
+      .all(runId) as Array<{ id: string }>;
+    expect(ownRows).toHaveLength(0); // dropped entries are NOT persisted
+
+    restore();
+  });
+
+  it('drops a known competitor matching EXCLUDED_COMPETITOR_DOMAINS (subdomain-aware): not persisted, reported in droppedKnownCompetitors', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const { restore } = stubDiscoveryFetch([{ domain: 'rival.com', intersections: 50 }]);
+    restoreFetch = restore;
+
+    const briefInput = {
+      ...SAMPLE_BRIEF_INPUT,
+      knownCompetitorDomains: ['yelp.com', 'm.yelp.com', 'legit-rival.com'],
+    };
+    const parsed = parseProjectBrief(briefInput);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output } = await discoverCompetitorsHandler(ctx);
+    const parsedOutput = output as { selectedDomains: string[]; droppedKnownCompetitors: string[] };
+
+    expect(parsedOutput.droppedKnownCompetitors.sort()).toEqual(['m.yelp.com', 'yelp.com'].sort());
+    expect(parsedOutput.selectedDomains.sort()).toEqual(['legit-rival.com', 'rival.com'].sort());
+
+    const yelpRows = raw
+      .prepare(`SELECT id FROM competitors WHERE run_id = ? AND domain IN ('yelp.com', 'm.yelp.com')`)
+      .all(runId) as Array<{ id: string }>;
+    expect(yelpRows).toHaveLength(0);
+
+    // The legit known competitor is untouched by the guards: persisted,
+    // selected, source user_seed.
+    const legitRow = raw
+      .prepare(`SELECT selected, source FROM competitors WHERE run_id = ? AND domain = 'legit-rival.com'`)
+      .get(runId) as { selected: number; source: string } | undefined;
+    expect(legitRow?.selected).toBe(1);
+    expect(legitRow?.source).toBe('user_seed');
+
+    restore();
+  });
+
+  it('resets a prior attempt stale selection: a previously-selected domain missing from the new top 5 flips back to selected=0', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    // Simulate a prior attempt's persisted state directly (deterministic:
+    // no KV-cache variance): stale-winner.com was selected then, but the
+    // new discovery response below will NOT include it in the top 5.
+    raw
+      .prepare(
+        `INSERT INTO competitors (id, run_id, domain, source, selected, visibility_score)
+         VALUES (?, ?, 'stale-winner.com', 'competitors_domain', 1, 40.0)`
+      )
+      .run(newId('comp'), runId);
+
+    const { restore } = stubDiscoveryFetch([
+      { domain: 'stale-winner.com', intersections: 40 }, // rank 6 now: below the new cut
+      { domain: 'n1.com', intersections: 100 },
+      { domain: 'n2.com', intersections: 90 },
+      { domain: 'n3.com', intersections: 80 },
+      { domain: 'n4.com', intersections: 70 },
+      { domain: 'n5.com', intersections: 60 },
+    ]);
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output } = await discoverCompetitorsHandler({ ...ctx, attempt: 2 });
+    const parsedOutput = output as { selectedDomains: string[] };
+
+    expect(parsedOutput.selectedDomains.sort()).toEqual(
+      ['n1.com', 'n2.com', 'n3.com', 'n4.com', 'n5.com'].sort()
+    );
+
+    const rows = raw
+      .prepare(`SELECT domain, selected FROM competitors WHERE run_id = ?`)
+      .all(runId) as Array<{ domain: string; selected: number }>;
+    // stale-winner.com kept its single row (no duplicate) but is no longer selected.
+    expect(rows.filter((r) => r.domain === 'stale-winner.com')).toHaveLength(1);
+    expect(rows.find((r) => r.domain === 'stale-winner.com')?.selected).toBe(0);
+    // Exactly 5 selected, all from the new top 5 -- and the partial UNIQUE
+    // index (run_id, domain) WHERE selected=1 was never violated (the
+    // handler completing without throwing proves that; this asserts the
+    // resulting state is also correct).
+    expect(rows.filter((r) => r.selected === 1)).toHaveLength(5);
 
     restore();
   });

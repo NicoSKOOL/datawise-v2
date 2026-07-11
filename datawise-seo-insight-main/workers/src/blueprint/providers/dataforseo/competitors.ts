@@ -183,6 +183,14 @@ export async function discoverSerpCompetitors(
     .filter((c): c is CompetitorCandidate => c !== null);
 }
 
+// Subdomain-aware excluded-domain check (m.yelp.com matches yelp.com).
+// Exported so the discover_competitors handler can apply the SAME match to
+// user-supplied known competitors (controller-approved guard), not just to
+// discovered candidates.
+export function isExcludedCompetitorDomain(domain: string): boolean {
+  return EXCLUDED_COMPETITOR_DOMAINS.some((excluded) => domain === excluded || domain.endsWith(`.${excluded}`));
+}
+
 // Drops excluded directory/social/aggregator domains (matching subdomains
 // too, e.g. m.yelp.com under yelp.com), the project's own domain, and
 // duplicate domains (first occurrence wins, preserving provider rank order).
@@ -190,15 +198,13 @@ export function filterCompetitorCandidates(
   candidates: CompetitorCandidate[],
   ownDomain: string | null
 ): CompetitorCandidate[] {
-  const isExcluded = (domain: string) =>
-    EXCLUDED_COMPETITOR_DOMAINS.some((excluded) => domain === excluded || domain.endsWith(`.${excluded}`));
   const seen = new Set<string>();
   const out: CompetitorCandidate[] = [];
   for (const candidate of candidates) {
     const domain = candidate.domain;
     if (!domain) continue;
     if (ownDomain && domain === ownDomain) continue;
-    if (isExcluded(domain)) continue;
+    if (isExcludedCompetitorDomain(domain)) continue;
     if (seen.has(domain)) continue;
     seen.add(domain);
     out.push(candidate);

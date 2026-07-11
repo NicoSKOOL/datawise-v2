@@ -22,6 +22,7 @@ import {
   discoverCompetitorsForDomain,
   discoverSerpCompetitors,
   filterCompetitorCandidates,
+  isExcludedCompetitorDomain,
 } from '../providers/dataforseo/competitors';
 import type { CompetitorCandidate } from '../providers/dataforseo/competitors';
 
@@ -247,6 +248,10 @@ const MAX_SELECTED_COMPETITORS = 5;
 export interface DiscoverCompetitorsOutput {
   candidateCount: number;
   selectedDomains: string[];
+  // Known competitors the guard dropped (own domain / excluded directory
+  // domain). Never persisted; surfaced so the UI/final review can tell the
+  // user their entry was not usable rather than silently ignoring it.
+  droppedKnownCompetitors: string[];
   stageCostUsdMicro: number;
 }
 
@@ -281,21 +286,45 @@ async function upsertCompetitorRow(
   return id;
 }
 
+// Controller-approved deviation from the brief's literal "user-supplied
+// competitors are ALWAYS kept": known competitors are still exempt from the
+// visibility ranking and never compete against the 5-cap, but two hard
+// drops apply -- (a) equal to the project's own domain, (b) matching
+// EXCLUDED_COMPETITOR_DOMAINS (same subdomain-aware match as discovered
+// candidates). Dropped entries are NOT persisted and are returned so the
+// handler output can surface them to the UI/final review.
+function partitionKnownCompetitors(
+  knownCompetitorDomains: string[],
+  ownDomain: string | null
+): { kept: string[]; dropped: string[] } {
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const domain of new Set(knownCompetitorDomains)) {
+    if ((ownDomain && domain === ownDomain) || isExcludedCompetitorDomain(domain)) dropped.push(domain);
+    else kept.push(domain);
+  }
+  return { kept, dropped };
+}
+
 // Persists every surviving discovered candidate (selected = 0) plus any
-// user-supplied known competitor not already among them, then flips
-// selected = 1 for: every known competitor (uncapped -- catalog "ALWAYS
-// kept"), plus as many of the remaining discovered candidates, ranked by
+// guard-surviving user-supplied known competitor not already among them,
+// then flips selected = 1 for: every kept known competitor (uncapped),
+// plus as many of the remaining discovered candidates, ranked by
 // visibilityMetric (desc, nulls last), as it takes to reach
-// MAX_SELECTED_COMPETITORS. The selected flip is a separate UPDATE
-// (never a second INSERT) specifically so a retried stage attempt can never
-// violate uq_selected_competitor_domain (run_id, domain) WHERE selected = 1:
-// UPDATE-ing an already-selected row to selected = 1 again is a no-op, not a
-// constraint violation.
+// MAX_SELECTED_COMPETITORS.
+//
+// Retry safety against uq_selected_competitor_domain (run_id, domain)
+// WHERE selected = 1 has two layers: (1) the whole run's previous selection
+// is reset to 0 in one UPDATE before the new one is applied, so a prior
+// attempt's stale winner that no longer makes the cut can never linger as
+// selected; (2) the flip to selected = 1 is itself an UPDATE on the
+// already-persisted row (never a second INSERT), so re-selecting a domain
+// is a no-op rather than a constraint violation.
 async function persistCompetitors(
   d1: D1Database,
   runId: string,
   filtered: CompetitorCandidate[],
-  knownCompetitorDomains: string[]
+  keptKnownDomains: string[]
 ): Promise<{ selectedDomains: string[] }> {
   for (const candidate of filtered) {
     const id = await upsertCompetitorRow(d1, runId, candidate.domain, candidate.source, candidate.visibilityMetric);
@@ -305,7 +334,7 @@ async function persistCompetitors(
       .run();
   }
 
-  const knownSet = new Set(knownCompetitorDomains);
+  const knownSet = new Set(keptKnownDomains);
   for (const domain of knownSet) {
     // Already persisted above if the DFS candidate pool also surfaced this
     // domain; upsertCompetitorRow is idempotent either way.
@@ -331,6 +360,15 @@ async function persistCompetitors(
     if (selectedDomains.size >= MAX_SELECTED_COMPETITORS) break;
     selectedDomains.add(candidate.domain);
   }
+
+  // Reset-then-apply: wipe the run's entire previous selection in one
+  // statement so this attempt's selection fully REPLACES any prior
+  // attempt's (a domain selected last attempt but absent from this
+  // attempt's top 5 must not stay selected).
+  await d1
+    .prepare(`UPDATE competitors SET selected = 0 WHERE run_id = ? AND selected = 1`)
+    .bind(runId)
+    .run();
 
   for (const domain of selectedDomains) {
     await d1
@@ -378,7 +416,11 @@ export const discoverCompetitorsHandler: StageHandler = async (ctx: StageContext
   }
 
   const filtered = filterCompetitorCandidates(candidates, ownDomain);
-  const { selectedDomains } = await persistCompetitors(ctx.d1, ctx.runId, filtered, brief.knownCompetitorDomains);
+  const { kept: keptKnownDomains, dropped: droppedKnownCompetitors } = partitionKnownCompetitors(
+    brief.knownCompetitorDomains,
+    ownDomain
+  );
+  const { selectedDomains } = await persistCompetitors(ctx.d1, ctx.runId, filtered, keptKnownDomains);
 
   // Adapters here return bare CompetitorCandidate[] (no cost side-channel,
   // unlike keywords.ts's KeywordFetchResult), so this stage's real spend is
@@ -393,6 +435,7 @@ export const discoverCompetitorsHandler: StageHandler = async (ctx: StageContext
   const output: DiscoverCompetitorsOutput = {
     candidateCount: filtered.length,
     selectedDomains,
+    droppedKnownCompetitors,
     stageCostUsdMicro: costRow?.total ?? 0,
   };
 
