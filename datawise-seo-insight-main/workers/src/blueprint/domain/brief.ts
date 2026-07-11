@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ProjectBriefInput, NormalizedProjectBrief } from '../contracts/types';
 import type { ProductLimits } from '../contracts/limits';
 import { BlueprintValidationError } from './errors';
-import { normalizeDomain } from './url';
+import { normalizeDomain, assertPublicWebTarget } from './url';
 import { normalizeKeyword } from './keyword';
 import { hashNormalizedInput } from './hash';
 
@@ -74,6 +74,10 @@ export async function normalizeProjectBrief(
   const countryIso = input.countryIso.toUpperCase();
   const languageCode = input.languageCode.toLowerCase();
   const locale = `${languageCode}-${countryIso}`;
+  // assertPublicWebTarget is a pure guard here (SSRF: provider stages will
+  // eventually fetch this URL); normalizeDomain still owns deriving the
+  // domain value used everywhere else.
+  if (input.websiteUrl) assertPublicWebTarget(input.websiteUrl);
   const websiteDomain = input.websiteUrl ? normalizeDomain(input.websiteUrl) : null;
   const dedupe = (arr: string[] = []) => [...new Set(arr.map((x) => x.trim()).filter(Boolean))];
 

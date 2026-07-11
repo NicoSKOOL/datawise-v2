@@ -18,6 +18,7 @@ crons = ["*/5 * * * *", "0 11 * * *", "0 */6 * * *", "0 6 * * 1", "0 8 * * 2,4,6
 [vars]
 ENVIRONMENT = "development"
 FRONTEND_URL = "https://datawiseseo.com"
+ADMIN_EMAILS = "nico@airankingskool.com"
 # Note: For production, change to your actual domain
 # Set these via `wrangler secret put`:
 # GOOGLE_CLIENT_ID

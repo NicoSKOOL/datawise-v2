@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeDomain, normalizeAbsoluteUrl } from './url';
+import { normalizeDomain, normalizeAbsoluteUrl, assertPublicWebTarget } from './url';
 import { BlueprintValidationError } from './errors';
 
 describe('normalizeDomain', () => {
@@ -32,5 +32,18 @@ describe('normalizeAbsoluteUrl', () => {
   it('rejects credentials and fragments', () => {
     expect(() => normalizeAbsoluteUrl('https://u:p@example.com')).toThrow(BlueprintValidationError);
     expect(() => normalizeAbsoluteUrl('https://example.com/#frag')).toThrow(BlueprintValidationError);
+  });
+});
+
+describe('assertPublicWebTarget', () => {
+  it.each([
+    'http://127.0.0.1/x', 'http://localhost/', 'http://[::1]/', 'http://10.0.0.5/',
+    'http://192.168.1.1/', 'http://172.16.0.1/', 'http://169.254.169.254/latest',
+    'http://foo.local/', 'file:///etc/passwd', 'ftp://example.com/',
+  ])('rejects %s', (bad) => {
+    expect(() => assertPublicWebTarget(bad)).toThrow();
+  });
+  it('accepts and normalizes a public https URL', () => {
+    expect(assertPublicWebTarget('HTTPS://Example.com/path/')).toContain('example.com');
   });
 });

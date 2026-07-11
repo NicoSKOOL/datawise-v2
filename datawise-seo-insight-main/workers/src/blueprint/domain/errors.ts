@@ -5,7 +5,7 @@ export interface FieldError {
 
 export class BlueprintValidationError extends Error {
   constructor(
-    public code: 'invalid_input' | 'invalid_domain' | 'invalid_url',
+    public code: 'invalid_input' | 'invalid_domain' | 'invalid_url' | 'invalid_website_url',
     public fieldErrors: FieldError[] = []
   ) {
     super(fieldErrors[0]?.message ?? code);

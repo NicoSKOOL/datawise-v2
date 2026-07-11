@@ -11,7 +11,7 @@ import { beginIdempotentRequest, completeIdempotentRequest, failIdempotentReques
 import { STAGE_REGISTRY } from '../orchestration/stages';
 import type { BlueprintQueueEnv } from '../orchestration/process-run';
 import { ok, noContent, successEnvelope, readJsonBody, JSON_HEADERS } from './envelope';
-import { buildRunView } from './runs';
+import { buildRunView, CANCELLABLE_STATUSES } from './runs';
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 function idempotencyExpiry(): string {
@@ -373,6 +373,22 @@ export async function deleteProject(
 ): Promise<Response> {
   const project = await assertProjectAccess(env.BLUEPRINT_DB, actor, params.id);
   const now = nowIso();
+
+  // Request cancellation of every non-terminal run before soft-deleting the
+  // project: mirrors the exact UPDATE cancelRun uses (runs.ts), just scoped
+  // to project_id instead of a single run id, so an in-flight run never
+  // keeps burning provider budget against a project that's gone. The
+  // cancel_requested -> cancelled conversion itself still happens the same
+  // way it does for a single cancel: the next queue delivery (or a stalled
+  // run's retry) picks it up in processResearchRun.
+  await env.BLUEPRINT_DB
+    .prepare(
+      `UPDATE research_runs SET status = 'cancel_requested'
+       WHERE project_id = ? AND status IN (${CANCELLABLE_STATUSES.map(() => '?').join(',')})`
+    )
+    .bind(project.id, ...CANCELLABLE_STATUSES)
+    .run();
+
   await env.BLUEPRINT_DB
     .prepare('UPDATE projects SET deleted_at = ?, updated_at = ? WHERE id = ?')
     .bind(now, now, project.id)

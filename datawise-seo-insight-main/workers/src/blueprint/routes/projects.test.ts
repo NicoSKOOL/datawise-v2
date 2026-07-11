@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createTestDb } from '../test-support/d1';
 import { handleBlueprintRequest } from './router';
 import { newId, nowIso } from '../db/util';
+import { processResearchRun } from '../orchestration/process-run';
 import type { AuthUser } from '../../auth/google';
 import type { ApiSuccess, ApiFailure, ProjectView, ResearchEstimate } from '../contracts/api';
 
@@ -351,6 +352,51 @@ describe('DELETE /api/blueprint/v1/projects/:id', () => {
 
     const getRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}`);
     expect(getRes.status).toBe(404);
+  });
+
+  it('cancels the project\'s in-flight run so a queued consumer pass does not advance it', async () => {
+    const env = fakeEnv();
+    const { json } = await createProject(env);
+
+    const estimateRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-estimates`, {
+      method: 'POST',
+      body: {},
+    });
+    const estimate = ((await estimateRes.json()) as ApiSuccess<ResearchEstimate>).data;
+
+    const startRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}/research-runs`, {
+      method: 'POST',
+      body: {
+        estimateId: estimate.estimateId,
+        acceptedDataForSeoCeilingUsd: '5.00',
+        acceptedOpenRouterCeilingUsd: '2.00',
+      },
+      headers: { 'Idempotency-Key': newId('idem') },
+    });
+    const startBody = (await startRes.json()) as any;
+    const runId = startBody.data.id;
+    expect(startBody.data.status).toBe('queued');
+
+    const delRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}`, { method: 'DELETE' });
+    expect(delRes.status).toBe(204);
+
+    const runRow = (await env.BLUEPRINT_DB.prepare('SELECT status FROM research_runs WHERE id = ?')
+      .bind(runId)
+      .first()) as { status: string };
+    expect(['cancel_requested', 'cancelled']).toContain(runRow.status);
+
+    // A queued consumer pass (e.g. the message already in flight when the
+    // delete landed) must convert the run to cancelled instead of advancing
+    // any stage on a project that no longer exists.
+    const result = await processResearchRun(env, runId, 'worker-1');
+    expect(result.runStatus).toBe('cancelled');
+    expect(result.advanced).toBe(false);
+
+    const succeededStages = (await env.BLUEPRINT_DB
+      .prepare("SELECT stage_name FROM research_stage_runs WHERE run_id = ? AND status = 'succeeded'")
+      .bind(runId)
+      .all()).results;
+    expect(succeededStages).toHaveLength(0);
   });
 });
 
