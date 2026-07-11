@@ -1289,6 +1289,39 @@ describe('validateSerpsAndQuestionsHandler', () => {
     expect(row?.status).toBe('posted');
   });
 
+  it('later attempt where the only outstanding row times out on task_get: row stays posted and the handler throws SerpTasksPendingError', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin']);
+    await d1
+      .prepare(
+        `INSERT INTO dfs_serp_tasks (id, run_id, keyword, service_area_id, location_code, provider_task_id, status, posted_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`
+      )
+      .bind(newId('serpt'), runId, 'emergency plumbing austin', 'a1', 1023191, 'task-1', nowIso())
+      .run();
+
+    const original = globalThis.fetch;
+    // mapDfsFailure classifies this as provider_timeout: a transient blip,
+    // so the row must be re-polled next attempt (pending), never failed.
+    globalThis.fetch = (async () => {
+      throw new Error('request timed out');
+    }) as any;
+    restoreFetch = () => { globalThis.fetch = original; };
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    const row = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE run_id = ?`).bind(runId).first<{ status: string }>();
+    expect(row?.status).toBe('posted');
+  });
+
   it('later attempt with everything ready: returns succeeded with snapshots/failed counts', async () => {
     const { d1 } = createTestDb();
     const projectId = await seedProject(d1);

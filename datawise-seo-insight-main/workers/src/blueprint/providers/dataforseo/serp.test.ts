@@ -370,6 +370,23 @@ describe('collectSerpTasks', () => {
     }
   });
 
+  it('a provider_timeout task_get throw leaves the row posted and counts it pending (re-polled next attempt)', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+    await seedKeywordRow(d1, runId, 'emergency plumbing austin', 'emergency plumbing austin');
+    const rowId = await seedPostedRow(d1, runId);
+
+    // mapDfsFailure classifies a timed-out fetch as provider_timeout.
+    globalThis.fetch = (async () => {
+      throw new Error('request timed out');
+    }) as any;
+
+    const result = await collectSerpTasks(ctx);
+
+    expect(result).toEqual({ completed: 0, pending: 1, failed: 0 });
+    const row = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE id = ?`).bind(rowId).first<{ status: string }>();
+    expect(row?.status).toBe('posted');
+  });
+
   it('a non-quota, non-rate-limit task_get throw marks only that row failed; other rows still collect', async () => {
     const { ctx, d1, runId } = await buildCtx();
     await seedKeywordRow(d1, runId, 'emergency plumbing austin', 'emergency plumbing austin');

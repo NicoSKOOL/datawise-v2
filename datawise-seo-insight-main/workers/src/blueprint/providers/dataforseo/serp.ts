@@ -286,6 +286,10 @@ async function insertManualEvidenceRef(
 //     same wall. The whole stage attempt lands in retry_wait with the
 //     correct safe_error_code, and every row it did not get to stays
 //     'posted' for the next attempt.
+//   - provider_timeout (BlueprintApiError): the row stays 'posted' and
+//     counts as pending. A fetch-level timeout on one poll is a transient
+//     blip, not a verdict on the task; the next attempt re-polls it rather
+//     than permanently losing that snapshot.
 //   - anything else: marks THAT row 'failed' and continues, exactly like a
 //     DataForSEO-reported per-task error.
 export async function collectSerpTasks(ctx: StageContext): Promise<CollectSerpTasksResult> {
@@ -330,6 +334,12 @@ export async function collectSerpTasks(ctx: StageContext): Promise<CollectSerpTa
         // function doc comment). Rows already collected stay collected;
         // rows not yet reached stay 'posted'.
         throw err;
+      }
+      if (err instanceof BlueprintApiError && err.code === 'provider_timeout') {
+        // Transient blip on this one poll: the row stays 'posted' and gets
+        // re-polled next attempt instead of permanently losing its snapshot.
+        pending += 1;
+        continue;
       }
       await ctx.d1
         .prepare(`UPDATE dfs_serp_tasks SET status = 'failed', completed_at = ? WHERE id = ?`)
