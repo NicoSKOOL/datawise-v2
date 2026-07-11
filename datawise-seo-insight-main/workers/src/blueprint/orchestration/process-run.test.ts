@@ -7,7 +7,7 @@ import { buildStageInputHash } from '../domain/hash';
 import { acquireStageLease } from '../db/leases';
 import type { BlueprintStage } from '../contracts/enums';
 import { processResearchRun } from './process-run';
-import type { BlueprintQueueEnv } from './process-run';
+import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
@@ -70,6 +70,26 @@ interface ProjectRow {
 function makeQueue() {
   const sent: unknown[] = [];
   return { sent, queue: { send: async (body: unknown) => { sent.push(body); } } };
+}
+
+// Stub provider bindings/credentials this file's tests never actually
+// exercise (no handler override here reads ctx.env), but processResearchRun
+// now requires a BlueprintProviderEnv, so every constructed env needs these
+// fields to satisfy the type.
+function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+  return {
+    KV: {
+      get: async () => null,
+      put: async () => undefined,
+      delete: async () => undefined,
+    } as unknown as KVNamespace,
+    BLUEPRINT_ARTIFACTS: {
+      put: async () => undefined,
+      get: async () => null,
+    } as unknown as R2Bucket,
+    DATAFORSEO_EMAIL: 'test@example.com',
+    DATAFORSEO_PASSWORD: 'test-password',
+  };
 }
 
 async function seedProject(d1: D1Database): Promise<string> {
@@ -142,7 +162,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     // Behavior 1: first invocation runs validate_intake, marks it succeeded,
     // sets current_stage, and enqueues { runId }.
@@ -225,7 +245,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     // Drive exactly 3 stages forward.
     for (let i = 0; i < 3; i++) {
@@ -283,8 +303,8 @@ describe('processResearchRun', () => {
     const runB = await seedRun(d1, projectId, briefVersionId);
     const { queue: queueA } = makeQueue();
     const { queue: queueB } = makeQueue();
-    const envA: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueA };
-    const envB: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueB };
+    const envA: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueA, ...providerFields() };
+    const envB: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueB, ...providerFields() };
 
     await processResearchRun(envA, runA, 'w1');
     await processResearchRun(envB, runB, 'w1');
@@ -328,7 +348,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
       resolve_market: async () => {
         throw new Error('boom-required');
@@ -375,7 +395,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
       discover_competitors: async () => {
         throw new Error('boom-optional');
@@ -422,7 +442,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
       validate_intake: async (ctx) => {
@@ -469,7 +489,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     await d1
       .prepare(`UPDATE research_runs SET status = 'cancelled', finished_at = ? WHERE id = ?`)

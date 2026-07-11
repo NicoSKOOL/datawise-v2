@@ -6,8 +6,10 @@ import { hashNormalizedInput } from '../domain/hash';
 import { V1_LIMITS } from '../contracts/limits';
 import { newId, nowIso } from '../db/util';
 import { loadGapStageNames } from './run-status';
+import type { BlueprintProviderEnv } from './process-run';
 
 export interface StageContext {
+  env: BlueprintProviderEnv;
   d1: D1Database;
   runId: string;
   projectId: string;

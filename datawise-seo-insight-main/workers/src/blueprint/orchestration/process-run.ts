@@ -15,6 +15,18 @@ export interface BlueprintQueueEnv {
   BLUEPRINT_QUEUE: { send(body: unknown, options?: { delaySeconds?: number }): Promise<void> };
 }
 
+// Widens BlueprintQueueEnv with the provider bindings/credentials real stage
+// handlers need (KV cache, R2 raw-artifact storage, DataForSEO creds) so
+// handlers can call out to providers without importing the full worker Env.
+// The full worker Env structurally satisfies this (and BlueprintQueueEnv),
+// so index.ts's route/queue call sites keep compiling unchanged.
+export interface BlueprintProviderEnv extends BlueprintQueueEnv {
+  KV: KVNamespace;
+  BLUEPRINT_ARTIFACTS: R2Bucket;
+  DATAFORSEO_EMAIL: string;
+  DATAFORSEO_PASSWORD: string;
+}
+
 // Leases outlive a single Worker invocation only in spirit (Phase 2 has no
 // real long-running handlers yet); this just needs to be longer than a
 // stub handler could plausibly take.
@@ -73,7 +85,7 @@ async function reloadRunStatus(d1: D1Database, runId: string, fallback: RunStatu
 // was in flight, the UPDATE simply does not match, and we return the run's
 // real (reloaded) status instead of clobbering it back to 'running'.
 async function finalizeStageAttempt(
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   runId: string,
   currentStatus: RunStatus,
   stageJustProcessed: BlueprintStage
@@ -132,7 +144,7 @@ async function finalizeStageAttempt(
 // expected to keep invoking this (driven by the queue consumer in Task 9)
 // until `advanced` is false.
 export async function processResearchRun(
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   runId: string,
   workerId: string,
   overrides?: Partial<Record<BlueprintStage, StageHandler>>
@@ -234,6 +246,7 @@ export async function processResearchRun(
 
   if (lease.kind === 'acquired') {
     const ctx: StageContext = {
+      env,
       d1,
       runId,
       projectId: run.project_id,

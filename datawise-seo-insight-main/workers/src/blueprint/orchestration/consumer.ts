@@ -1,6 +1,6 @@
 import { BlueprintApiError, NotFoundError } from '../domain/api-errors';
 import { processResearchRun } from './process-run';
-import type { BlueprintQueueEnv, ProcessRunResult } from './process-run';
+import type { BlueprintProviderEnv, ProcessRunResult } from './process-run';
 import type { RunStatus } from '../contracts/enums';
 
 // Binding contract (Task 8 review): the crash-recovery model depends on the
@@ -69,7 +69,7 @@ export interface HandleBlueprintQueueBatchDeps {
 
 export async function handleBlueprintQueueBatch(
   batch: MessageBatch<unknown>,
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   deps?: HandleBlueprintQueueBatchDeps
 ): Promise<void> {
   const process = deps?.process ?? processResearchRun;
