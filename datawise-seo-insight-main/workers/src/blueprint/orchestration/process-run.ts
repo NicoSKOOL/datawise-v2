@@ -253,6 +253,8 @@ export async function processResearchRun(
       projectId: run.project_id,
       briefVersionId: run.brief_version_id,
       normalizedBrief,
+      stage,
+      attempt: lease.attemptCount,
     };
     const handler = overrides?.[stage] ?? STAGE_HANDLERS[stage];
 

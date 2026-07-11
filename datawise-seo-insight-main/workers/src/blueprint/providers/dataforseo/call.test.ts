@@ -122,6 +122,8 @@ async function buildCtx(overrides: Partial<{ dataforseoBudgetUsdMicro: number }>
     projectId,
     briefVersionId: 'brief1',
     normalizedBrief: {} as any,
+    stage: 'collect_keyword_evidence',
+    attempt: 1,
   };
   return { ctx, d1, runId, projectId };
 }
@@ -241,6 +243,69 @@ describe('blueprintDfsCall', () => {
     const run = await getRun(d1, runId);
     expect(run?.dataforseo_reserved_usd_micro).toBe(0);
     expect(run?.dataforseo_actual_usd_micro).toBe(0);
+  });
+
+  it('retry after a released reservation reserves fresh (attempt-scoped keys), no stage_conflict', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+
+    stubFetchThrow(new Error('request timed out'));
+    await expect(blueprintDfsCall({ ...ctx, attempt: 1 }, baseSpec)).rejects.toMatchObject({
+      code: 'provider_timeout',
+    });
+
+    stubFetchJson(okResponse([{ keyword: 'retry win' }], 0.07));
+    const result = await blueprintDfsCall({ ...ctx, attempt: 2 }, baseSpec);
+
+    expect(result.cacheStatus).toBe('miss');
+    expect(result.costUsdMicro).toBe(dollarsToMicro(0.07));
+
+    const run = await getRun(d1, runId);
+    expect(run?.dataforseo_reserved_usd_micro).toBe(0);
+    expect(run?.dataforseo_actual_usd_micro).toBe(dollarsToMicro(0.07));
+
+    const rows = await d1
+      .prepare(
+        `SELECT operation_key, status FROM provider_budget_reservations WHERE run_id = ? ORDER BY operation_key`
+      )
+      .bind(runId)
+      .all<{ operation_key: string; status: string }>();
+    expect(rows.results).toHaveLength(2);
+    expect(rows.results[0].operation_key).toBe('keyword_ideas:scope-1:a1');
+    expect(rows.results[0].status).toBe('released');
+    expect(rows.results[1].operation_key).toBe('keyword_ideas:scope-1:a2');
+    expect(rows.results[1].status).toBe('reconciled');
+  });
+
+  it('paid call with an empty tasks array throws provider_invalid_response and releases', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+    stubFetchJson({ status_code: 20000, tasks: [] });
+
+    await expect(blueprintDfsCall(ctx, baseSpec)).rejects.toMatchObject({
+      code: 'provider_invalid_response',
+    });
+
+    const run = await getRun(d1, runId);
+    expect(run?.dataforseo_reserved_usd_micro).toBe(0);
+    expect(run?.dataforseo_actual_usd_micro).toBe(0);
+    const row = await d1
+      .prepare(`SELECT status FROM provider_budget_reservations WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ status: string }>();
+    expect(row?.status).toBe('released');
+  });
+
+  it('provider_usage.stage records ctx.stage, not spec.operation', async () => {
+    const { ctx, d1, runId } = await buildCtx();
+    stubFetchJson(okResponse([{ keyword: 'x' }], 0.05));
+
+    await blueprintDfsCall(ctx, baseSpec);
+
+    const row = await d1
+      .prepare(`SELECT stage, operation FROM provider_usage WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ stage: string; operation: string }>();
+    expect(row?.stage).toBe('collect_keyword_evidence');
+    expect(row?.operation).toBe('keyword_ideas');
   });
 
   it('a call with estimateUsdMicro: 0 never touches budget tables', async () => {

@@ -1,10 +1,11 @@
 import type { StageContext } from '../../orchestration/handlers';
 import type { EvidenceKind } from '../../contracts/enums';
+import { BlueprintApiError } from '../../domain/api-errors';
 import { newId, nowIso } from '../../db/util';
 import { hashNormalizedInput } from '../../domain/hash';
 import { reserveProviderBudget, reconcileProviderBudget, releaseProviderBudget } from '../../db/budget';
 import { dataforseoRequest, dataforseoGet, isCacheableDfsResponse } from '../../../dataforseo/client';
-import { parseDfsResponse, mapDfsFailure } from './envelope';
+import { parseDfsResponse, mapDfsFailure, safeErrorMessage } from './envelope';
 import type { DfsTaskMeta } from './envelope';
 
 // The single choke point every paid DataForSEO call goes through: budget
@@ -40,6 +41,20 @@ export interface DfsCallResult {
 async function sha256Hex(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Invariant: the primary provider/processing error always wins. A failed
+// release here is a secondary error against a reservation row that is
+// already in a safe state (either still 'reserved', leaving the run's
+// reserved total conservatively over-stated, or already terminal via a
+// competing claim); surfacing it would mask the error the caller actually
+// needs to see and retry on.
+async function releaseQuietly(d1: D1Database, reservationId: string): Promise<void> {
+  try {
+    await releaseProviderBudget(d1, reservationId);
+  } catch (releaseErr) {
+    console.error(`blueprintDfsCall: release failed for reservation ${reservationId}:`, releaseErr);
+  }
 }
 
 async function insertEvidenceRef(
@@ -114,7 +129,10 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
   }
 
   // 3: reserve before the provider call. Free catalog GETs never touch the
-  // budget tables at all.
+  // budget tables at all. The operation key is attempt-scoped: a retry after
+  // a released reservation reserves fresh instead of colliding with the
+  // prior attempt's terminal (released/reconciled) reservation row, while
+  // duplicate work within a single attempt still reuses the same row.
   let reservationId: string | null = null;
   if (!isFreeCall) {
     const reservation = await reserveProviderBudget(
@@ -122,7 +140,7 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       runId,
       'dataforseo',
       spec.estimateUsdMicro,
-      `${spec.operation}:${spec.scopeId}`
+      `${spec.operation}:${spec.scopeId}:a${ctx.attempt}`
     );
     reservationId = reservation.reservationId;
   }
@@ -140,16 +158,23 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       response = await dataforseoRequest(env, spec.endpoint, [{ ...(spec.body ?? {}), tag }]);
     }
   } catch (err) {
-    if (reservationId) await releaseProviderBudget(d1, reservationId);
+    if (reservationId) await releaseQuietly(d1, reservationId);
     throw mapDfsFailure(err);
   }
   const latencyMs = Date.now() - startedAt;
 
-  // 5: HTTP-200-with-all-tasks-failed is still a failure for our purposes.
+  // 5: HTTP-200-with-all-tasks-failed is still a failure for our purposes,
+  // and a paid call that comes back with NO tasks at all is an invalid
+  // response (the provider was asked to do billable work and reported none).
+  // Free catalog GETs may legitimately return task-less bodies.
   const parsed = parseDfsResponse(response);
   if (parsed.tasks.length > 0 && parsed.failedTasks.length === parsed.tasks.length) {
-    if (reservationId) await releaseProviderBudget(d1, reservationId);
+    if (reservationId) await releaseQuietly(d1, reservationId);
     throw mapDfsFailure(parsed.failedTasks[0].statusMessage);
+  }
+  if (!isFreeCall && parsed.tasks.length === 0) {
+    if (reservationId) await releaseQuietly(d1, reservationId);
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
   }
 
   try {
@@ -163,6 +188,11 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       .prepare(`SELECT organization_id FROM projects WHERE id = ?`)
       .bind(ctx.projectId)
       .first<{ organization_id: string }>();
+    if (!project) {
+      // artifacts.organization_id is NOT NULL; fail with a sanitized error
+      // instead of letting the raw D1 constraint error surface.
+      throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+    }
     const sha256 = await sha256Hex(rawJson);
     const byteSize = new TextEncoder().encode(rawJson).byteLength;
     await d1
@@ -171,7 +201,7 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
           (id, organization_id, run_id, kind, storage_key, sha256, content_type, byte_size, encrypted, created_at)
          VALUES (?, ?, ?, ?, ?, ?, 'application/json', ?, 0, ?)`
       )
-      .bind(artifactId, project?.organization_id ?? null, runId, spec.kind, artifactKey, sha256, byteSize, nowIso())
+      .bind(artifactId, project.organization_id, runId, spec.kind, artifactKey, sha256, byteSize, nowIso())
       .run();
 
     // 7: KV put, only when the response is cacheable (never pin a transient
@@ -196,9 +226,6 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       });
     }
 
-    // provider_usage.stage is not yet threaded through StageContext (Task 3
-    // scope). spec.operation is the closest available identifier; see the
-    // Task 5 report for the follow-up to thread the real stage name in.
     await d1
       .prepare(
         `INSERT INTO provider_usage
@@ -209,7 +236,7 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       .bind(
         newId('pu'),
         runId,
-        spec.operation,
+        ctx.stage,
         spec.operation,
         spec.endpoint,
         JSON.stringify(parsed.tasks.map((t) => t.taskId).filter((id): id is string => id != null)),
@@ -234,7 +261,9 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       taskMetas: parsed.tasks,
     };
   } catch (err) {
-    if (reservationId) await releaseProviderBudget(d1, reservationId);
-    throw mapDfsFailure(err);
+    if (reservationId) await releaseQuietly(d1, reservationId);
+    // Preserve an already-sanitized BlueprintApiError (e.g. the missing
+    // project row internal_error above); wrap anything else.
+    throw err instanceof BlueprintApiError ? err : mapDfsFailure(err);
   }
 }

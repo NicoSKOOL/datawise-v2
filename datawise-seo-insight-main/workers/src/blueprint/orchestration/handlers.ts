@@ -15,6 +15,12 @@ export interface StageContext {
   projectId: string;
   briefVersionId: string;
   normalizedBrief: NormalizedProjectBrief;
+  // The stage being executed and the lease's attempt count for this
+  // invocation. Provider wrappers scope budget reservation keys by attempt
+  // so a retry after a released reservation reserves fresh instead of
+  // colliding with the prior attempt's terminal reservation row.
+  stage: BlueprintStage;
+  attempt: number;
 }
 
 export type StageHandler = (
