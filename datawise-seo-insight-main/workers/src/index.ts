@@ -234,7 +234,7 @@ export default {
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key',
       'Access-Control-Expose-Headers': 'X-Conversation-ID',
       'Vary': 'Origin',
       'X-Content-Type-Options': 'nosniff',
