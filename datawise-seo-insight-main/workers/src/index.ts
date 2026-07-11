@@ -234,7 +234,7 @@ export default {
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Credentials': 'true',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Idempotency-Key',
       'Access-Control-Expose-Headers': 'X-Conversation-ID',
       'Vary': 'Origin',
       'X-Content-Type-Options': 'nosniff',
@@ -1134,8 +1134,12 @@ export default {
     }
   },
 
-  async queue(batch: MessageBatch<unknown>, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Blueprint research stages are wired in Phase 2. Ack so messages don't retry forever.
+  async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (batch.queue === 'blueprint-research') {
+      const { handleBlueprintQueueBatch } = await import('./blueprint/orchestration/consumer');
+      await handleBlueprintQueueBatch(batch, env);
+      return;
+    }
     for (const message of batch.messages) message.ack();
   },
 };

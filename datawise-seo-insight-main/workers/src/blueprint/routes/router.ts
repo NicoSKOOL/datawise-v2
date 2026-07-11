@@ -1,6 +1,18 @@
 import type { Env } from '../../index';
 import type { AuthUser } from '../../auth/google';
 import { isAdmin } from '../../routes/admin';
+import { actorFromUser, type Actor } from '../db/access';
+import { failFrom } from './envelope';
+import {
+  createProject,
+  listProjects,
+  getProject,
+  updateProject,
+  deleteProject,
+  createEstimate,
+  startResearchRun,
+} from './projects';
+import { getRun, cancelRun, retryRun, getUsage } from './runs';
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -13,8 +25,58 @@ export function isBlueprintAuthorized(user: AuthUser | null): boolean {
   return !!user && isAdmin(user);
 }
 
+type RouteHandler = (
+  request: Request,
+  env: Env,
+  actor: Actor,
+  params: Record<string, string>
+) => Promise<Response>;
+
+interface RouteEntry {
+  method: string;
+  pattern: RegExp;
+  handler: RouteHandler;
+}
+
+// No route logic lives here: every entry just matches method + path and
+// delegates to a thin handler in projects.ts / runs.ts. Params come from
+// the pattern's named capture groups.
+const ROUTES: RouteEntry[] = [
+  { method: 'POST', pattern: /^\/api\/blueprint\/v1\/projects$/, handler: createProject },
+  { method: 'GET', pattern: /^\/api\/blueprint\/v1\/projects$/, handler: listProjects },
+  { method: 'GET', pattern: /^\/api\/blueprint\/v1\/projects\/(?<id>[^/]+)$/, handler: getProject },
+  { method: 'PATCH', pattern: /^\/api\/blueprint\/v1\/projects\/(?<id>[^/]+)$/, handler: updateProject },
+  { method: 'DELETE', pattern: /^\/api\/blueprint\/v1\/projects\/(?<id>[^/]+)$/, handler: deleteProject },
+  {
+    method: 'POST',
+    pattern: /^\/api\/blueprint\/v1\/projects\/(?<id>[^/]+)\/research-estimates$/,
+    handler: createEstimate,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/blueprint\/v1\/projects\/(?<id>[^/]+)\/research-runs$/,
+    handler: startResearchRun,
+  },
+  { method: 'GET', pattern: /^\/api\/blueprint\/v1\/research-runs\/(?<id>[^/]+)$/, handler: getRun },
+  {
+    method: 'POST',
+    pattern: /^\/api\/blueprint\/v1\/research-runs\/(?<id>[^/]+)\/cancel$/,
+    handler: cancelRun,
+  },
+  {
+    method: 'POST',
+    pattern: /^\/api\/blueprint\/v1\/research-runs\/(?<id>[^/]+)\/retry$/,
+    handler: retryRun,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/blueprint\/v1\/research-runs\/(?<id>[^/]+)\/usage$/,
+    handler: getUsage,
+  },
+];
+
 export async function handleBlueprintRequest(
-  _request: Request,
+  request: Request,
   env: Env,
   user: AuthUser,
   path: string,
@@ -26,6 +88,20 @@ export async function handleBlueprintRequest(
   if (path === '/api/blueprint/v1/health' && method === 'GET') {
     return handleHealth(env);
   }
+
+  const actor = actorFromUser(user);
+  for (const route of ROUTES) {
+    if (route.method !== method) continue;
+    const match = route.pattern.exec(path);
+    if (!match) continue;
+    const params = { ...(match.groups ?? {}) };
+    try {
+      return await route.handler(request, env, actor, params);
+    } catch (err) {
+      return failFrom(err);
+    }
+  }
+
   return json({ error: 'Not Found' }, 404);
 }
 
