@@ -379,6 +379,69 @@ describe('blueprintDfsCall', () => {
     expect(cachePut!.options?.expirationTtl).toBe(21_600);
   });
 
+  it('bodies posts the raw array verbatim (no wrapper-added tag, no [body] wrap)', async () => {
+    const { ctx } = await buildCtx();
+    const calls = stubFetchJson(
+      okResponse([{ keyword: 'a' }], 0.02)
+    );
+    const bodies = [
+      { keyword: 'plumber austin', location_code: 1023191, tag: 'run:r1:serp:a1' },
+      { keyword: 'drain cleaning austin', location_code: 1023191, tag: 'run:r1:serp:a1' },
+    ];
+    const spec: DfsCallSpec = {
+      method: 'POST',
+      endpoint: '/serp/google/organic/task_post',
+      bodies,
+      ttlSeconds: 86_400,
+      emptyTtlSeconds: 7_200,
+      kind: 'serp_snapshot',
+      operation: 'serp_task_post',
+      scopeId: 'batch',
+      estimateUsdMicro: 20_000,
+    };
+
+    await blueprintDfsCall(ctx, spec);
+
+    const call = calls[0] as { init: { body: string } };
+    expect(JSON.parse(call.init.body)).toEqual(bodies);
+  });
+
+  it('skipCache bypasses the KV cache entirely (no read, no write) and never throws on an all-non-2xxxx single-task response', async () => {
+    const { ctx } = await buildCtx();
+    const notReadyResponse = {
+      status_code: 20000,
+      tasks: [{ id: 'task-1', status_code: 40601, status_message: 'Task In Queue.', cost: 0, result: null }],
+    };
+    const requestHash = await hashNormalizedInput(['GET', '/serp/google/organic/task_get/advanced/task-1', null]);
+    await (ctx.env as any).KV.put(`bp:dfs:${requestHash}`, JSON.stringify(okResponse([{ keyword: 'stale-cache' }])));
+    const kvPuts = (ctx.env as any).kvPuts as Array<{ key: string }>;
+    const putsBeforeCall = kvPuts.length;
+    stubFetchJson(notReadyResponse);
+
+    const spec: DfsCallSpec = {
+      method: 'GET',
+      endpoint: '/serp/google/organic/task_get/advanced/task-1',
+      ttlSeconds: 86_400,
+      emptyTtlSeconds: 7_200,
+      kind: 'serp_snapshot',
+      operation: 'serp_task_get',
+      scopeId: 'row1',
+      estimateUsdMicro: 0,
+      skipCache: true,
+    };
+
+    const result = await blueprintDfsCall(ctx, spec);
+
+    // Never returned the stale cached KV entry -- proves the read was
+    // bypassed, not just that a live fetch happened to also run.
+    expect(result.cacheStatus).toBe('miss');
+    expect(result.taskMetas).toHaveLength(1);
+    expect(result.taskMetas[0].statusCode).toBe(40601);
+    expect(result.taskMetas[0].statusMessage).toBe('Task In Queue.');
+
+    expect(kvPuts.length).toBe(putsBeforeCall); // no NEW cache write from the call itself
+  });
+
   it('a call with estimateUsdMicro: 0 never touches budget tables', async () => {
     const { ctx, d1, runId } = await buildCtx();
     const freeSpec: DfsCallSpec = {

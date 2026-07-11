@@ -9,9 +9,15 @@ import {
 } from './envelope';
 
 describe('isSuccessfulDataForSeoTask', () => {
-  it('is true only for status_code 20000', () => {
+  it('is true for the whole 20000-29999 success band, false for 40xxx/50xxx and missing tasks', () => {
     expect(isSuccessfulDataForSeoTask({ status_code: 20000 })).toBe(true);
+    // 20100 "Task Created." is task_post's real async-acceptance code (Task
+    // 13's SERP task_post/task_get flow): this must count as successful or
+    // every real task_post batch would look like an all-tasks-failed
+    // response and the wrapper would throw instead of returning task ids.
+    expect(isSuccessfulDataForSeoTask({ status_code: 20100 })).toBe(true);
     expect(isSuccessfulDataForSeoTask({ status_code: 40501 })).toBe(false);
+    expect(isSuccessfulDataForSeoTask({ status_code: 50000 })).toBe(false);
     expect(isSuccessfulDataForSeoTask(null)).toBe(false);
     expect(isSuccessfulDataForSeoTask(undefined)).toBe(false);
   });

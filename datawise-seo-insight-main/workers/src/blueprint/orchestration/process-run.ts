@@ -9,6 +9,7 @@ import { acquireStageLease, completeStage, failStage } from '../db/leases';
 import { STAGE_HANDLERS } from './handlers';
 import type { StageContext, StageHandler } from './handlers';
 import { stageMeta } from './stages';
+import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import { nextRunnableStage, deriveRunStatus, loadGapStageNames } from './run-status';
 import type { StageRowLite } from './run-status';
 
@@ -297,12 +298,24 @@ export async function processResearchRun(
         // contain account emails, internal URLs, or other provider-body text,
         // so it is always collapsed to the fixed internal_error message
         // before it reaches the stage row (never store `err.message` as-is).
+        // SerpTasksPendingError (Task 13) is neither: it is a plain Error
+        // subclass, thrown deliberately by validate_serps_and_questions
+        // while its DataForSEO SERP batch is still processing, so it is
+        // classified like the generic retryable path but with its own safe
+        // code/message (provider_timeout) rather than falling through to the
+        // generic internal_error label.
         const { code, message } =
-          err instanceof BlueprintApiError
-            ? { code: err.code, message: err.message }
-            : { code: 'internal_error' as const, message: safeErrorMessage('internal_error') };
-        if (lease.attemptCount < MAX_ATTEMPTS) {
-          const nextRetryAt = new Date(Date.now() + RETRY_BACKOFF_MS).toISOString();
+          err instanceof SerpTasksPendingError
+            ? { code: 'provider_timeout' as const, message: safeErrorMessage('provider_timeout') }
+            : err instanceof BlueprintApiError
+              ? { code: err.code, message: err.message }
+              : { code: 'internal_error' as const, message: safeErrorMessage('internal_error') };
+        // Per-stage overrides (stages.ts StageMeta.maxAttempts/retryBackoffMs)
+        // fall back to the generic MAX_ATTEMPTS/RETRY_BACKOFF_MS when unset.
+        const maxAttempts = meta.maxAttempts ?? MAX_ATTEMPTS;
+        const retryBackoffMs = meta.retryBackoffMs ?? RETRY_BACKOFF_MS;
+        if (lease.attemptCount < maxAttempts) {
+          const nextRetryAt = new Date(Date.now() + retryBackoffMs).toISOString();
           await failStage(d1, lease.lease, { code, message }, { kind: 'retry_wait', nextRetryAt });
         } else if (meta.required) {
           await failStage(d1, lease.lease, { code, message }, { kind: 'failed' });

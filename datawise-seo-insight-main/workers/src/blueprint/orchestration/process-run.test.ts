@@ -12,6 +12,7 @@ import type { StageHandler } from './handlers';
 import { BlueprintApiError } from '../domain/api-errors';
 import { BlueprintValidationError } from '../domain/errors';
 import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
+import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -538,6 +539,65 @@ describe('processResearchRun', () => {
     expect(versions.results.length).toBe(1);
     expect(versions.results[0].completeness).toBe('partial');
     expect(JSON.parse(versions.results[0].partial_reasons_json)).toContain('discover_competitors');
+  });
+
+  it('Task 13: validate_serps_and_questions honors its per-stage maxAttempts: 12 -- a 4th attempt is still scheduled (retry_wait), not skipped', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_serps_and_questions: async () => {
+        throw new Error('serp-still-pending');
+      },
+    };
+
+    // 10 stages precede validate_serps_and_questions in BLUEPRINT_STAGES
+    // order (validate_intake through build_provisional_clusters); every one
+    // of them is either a Phase 2 deterministic stub or a real Task 8-12
+    // handler that succeeds cleanly against the DFS catalog stub installed
+    // in this describe block's beforeEach.
+    for (let i = 0; i < 10; i++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+    }
+
+    // Under the GENERIC MAX_ATTEMPTS (3), a 4th attempt would already have
+    // been skipped (see behavior 6b above). This stage's maxAttempts: 12
+    // override must still schedule it.
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+      const rows = await getStageRows(d1, runId);
+      const row = rows.find((r) => r.stage_name === 'validate_serps_and_questions');
+      expect(row?.status).toBe('retry_wait');
+      expect(row?.attempt_count).toBe(attempt);
+      expect(row?.safe_error_code).toBe('internal_error'); // generic Error, not SerpTasksPendingError, here
+      if (attempt < 4) await forceRetryNow(d1, runId, 'validate_serps_and_questions');
+    }
+  });
+
+  it('Task 13: a thrown SerpTasksPendingError is classified as provider_timeout (not internal_error) and lands in retry_wait', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_serps_and_questions: async () => {
+        throw new SerpTasksPendingError('SERP tasks posted; awaiting task_get results');
+      },
+    };
+
+    for (let i = 0; i < 10; i++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+    }
+    await processResearchRun(env, runId, 'w1', overrides);
+
+    const rows = await getStageRows(d1, runId);
+    const row = rows.find((r) => r.stage_name === 'validate_serps_and_questions');
+    expect(row?.status).toBe('retry_wait');
+    expect(row?.safe_error_code).toBe('provider_timeout');
+    expect(row?.safe_error_message).toBe(
+      'The research provider timed out. It will be retried automatically.'
+    );
   });
 
   it('behavior 7 (Task 8 Fix 1): a cancel_requested set concurrently mid-stage is not clobbered back to running, and the next invocation finishes the cancellation', async () => {

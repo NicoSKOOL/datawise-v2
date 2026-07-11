@@ -21,6 +21,26 @@ export interface DfsCallSpec {
   method: 'GET' | 'POST';
   endpoint: string; // e.g. '/dataforseo_labs/google/keyword_ideas/live'
   body?: Record<string, unknown>; // single task object; wrapper posts [body]
+  // Pre-built array of up to 100 task objects, each already carrying its own
+  // `tag` (Task 13: SERP task_post batches one task object per query with a
+  // per-query tag, unlike every other adapter's single-task-object-per-call
+  // shape). Mutually exclusive with `body`; when set, the wrapper posts this
+  // array verbatim instead of wrapping `body` in a single-element array and
+  // does NOT append its own `run:{runId}:{operation}:{scopeId}` tag (the
+  // caller already put a per-task tag on every element).
+  bodies?: Record<string, unknown>[];
+  // Bypasses the KV cache entirely (no read, no write) and lets an
+  // all-tasks-non-2xxxx response pass back to the caller instead of being
+  // collapsed into a thrown BlueprintApiError. Task 13's SERP task_get poll
+  // is the only caller: its single-task response can legitimately be
+  // "not ready yet" (a DataForSEO status code outside the success band,
+  // e.g. "Task In Queue.") rather than a real failure, and only the caller
+  // (which knows the not-ready vocabulary) can tell the two apart -- the
+  // wrapper's normal all-failed-throws behavior would treat every
+  // not-ready poll as a hard error. A stale KV read is also unsafe here: the
+  // task's readiness can change between polls of the exact same endpoint
+  // URL, so the response must always come from a live fetch.
+  skipCache?: boolean;
   ttlSeconds: number; // positive-result TTL per catalog
   emptyTtlSeconds: number; // empty-result TTL per catalog
   kind: EvidenceKind; // evidence_refs.kind
@@ -95,14 +115,15 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
   const { d1, env, runId } = ctx;
   const isFreeCall = spec.estimateUsdMicro === 0;
 
-  const requestHash = await hashNormalizedInput([spec.method, spec.endpoint, spec.body ?? null]);
+  const requestHash = await hashNormalizedInput([spec.method, spec.endpoint, spec.body ?? spec.bodies ?? null]);
   const cacheKey = `bp:dfs:${requestHash}`;
 
   // 1-2: cache hit. Zero fetches, zero reservations, cost 0. Evidence is
   // still recorded for billable operations (operation suffixed ':cache') so
   // the evidence trail shows where the data came from; documented-free
   // catalog GETs (estimateUsdMicro === 0) never get an evidence row at all.
-  const cached = await env.KV.get(cacheKey);
+  // skipCache short-circuits straight past this: no cache read at all.
+  const cached = spec.skipCache ? null : await env.KV.get(cacheKey);
   if (cached != null) {
     const response = JSON.parse(cached);
     const parsed = parseDfsResponse(response);
@@ -153,6 +174,10 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
   try {
     if (spec.method === 'GET') {
       response = await dataforseoGet(env, spec.endpoint);
+    } else if (spec.bodies) {
+      // Batched task_post: each element already carries its own tag, so post
+      // the array verbatim instead of wrapping+tagging a single body.
+      response = await dataforseoRequest(env, spec.endpoint, spec.bodies);
     } else {
       const tag = `run:${runId}:${spec.operation}:${spec.scopeId}`;
       response = await dataforseoRequest(env, spec.endpoint, [{ ...(spec.body ?? {}), tag }]);
@@ -166,9 +191,13 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
   // 5: HTTP-200-with-all-tasks-failed is still a failure for our purposes,
   // and a paid call that comes back with NO tasks at all is an invalid
   // response (the provider was asked to do billable work and reported none).
-  // Free catalog GETs may legitimately return task-less bodies.
+  // Free catalog GETs may legitimately return task-less bodies. skipCache
+  // callers (task_get polling) opt out of this: their single task's
+  // "failure" may just be "not ready yet", which only the caller can tell
+  // apart from a real error (see DfsCallSpec.skipCache doc comment) -- they
+  // get the raw taskMetas back instead of a thrown, sanitized error.
   const parsed = parseDfsResponse(response);
-  if (parsed.tasks.length > 0 && parsed.failedTasks.length === parsed.tasks.length) {
+  if (!spec.skipCache && parsed.tasks.length > 0 && parsed.failedTasks.length === parsed.tasks.length) {
     if (reservationId) await releaseQuietly(d1, reservationId);
     throw mapDfsFailure(parsed.failedTasks[0].statusMessage);
   }
@@ -210,7 +239,7 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
     // flat records in tasks[].result with no per-record items wrapper, so
     // parsed.items is empty for a perfectly full catalog response and only
     // parsed.results reflects the payload.
-    if (isCacheableDfsResponse(response)) {
+    if (!spec.skipCache && isCacheableDfsResponse(response)) {
       const hasData = parsed.items.length > 0 || parsed.results.length > 0;
       const ttl = hasData ? spec.ttlSeconds : spec.emptyTtlSeconds;
       await env.KV.put(cacheKey, rawJson, { expirationTtl: ttl });

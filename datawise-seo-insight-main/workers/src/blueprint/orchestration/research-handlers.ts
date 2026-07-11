@@ -27,6 +27,8 @@ import {
   fetchRelevantPages,
 } from '../providers/dataforseo/competitors';
 import type { CompetitorCandidate, RelevantPageRecord } from '../providers/dataforseo/competitors';
+import { postSerpTasks, collectSerpTasks, SerpTasksPendingError } from '../providers/dataforseo/serp';
+import type { SerpQuery } from '../providers/dataforseo/serp';
 
 // Catalog Sec 3: max 8 keyword_suggestions seeds per run (one per
 // service-in-primary-area seed). This module is the home for every real
@@ -563,4 +565,100 @@ export const collectCompetitorEvidenceHandler: StageHandler = async (ctx: StageC
 
   const output: CollectCompetitorEvidenceOutput = { perCompetitor, stageCostUsdMicro };
   return { output, status: anyFailure ? ('partial' as const) : ('succeeded' as const) };
+};
+
+// Catalog Sec 15 V1 operating point: cap the SERP validation batch at 20
+// queries (same ceiling costs.ts's buildCallPlan already plans against for
+// the 'serp_task_post' line), well under task_post's own 100-per-POST
+// ceiling (serp.ts's MAX_SERP_TASKS_PER_POST is a defensive backstop, not
+// the intended cap).
+const MAX_SERP_QUERIES = 20;
+
+// Builds the query set validate_serps_and_questions posts: one query per
+// service-in-primary-area seed (the same population collect_keyword_evidence
+// uses for keyword_suggestions and discover_competitors uses for greenfield
+// discovery), capped at MAX_SERP_QUERIES, each paired with the resolved
+// GRANULAR SERP location code for its service area (falling back to the
+// market's country-level code when that area could not be resolved --
+// resolve_market's own documented degradation, see catalogs.ts). Exported
+// standalone (rather than inlined into the handler) so its cap-at-20
+// behavior is unit-testable without driving a full stage/DB setup.
+export function buildSerpQueriesFromSeeds(seeds: SeedQuery[], market: ResolvedMarket): SerpQuery[] {
+  const locationByServiceArea = new Map(market.serpLocations.map((l) => [l.serviceAreaId, l.locationCode]));
+  return seeds
+    .filter((s) => s.source === 'service_primary_area')
+    .slice(0, MAX_SERP_QUERIES)
+    .map((seed) => ({
+      keyword: seed.query,
+      serviceAreaId: seed.serviceAreaId,
+      locationCode:
+        (seed.serviceAreaId ? locationByServiceArea.get(seed.serviceAreaId) : undefined) ??
+        market.fallbackSerpLocationCode,
+    }));
+}
+
+export interface ValidateSerpsAndQuestionsOutput {
+  snapshots: number;
+  failed: number;
+}
+
+// Real validate_serps_and_questions, not a stub. Optional stage (stages.ts),
+// and the ONE task-based (async) provider flow in Phase 3: DataForSEO's SERP
+// task_post/task_get pair means a single stage attempt can never do
+// "post and immediately read the result" the way every other stage handler
+// in this phase does. The handler flow instead spans MULTIPLE attempts of
+// this same stage:
+//   - first attempt (no dfs_serp_tasks rows exist yet for this run): build
+//     the query set, post the batch, persist one dfs_serp_tasks row per
+//     successfully created provider task, then throw SerpTasksPendingError
+//     so this attempt lands in retry_wait rather than reporting a false
+//     success with zero collected data.
+//   - every later attempt (rows already exist): poll every still-'posted'
+//     row via collectSerpTasks. Any row still pending re-throws
+//     SerpTasksPendingError (more polling needed); once nothing is pending,
+//     the stage finishes as 'succeeded' (no per-task failures) or 'partial'
+//     (at least one task_get came back as a genuine per-task failure).
+// stages.ts's maxAttempts: 12 / retryBackoffMs: 30_000 override on this
+// stage is what makes this polling loop viable: attempts exhausted still
+// degrades cleanly to 'skipped' (this stage is optional) via the processor's
+// existing generic retry-exhaustion handling, never a hard run failure.
+export const validateSerpsAndQuestionsHandler: StageHandler = async (ctx: StageContext) => {
+  const existingRow = await ctx.d1
+    .prepare(`SELECT COUNT(*) AS count FROM dfs_serp_tasks WHERE run_id = ?`)
+    .bind(ctx.runId)
+    .first<{ count: number }>();
+  const hasExistingTasks = (existingRow?.count ?? 0) > 0;
+
+  if (!hasExistingTasks) {
+    const market = await loadStageOutput<ResolvedMarket>(ctx.d1, ctx.runId, 'resolve_market');
+    if (!market) {
+      throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+    }
+
+    const costs = await loadDfsCostEstimates(ctx.env.KV);
+    const { seeds } = buildSeedQueries(ctx.normalizedBrief, {
+      maxTotalSeeds: V1_LIMITS.maxSeedQueries,
+      includePrimaryAreaSeeds: true,
+    });
+    const queries = buildSerpQueriesFromSeeds(seeds, market);
+
+    if (queries.length === 0) {
+      // No service-in-primary-area seeds to validate against (a brief with
+      // no primary area, which normalize_brief/validate_intake should never
+      // actually allow through) -- nothing to post, nothing pending.
+      const output: ValidateSerpsAndQuestionsOutput = { snapshots: 0, failed: 0 };
+      return { output, status: 'succeeded' as const };
+    }
+
+    await postSerpTasks(ctx, queries, costs);
+    throw new SerpTasksPendingError('SERP tasks posted; awaiting task_get results');
+  }
+
+  const { completed, pending, failed } = await collectSerpTasks(ctx);
+  if (pending > 0) {
+    throw new SerpTasksPendingError('SERP tasks still processing');
+  }
+
+  const output: ValidateSerpsAndQuestionsOutput = { snapshots: completed, failed };
+  return { output, status: failed > 0 ? ('partial' as const) : ('succeeded' as const) };
 };

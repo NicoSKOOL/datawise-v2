@@ -9,11 +9,15 @@ import {
   collectKeywordEvidenceHandler,
   discoverCompetitorsHandler,
   collectCompetitorEvidenceHandler,
+  validateSerpsAndQuestionsHandler,
+  buildSerpQueriesFromSeeds,
 } from './research-handlers';
 import type { StageHandler, StageContext } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
 import { BlueprintApiError } from '../domain/api-errors';
 import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
+import { SerpTasksPendingError } from '../providers/dataforseo/serp';
+import type { SeedQuery } from '../domain/seeds';
 
 // This is the same STAGE_HANDLERS-driven approach process-run.test.ts and
 // acceptance.e2e.test.ts already use: drive the real registry through
@@ -1135,6 +1139,209 @@ describe('collectCompetitorEvidenceHandler', () => {
     const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
 
     await expect(collectCompetitorEvidenceHandler(ctx)).rejects.toMatchObject({
+      code: 'provider_invalid_response',
+    } satisfies Partial<BlueprintApiError>);
+  });
+});
+
+describe('buildSerpQueriesFromSeeds', () => {
+  it('caps the query list at 20 even with more service-in-primary-area seeds available', () => {
+    const seeds: SeedQuery[] = Array.from({ length: 25 }, (_, i) => ({
+      query: `service ${i} austin`,
+      serviceId: `s${i}`,
+      serviceAreaId: 'a1',
+      source: 'service_primary_area' as const,
+    }));
+
+    const queries = buildSerpQueriesFromSeeds(seeds, MARKET);
+    expect(queries).toHaveLength(20);
+    expect(queries[0]).toEqual({ keyword: 'service 0 austin', serviceAreaId: 'a1', locationCode: 1023191 });
+  });
+
+  it('drops non-service_primary_area seeds and falls back to the market fallback code when a service area is unresolved', () => {
+    const seeds: SeedQuery[] = [
+      { query: 'plumber', serviceId: 's1', serviceAreaId: null, source: 'category' as const },
+      { query: 'emergency plumbing', serviceId: 's1', serviceAreaId: null, source: 'service' as const },
+      { query: 'emergency plumbing round rock', serviceId: 's1', serviceAreaId: 'a2', source: 'service_primary_area' as const },
+    ];
+
+    const queries = buildSerpQueriesFromSeeds(seeds, MARKET);
+    expect(queries).toEqual([
+      { keyword: 'emergency plumbing round rock', serviceAreaId: 'a2', locationCode: MARKET.fallbackSerpLocationCode },
+    ]);
+  });
+});
+
+describe('validateSerpsAndQuestionsHandler', () => {
+  let restoreFetch: (() => void) | undefined;
+  afterEach(() => {
+    restoreFetch?.();
+    restoreFetch = undefined;
+  });
+
+  async function seedMarketStage(d1: D1Database, runId: string): Promise<void> {
+    await d1
+      .prepare(
+        `INSERT INTO research_stage_runs
+          (id, run_id, stage_name, stage_input_hash, status, required, attempt_count, output_json, finished_at)
+         VALUES (?, ?, 'resolve_market', 'hash-resolve-market', 'succeeded', 1, 1, ?, ?)`
+      )
+      .bind(newId('stagerun'), runId, JSON.stringify(MARKET), nowIso())
+      .run();
+  }
+
+  function buildCtx(
+    d1: D1Database,
+    runId: string,
+    projectId: string,
+    briefVersionId: string,
+    normalizedBrief: StageContext['normalizedBrief']
+  ): StageContext {
+    return {
+      env: { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: { send: async () => undefined }, ...providerFields() } as any,
+      d1,
+      runId,
+      projectId,
+      briefVersionId,
+      normalizedBrief,
+      stage: 'validate_serps_and_questions',
+      attempt: 1,
+    };
+  }
+
+  async function seedKeywordRows(d1: D1Database, runId: string, keywords: string[]): Promise<void> {
+    for (const keyword of keywords) {
+      await d1
+        .prepare(`INSERT INTO keywords (id, run_id, display_keyword, normalized_keyword) VALUES (?, ?, ?, ?)`)
+        .bind(newId('kw'), runId, keyword, keyword)
+        .run();
+    }
+  }
+
+  function taskPostFetchStub(taskIds: string[]): { restore: () => void } {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status_code: 20000,
+        tasks: taskIds.map((id) => ({ id, status_code: 20100, status_message: 'Task Created.', cost: 0.01, result: [{ id }] })),
+      }),
+    })) as any;
+    return { restore: () => { globalThis.fetch = original; } };
+  }
+
+  it('first attempt (no dfs_serp_tasks rows yet): posts a batch and throws SerpTasksPendingError', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin', 'drain cleaning austin']);
+
+    const { restore } = taskPostFetchStub(['task-1', 'task-2']);
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    const rows = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE run_id = ?`).bind(runId).all<{ status: string }>();
+    expect(rows.results.length).toBeGreaterThan(0);
+    expect(rows.results.every((r) => r.status === 'posted')).toBe(true);
+  });
+
+  it('later attempt with a not-ready posted row: throws SerpTasksPendingError again and leaves the row posted', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin']);
+    await d1
+      .prepare(
+        `INSERT INTO dfs_serp_tasks (id, run_id, keyword, service_area_id, location_code, provider_task_id, status, posted_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`
+      )
+      .bind(newId('serpt'), runId, 'emergency plumbing austin', 'a1', 1023191, 'task-1', nowIso())
+      .run();
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status_code: 20000,
+        tasks: [{ id: 'task-1', status_code: 40601, status_message: 'Task In Queue.', cost: 0, result: null }],
+      }),
+    })) as any;
+    restoreFetch = () => { globalThis.fetch = original; };
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    const row = await d1.prepare(`SELECT status FROM dfs_serp_tasks WHERE run_id = ?`).bind(runId).first<{ status: string }>();
+    expect(row?.status).toBe('posted');
+  });
+
+  it('later attempt with everything ready: returns succeeded with snapshots/failed counts', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin']);
+    await d1
+      .prepare(
+        `INSERT INTO dfs_serp_tasks (id, run_id, keyword, service_area_id, location_code, provider_task_id, status, posted_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'posted', ?)`
+      )
+      .bind(newId('serpt'), runId, 'emergency plumbing austin', 'a1', 1023191, 'task-1', nowIso())
+      .run();
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        status_code: 20000,
+        tasks: [
+          {
+            id: 'task-1',
+            status_code: 20000,
+            status_message: 'Ok.',
+            cost: 0,
+            result: [{ items: [{ type: 'organic', rank_group: 1, url: 'https://a.com', title: 'A', domain: 'a.com' }] }],
+          },
+        ],
+      }),
+    })) as any;
+    restoreFetch = () => { globalThis.fetch = original; };
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output, status } = await validateSerpsAndQuestionsHandler(ctx);
+    expect(status).toBe('succeeded');
+    expect(output).toEqual({ snapshots: 1, failed: 0 });
+  });
+
+  it('throws provider_invalid_response when resolve_market has no output to read', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toMatchObject({
       code: 'provider_invalid_response',
     } satisfies Partial<BlueprintApiError>);
   });

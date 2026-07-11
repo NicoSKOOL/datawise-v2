@@ -4,9 +4,19 @@ import type { BlueprintErrorCode } from '../../contracts/enums';
 
 // DataForSEO's HTTP layer returns 200 for almost everything; the real
 // success/failure signal lives per-task inside the body as status_code.
-// 20000 is the only success code; everything else (including partial
-// per-task failures alongside otherwise-successful tasks in the same
-// response) must be surfaced without throwing away the tasks that did work.
+// Every code in the 20000-29999 band is a DataForSEO SUCCESS code (20000
+// "Ok." for synchronous "live" calls, 20100 "Task Created." for async
+// task_post acceptance, etc.) -- 40xxx/50xxx are the failure bands. The
+// existing (non-blueprint) dataforseo/on-page.ts task_post/poll flow already
+// treats `status_code < 20000 || status_code >= 30000` as the real
+// success/failure boundary; this range check matches that established,
+// production-proven convention rather than the narrower `=== 20000` this
+// function used before Task 13 (SERP task_post/task_get is the first
+// blueprint adapter that posts an async task and therefore the first to see
+// a genuine non-20000 success code -- 20100 -- flow through this parser).
+// Partial per-task failures alongside otherwise-successful tasks in the same
+// response must still be surfaced without throwing away the tasks that did
+// work.
 export interface DfsTaskMeta {
   taskId: string | null;
   statusCode: number;
@@ -16,7 +26,7 @@ export interface DfsTaskMeta {
 }
 
 export function isSuccessfulDataForSeoTask(task: any): boolean {
-  return !!task && task.status_code === 20000;
+  return !!task && typeof task.status_code === 'number' && task.status_code >= 20000 && task.status_code < 30000;
 }
 
 export interface ParsedDfsResponse {
