@@ -8,6 +8,17 @@
 //
 // The default fixtures cover 'US'/'en' plus the "Austin"/"Round Rock" cities
 // used by process-run.test.ts's and acceptance.e2e.test.ts's sample briefs.
+//
+// Task 10 adds collect_keyword_evidence as the second real stage handler in
+// this same full-drive path, making live DataForSEO Labs POST calls
+// (keyword_ideas/keyword_suggestions/keywords_for_site/keyword_overview/
+// bulk_keyword_difficulty). This stub covers all five with empty-item
+// responses: every full-drive test here cares about stage-ordering and
+// terminal-status behavior, not real keyword content, and an empty universe
+// still exercises the handler's user-seed-retention path in full (every
+// seed query survives with null metrics). Tests that DO care about specific
+// keyword content/cost use their own dedicated stub (see
+// orchestration/research-handlers.test.ts).
 
 function catalogTaskResponse(records: unknown[]) {
   return {
@@ -42,6 +53,25 @@ const DEFAULT_SERP_LANGUAGES = [
   { language_code: 'es', language_name: 'Spanish' },
 ];
 
+// A billable Labs "live" task response with zero items: still a valid,
+// successful (status_code 20000) single-task response, so blueprintDfsCall
+// treats it as a normal miss (not the "all tasks failed"/"zero tasks"
+// invalid-response cases) and simply returns an empty candidate list.
+function emptyLabsTaskResponse() {
+  return {
+    status_code: 20000,
+    tasks: [{ id: 'labs-task', status_code: 20000, status_message: 'Ok.', cost: 0, result: [{ items: [] }] }],
+  };
+}
+
+const LABS_KEYWORD_ENDPOINTS = [
+  '/dataforseo_labs/google/keyword_ideas/live',
+  '/dataforseo_labs/google/keyword_suggestions/live',
+  '/dataforseo_labs/google/keywords_for_site/live',
+  '/dataforseo_labs/google/keyword_overview/live',
+  '/dataforseo_labs/google/bulk_keyword_difficulty/live',
+];
+
 // Installs the stub and returns a restore function; callers are responsible
 // for restoring the original fetch (typically in afterEach), matching the
 // pattern already used by providers/dataforseo/call.test.ts.
@@ -57,6 +87,9 @@ export function installDfsCatalogFetchStub(): () => void {
     }
     if (href.includes('/serp/google/languages')) {
       return { ok: true, status: 200, json: async () => catalogTaskResponse(DEFAULT_SERP_LANGUAGES) } as any;
+    }
+    if (LABS_KEYWORD_ENDPOINTS.some((endpoint) => href.includes(endpoint))) {
+      return { ok: true, status: 200, json: async () => emptyLabsTaskResponse() } as any;
     }
     throw new Error(`installDfsCatalogFetchStub: unexpected fetch to ${href}`);
   }) as any;

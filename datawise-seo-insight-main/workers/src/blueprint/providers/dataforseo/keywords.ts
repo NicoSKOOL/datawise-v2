@@ -41,12 +41,26 @@ function normalizeItems(items: any[], source: string, evidenceRefId: string): Ke
     .filter((c): c is KeywordCandidate => c !== null);
 }
 
+// Every fetch* adapter returns its candidates alongside the exact
+// costUsdMicro blueprintDfsCall billed for that call (0 on a cache hit).
+// This is the minimally-invasive shape change Task 10's collect_keyword_
+// evidence handler needs to sum a stage's real DataForSEO spend and forward
+// it to completeStage as cost_usd_micro: wrapping the return value keeps
+// every other caller's KeywordCandidate[] handling identical (just add a
+// `.candidates` destructure), and mirrors enrichMissingMetrics's own
+// existing compound-return precedent below instead of introducing a new
+// side-channel (e.g. a mutable cost collector param).
+export interface KeywordFetchResult {
+  candidates: KeywordCandidate[];
+  costUsdMicro: number;
+}
+
 export async function fetchKeywordIdeas(
   ctx: StageContext,
   market: ResolvedMarket,
   seedKeywords: string[],
   costs: DfsCostEstimates
-): Promise<KeywordCandidate[]> {
+): Promise<KeywordFetchResult> {
   const keywords = seedKeywords.slice(0, MAX_KEYWORD_IDEAS_SEEDS);
   const result = await blueprintDfsCall(ctx, {
     method: 'POST',
@@ -68,7 +82,7 @@ export async function fetchKeywordIdeas(
     estimateUsdMicro: costs.labsTaskUsdMicro,
   });
   const evidenceRefId = requireEvidenceRefId(result);
-  return normalizeItems(result.items, 'keyword_ideas', evidenceRefId);
+  return { candidates: normalizeItems(result.items, 'keyword_ideas', evidenceRefId), costUsdMicro: result.costUsdMicro };
 }
 
 export async function fetchKeywordSuggestions(
@@ -76,7 +90,7 @@ export async function fetchKeywordSuggestions(
   market: ResolvedMarket,
   seed: { query: string; serviceId: string | null },
   costs: DfsCostEstimates
-): Promise<KeywordCandidate[]> {
+): Promise<KeywordFetchResult> {
   const result = await blueprintDfsCall(ctx, {
     method: 'POST',
     endpoint: '/dataforseo_labs/google/keyword_suggestions/live',
@@ -97,7 +111,10 @@ export async function fetchKeywordSuggestions(
     estimateUsdMicro: costs.labsTaskUsdMicro,
   });
   const evidenceRefId = requireEvidenceRefId(result);
-  return normalizeItems(result.items, 'keyword_suggestions', evidenceRefId);
+  return {
+    candidates: normalizeItems(result.items, 'keyword_suggestions', evidenceRefId),
+    costUsdMicro: result.costUsdMicro,
+  };
 }
 
 export async function fetchKeywordsForSite(
@@ -105,7 +122,7 @@ export async function fetchKeywordsForSite(
   market: ResolvedMarket,
   domain: string,
   costs: DfsCostEstimates
-): Promise<KeywordCandidate[]> {
+): Promise<KeywordFetchResult> {
   const result = await blueprintDfsCall(ctx, {
     method: 'POST',
     endpoint: '/dataforseo_labs/google/keywords_for_site/live',
@@ -125,7 +142,10 @@ export async function fetchKeywordsForSite(
     estimateUsdMicro: costs.labsTaskUsdMicro,
   });
   const evidenceRefId = requireEvidenceRefId(result);
-  return normalizeItems(result.items, 'keywords_for_site', evidenceRefId);
+  return {
+    candidates: normalizeItems(result.items, 'keywords_for_site', evidenceRefId),
+    costUsdMicro: result.costUsdMicro,
+  };
 }
 
 // Clones every merged keyword (metrics object included) so the caller's
@@ -145,15 +165,18 @@ function applyEvidenceRef(k: MergedKeyword, evidenceRefId: string): void {
 
 // enrichMissingMetrics deviates from the plan text in one way: KeywordUniverse
 // has no field for "we truncated the enrichment chunk," so this returns
-// { universe, enrichmentTruncated } instead of a bare KeywordUniverse. Task 10's
-// collect_keyword_evidence handler needs that flag to record a partial-stage
-// warning; the universe itself stays exactly KeywordUniverse-shaped.
+// { universe, enrichmentTruncated, costUsdMicro } instead of a bare
+// KeywordUniverse. Task 10's collect_keyword_evidence handler needs the
+// truncated flag to record a partial-stage warning, and costUsdMicro (the
+// sum of whichever of the up-to-two enrichment calls actually ran) to fold
+// into the stage's total spend; the universe itself stays exactly
+// KeywordUniverse-shaped.
 export async function enrichMissingMetrics(
   ctx: StageContext,
   market: ResolvedMarket,
   merged: KeywordUniverse,
   costs: DfsCostEstimates
-): Promise<{ universe: KeywordUniverse; enrichmentTruncated: boolean }> {
+): Promise<{ universe: KeywordUniverse; enrichmentTruncated: boolean; costUsdMicro: number }> {
   const byNormalized = new Map<string, MergedKeyword>(
     merged.keywords.map((k) => [k.normalizedKeyword, cloneMergedKeyword(k)])
   );
@@ -164,6 +187,7 @@ export async function enrichMissingMetrics(
   const difficultyChunk = missingDifficulty.slice(0, BULK_KD_CHUNK_MAX);
   const enrichmentTruncated =
     missingVolume.length > OVERVIEW_CHUNK_MAX || missingDifficulty.length > BULK_KD_CHUNK_MAX;
+  let costUsdMicro = 0;
 
   if (volumeChunk.length > 0) {
     const result = await blueprintDfsCall(ctx, {
@@ -181,6 +205,7 @@ export async function enrichMissingMetrics(
       scopeId: 'overview',
       estimateUsdMicro: costs.labsTaskUsdMicro,
     });
+    costUsdMicro += result.costUsdMicro;
     const evidenceRefId = requireEvidenceRefId(result);
     for (const item of result.items) {
       const candidate = normalizeKeywordItem(item, 'keyword_overview', evidenceRefId);
@@ -211,6 +236,7 @@ export async function enrichMissingMetrics(
       scopeId: 'bulk_kd',
       estimateUsdMicro: costs.labsTaskUsdMicro,
     });
+    costUsdMicro += result.costUsdMicro;
     const evidenceRefId = requireEvidenceRefId(result);
     // bulk_keyword_difficulty items carry `keyword` + `keyword_difficulty`
     // directly -- not the keyword_data/keyword_properties nesting
@@ -227,5 +253,5 @@ export async function enrichMissingMetrics(
     }
   }
 
-  return { universe: { keywords: [...byNormalized.values()] }, enrichmentTruncated };
+  return { universe: { keywords: [...byNormalized.values()] }, enrichmentTruncated, costUsdMicro };
 }

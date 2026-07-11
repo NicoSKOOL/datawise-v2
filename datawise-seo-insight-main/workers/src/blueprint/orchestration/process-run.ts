@@ -263,7 +263,23 @@ export async function processResearchRun(
       const result = await handler(ctx);
       const outputJson = JSON.stringify(result.output);
       const outputHash = await hashNormalizedInput(result.output);
-      await completeStage(d1, lease.lease, outputJson, outputHash, { status: result.status ?? 'succeeded' });
+      // A handler that tracked its own real provider spend (so far only
+      // collect_keyword_evidence, Task 10) reports it as a numeric
+      // stageCostUsdMicro field on its output; forward that into the stage
+      // row's cost_usd_micro rather than leaving it at completeStage's
+      // default of 0. Every other (stub/free) handler's output has no such
+      // field, so costUsdMicro stays undefined and completeStage's own
+      // COALESCE(?, cost_usd_micro) leaves the column untouched.
+      const stageCostUsdMicro =
+        result.output != null &&
+        typeof result.output === 'object' &&
+        typeof (result.output as Record<string, unknown>).stageCostUsdMicro === 'number'
+          ? (result.output as Record<string, number>).stageCostUsdMicro
+          : undefined;
+      await completeStage(d1, lease.lease, outputJson, outputHash, {
+        status: result.status ?? 'succeeded',
+        costUsdMicro: stageCostUsdMicro,
+      });
     } catch (err) {
       if (err instanceof BlueprintValidationError) {
         // Permanent, user-correctable failure (e.g. resolve_market's

@@ -139,9 +139,10 @@ describe('fetchKeywordIdeas', () => {
       okResponse([{ keyword: 'ac repair austin', keyword_info: { search_volume: 100 } }])
     );
 
-    const candidates = await fetchKeywordIdeas(ctx, MARKET, ['ac repair', 'hvac installation'], COSTS);
+    const { candidates, costUsdMicro } = await fetchKeywordIdeas(ctx, MARKET, ['ac repair', 'hvac installation'], COSTS);
 
     expect(calls).toHaveLength(1);
+    expect(costUsdMicro).toBe(50_000);
     expect(calls[0].url).toContain('/dataforseo_labs/google/keyword_ideas/live');
     expect(calls[0].body).toMatchObject({
       keywords: ['ac repair', 'hvac installation'],
@@ -181,7 +182,7 @@ describe('fetchKeywordSuggestions', () => {
       okResponse([{ keyword: 'ac repair austin tx', keyword_info: { search_volume: 40 } }])
     );
 
-    const candidates = await fetchKeywordSuggestions(
+    const { candidates } = await fetchKeywordSuggestions(
       ctx,
       MARKET,
       { query: 'ac repair austin', serviceId: 'svc1' },
@@ -211,7 +212,7 @@ describe('fetchKeywordsForSite', () => {
       okResponse([{ keyword: 'plumber austin', keyword_info: { search_volume: 200 } }])
     );
 
-    const candidates = await fetchKeywordsForSite(ctx, MARKET, 'example.com', COSTS);
+    const { candidates } = await fetchKeywordsForSite(ctx, MARKET, 'example.com', COSTS);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain('/dataforseo_labs/google/keywords_for_site/live');

@@ -608,4 +608,48 @@ describe('processResearchRun', () => {
     const run = await getRun(d1, runId);
     expect(run.status).toBe('cancelled');
   });
+
+  // Task 10: collect_keyword_evidence is the first real handler that tracks
+  // its own provider spend and reports it back as a numeric
+  // stageCostUsdMicro field on its output (see research-handlers.ts). This
+  // proves the processor's forwarding in isolation, with a stub handler
+  // standing in for any future handler that reports the same field --
+  // completeStage itself already accepted a costUsdMicro extra (db/leases.ts,
+  // pre-existing), the only new wiring here is process-run.ts reading it off
+  // the handler's own output.
+  it('Task 10: forwards a handler-reported stageCostUsdMicro onto the stage row as cost_usd_micro', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => ({
+        output: { stage: 'resolve_market' as const, stub: true, stageCostUsdMicro: 123_456 },
+      }),
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, reports cost)
+
+    const stageRow = await d1
+      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, 'resolve_market')
+      .first<{ cost_usd_micro: number }>();
+    expect(stageRow?.cost_usd_micro).toBe(123_456);
+  });
+
+  it("Task 10: a handler output with no stageCostUsdMicro field leaves cost_usd_micro at completeStage's default (0)", async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+
+    await processResearchRun(env, runId, 'w1'); // validate_intake: real handler, no stageCostUsdMicro field
+
+    const stageRow = await d1
+      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, 'validate_intake')
+      .first<{ cost_usd_micro: number }>();
+    expect(stageRow?.cost_usd_micro).toBe(0);
+  });
 });
