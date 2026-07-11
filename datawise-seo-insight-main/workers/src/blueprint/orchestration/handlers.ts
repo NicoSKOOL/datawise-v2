@@ -7,6 +7,9 @@ import { V1_LIMITS } from '../contracts/limits';
 import { newId, nowIso } from '../db/util';
 import { loadGapStageNames } from './run-status';
 import type { BlueprintProviderEnv } from './process-run';
+import { loadDfsCostEstimates, buildCallPlan } from '../providers/dataforseo/costs';
+import { BlueprintApiError } from '../domain/api-errors';
+import { safeErrorMessage } from '../providers/dataforseo/envelope';
 
 export interface StageContext {
   env: BlueprintProviderEnv;
@@ -193,11 +196,38 @@ async function publishBlueprintHandler(ctx: StageContext) {
   };
 }
 
+interface RunBudgetRow {
+  dataforseo_budget_usd_micro: number;
+}
+
+// The fail-fast budget gate before any paid stage: recomputes the request
+// plan fresh from the normalized brief and the (KV-overridable) cost
+// estimates, then throws budget_exceeded if the plan's total would blow the
+// run's approved DataForSEO budget ceiling. This is a REQUIRED stage: the
+// throw fails the whole run rather than skipping ahead into paid calls.
+async function planResearchHandler(ctx: StageContext) {
+  const runRow = await ctx.d1
+    .prepare(`SELECT dataforseo_budget_usd_micro FROM research_runs WHERE id = ?`)
+    .bind(ctx.runId)
+    .first<RunBudgetRow>();
+  if (!runRow) throw new Error(`Research run not found: ${ctx.runId}`);
+
+  const costs = await loadDfsCostEstimates(ctx.env.KV);
+  const plan = buildCallPlan(ctx.normalizedBrief, costs);
+
+  if (plan.totalUsdMicro > runRow.dataforseo_budget_usd_micro) {
+    throw new BlueprintApiError('budget_exceeded', safeErrorMessage('budget_exceeded'));
+  }
+
+  return { output: { stage: 'plan_research' as const, plan } };
+}
+
 export const STAGE_HANDLERS: Record<BlueprintStage, StageHandler> = Object.fromEntries(
   BLUEPRINT_STAGES.map((stage) => [stage, makeStubStage(stage)])
 ) as Record<BlueprintStage, StageHandler>;
 
 STAGE_HANDLERS.validate_intake = validateIntakeHandler;
 STAGE_HANDLERS.normalize_brief = normalizeBriefHandler;
+STAGE_HANDLERS.plan_research = planResearchHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
 STAGE_HANDLERS.publish_blueprint = publishBlueprintHandler;

@@ -127,7 +127,7 @@ async function seedRun(d1: D1Database, projectId: string, briefVersionId: string
       `INSERT INTO research_runs
         (id, project_id, brief_version_id, estimate_id, status,
          dataforseo_budget_usd_micro, openrouter_budget_usd_micro, created_by, created_at)
-       VALUES (?, ?, ?, ?, 'queued', 0, 0, 'u1', ?)`
+       VALUES (?, ?, ?, ?, 'queued', 2000000, 0, 'u1', ?)`
     )
     .bind(id, projectId, briefVersionId, 'estimate1', nowIso())
     .run();
