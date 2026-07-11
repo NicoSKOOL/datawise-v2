@@ -1,5 +1,6 @@
 import type { BlueprintStage, RunStatus } from '../contracts/enums';
-import { NotFoundError } from '../domain/api-errors';
+import { BlueprintApiError, NotFoundError } from '../domain/api-errors';
+import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { buildStageInputHash, hashNormalizedInput } from '../domain/hash';
 import type { NormalizedProjectBrief } from '../contracts/types';
 import { nowIso } from '../db/util';
@@ -261,14 +262,23 @@ export async function processResearchRun(
       const outputHash = await hashNormalizedInput(result.output);
       await completeStage(d1, lease.lease, outputJson, outputHash, { status: result.status ?? 'succeeded' });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Only a BlueprintApiError has already been through a sanitizer (e.g.
+      // mapDfsFailure) and carries a code/message safe to persist verbatim.
+      // Anything else (raw provider errors, thrown strings, bugs) could
+      // contain account emails, internal URLs, or other provider-body text,
+      // so it is always collapsed to the fixed internal_error message
+      // before it reaches the stage row (never store `err.message` as-is).
+      const { code, message } =
+        err instanceof BlueprintApiError
+          ? { code: err.code, message: err.message }
+          : { code: 'internal_error' as const, message: safeErrorMessage('internal_error') };
       if (lease.attemptCount < MAX_ATTEMPTS) {
         const nextRetryAt = new Date(Date.now() + RETRY_BACKOFF_MS).toISOString();
-        await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'retry_wait', nextRetryAt });
+        await failStage(d1, lease.lease, { code, message }, { kind: 'retry_wait', nextRetryAt });
       } else if (meta.required) {
-        await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'failed' });
+        await failStage(d1, lease.lease, { code, message }, { kind: 'failed' });
       } else {
-        await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'skipped' });
+        await failStage(d1, lease.lease, { code, message }, { kind: 'skipped' });
       }
     }
   }

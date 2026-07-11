@@ -9,6 +9,7 @@ import type { BlueprintStage } from '../contracts/enums';
 import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
+import { BlueprintApiError } from '../domain/api-errors';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -43,6 +44,7 @@ interface StageRow {
   required: number;
   attempt_count: number;
   safe_error_code: string | null;
+  safe_error_message: string | null;
 }
 
 interface BlueprintVersionRow {
@@ -389,6 +391,56 @@ describe('processResearchRun', () => {
     expect(resolveMarketRow?.status).toBe('failed');
     expect(resolveMarketRow?.safe_error_code).toBe('internal_error');
     expect(resolveMarketRow?.attempt_count).toBe(3);
+  });
+
+  it('sanitizes a raw (non-BlueprintApiError) stage failure before it reaches the stage row', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const rawMessage =
+      'DataForSEO auth failed for account ops@client-example.com against https://internal-provider.example.com/v3/task';
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        throw new Error(rawMessage);
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market throws -> retry_wait
+
+    const rows = await getStageRows(d1, runId);
+    const resolveMarketRow = rows.find((r) => r.stage_name === 'resolve_market');
+    expect(resolveMarketRow?.safe_error_code).toBe('internal_error');
+    expect(resolveMarketRow?.safe_error_message).toBeTruthy();
+    expect(resolveMarketRow?.safe_error_message).not.toContain('ops@client-example.com');
+    expect(resolveMarketRow?.safe_error_message).not.toContain('internal-provider.example.com');
+    expect(resolveMarketRow?.safe_error_message).toBe('The research step failed.');
+  });
+
+  it('preserves the code and message of a stage failure that already threw a BlueprintApiError', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        throw new BlueprintApiError(
+          'provider_rate_limited',
+          'The research provider rate-limited this request. It will be retried automatically.'
+        );
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market throws -> retry_wait
+
+    const rows = await getStageRows(d1, runId);
+    const resolveMarketRow = rows.find((r) => r.stage_name === 'resolve_market');
+    expect(resolveMarketRow?.safe_error_code).toBe('provider_rate_limited');
+    expect(resolveMarketRow?.safe_error_message).toBe(
+      'The research provider rate-limited this request. It will be retried automatically.'
+    );
   });
 
   it('behavior 6b: an OPTIONAL stage handler that throws is skipped after 3 attempts and the run continues to partial', async () => {
