@@ -400,4 +400,4 @@ CREATE TABLE IF NOT EXISTS dfs_serp_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_dfs_serp_tasks_run ON dfs_serp_tasks(run_id, status);
 
-UPDATE blueprint_meta SET value = '3', updated_at = datetime('now') WHERE key = 'schema_version' AND value < '3';
+UPDATE blueprint_meta SET value = '3', updated_at = datetime('now') WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 3;
