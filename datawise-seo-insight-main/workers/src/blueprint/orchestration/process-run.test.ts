@@ -785,4 +785,47 @@ describe('processResearchRun', () => {
       .first<{ cost_usd_micro: number }>();
     expect(stageRow?.cost_usd_micro).toBe(0);
   });
+
+  // Finding 1 (final whole-branch review): collect_keyword_evidence is a
+  // REQUIRED stage that can end 'partial' on its own (enrichmentTruncated),
+  // not just via retry exhaustion. Before the fix, deriveRunStatus's inline
+  // gap check only counted a 'partial' row as a gap when it was optional, so
+  // this run would have finished 'succeeded' while partial_reasons_json
+  // (loadGapStageNames, which counted ANY 'partial' row) still named
+  // collect_keyword_evidence -- the exact disagreement Finding 1 flagged.
+  it('Finding 1: a REQUIRED stage handler that reports status partial directly degrades the whole run to partial, and the stage name appears in partial_reasons', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      collect_keyword_evidence: async () => ({
+        output: { stage: 'collect_keyword_evidence' as const, enrichmentTruncated: true },
+        status: 'partial' as const,
+      }),
+      validate_serps_and_questions: stubValidateSerps,
+    };
+
+    let result: { advanced: boolean; runStatus: string } = { advanced: true, runStatus: 'running' };
+    for (let i = 0; i < 25 && result.advanced; i++) {
+      result = await processResearchRun(env, runId, 'w1', overrides);
+    }
+
+    const finalRun = await getRun(d1, runId);
+    expect(finalRun.status).toBe('partial');
+    expect(JSON.parse(finalRun.partial_reasons_json)).toContain('collect_keyword_evidence');
+
+    const stageRows = await getStageRows(d1, runId);
+    const stageRow = stageRows.find((r) => r.stage_name === 'collect_keyword_evidence');
+    expect(stageRow?.status).toBe('partial');
+    expect(stageRow?.required).toBe(1);
+
+    const versions = await d1
+      .prepare(`SELECT * FROM blueprint_versions WHERE project_id = ? AND run_id = ?`)
+      .bind(projectId, runId)
+      .all<BlueprintVersionRow>();
+    expect(versions.results.length).toBe(1);
+    expect(versions.results[0].completeness).toBe('partial');
+    expect(JSON.parse(versions.results[0].partial_reasons_json)).toContain('collect_keyword_evidence');
+  });
 });

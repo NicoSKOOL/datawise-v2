@@ -18,6 +18,7 @@ import { BlueprintApiError } from '../domain/api-errors';
 import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import type { SeedQuery } from '../domain/seeds';
+import { DataForSeoQuotaError } from '../../dataforseo/client';
 
 // This is the same STAGE_HANDLERS-driven approach process-run.test.ts and
 // acceptance.e2e.test.ts already use: drive the real registry through
@@ -1086,6 +1087,49 @@ describe('collectCompetitorEvidenceHandler', () => {
     expect(healthy?.pagesCount).toBe(1);
 
     restore();
+  });
+
+  // Finding 2 (final whole-branch review): an account-wide provider
+  // condition (quota/rate-limit/budget) hit by one competitor's call means
+  // every OTHER competitor's remaining calls this attempt are guaranteed to
+  // fail the exact same way, so it must surface from the handler (retry_wait
+  // / fail with the real code via the processor) instead of being swallowed
+  // into a 'partial' output like a one-off per-competitor failure.
+  it('rethrows a provider_quota_exhausted error from one competitor instead of swallowing it into a partial output', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    await seedCompetitor(d1, runId, 'quota-hit.com');
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: any) => {
+      const href = String(url);
+      if (href.includes('/dataforseo_labs/google/ranked_keywords/live')) {
+        throw new DataForSeoQuotaError('daily limit reached for ops@internal.example');
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status_code: 20000,
+          tasks: [{ id: 't-ok', status_code: 20000, status_message: 'Ok.', cost: 0.05, result: [{ items: [] }] }],
+        }),
+      } as any;
+    }) as any;
+    restoreFetch = () => { globalThis.fetch = original; };
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    // Before the fix, this error would have been swallowed per-competitor
+    // (anyFailure = true, rankedCount null, loop continues) and the handler
+    // would have resolved with status 'partial' instead of rejecting.
+    await expect(collectCompetitorEvidenceHandler(ctx)).rejects.toMatchObject({
+      code: 'provider_quota_exhausted',
+    } satisfies Partial<BlueprintApiError>);
   });
 
   it('caps topPages at 100 even if more relevant pages are returned', async () => {

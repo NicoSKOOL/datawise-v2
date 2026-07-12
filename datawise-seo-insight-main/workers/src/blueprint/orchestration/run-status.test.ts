@@ -207,6 +207,20 @@ describe('deriveRunStatus', () => {
     expect(deriveRunStatus(rows, 'running')).toBe('partial');
   });
 
+  // Finding 1 (final whole-branch review): collect_keyword_evidence is a
+  // REQUIRED stage (per REQUIRED_STAGES above) that can still return status
+  // 'partial' on its own (enrichmentTruncated, research-handlers.ts) rather
+  // than throwing. The old inline check here (`!row.required && ...`) only
+  // ever counted a 'partial' row as a gap when it was OPTIONAL, so a
+  // required-partial run would fold straight to 'succeeded' -- silently
+  // disagreeing with partial_reasons_json (loadGapStageNames counted ANY
+  // 'partial' row, required or not). A required stage ending 'partial' must
+  // degrade the run exactly like an optional 'skipped'/'partial' does.
+  it('returns partial (not succeeded) when a REQUIRED stage ends partial', () => {
+    const rows = makeRows({ collect_keyword_evidence: { status: 'partial', required: 1 } });
+    expect(deriveRunStatus(rows, 'running')).toBe('partial');
+  });
+
   it('publish_blueprint succeeding with only optional gaps is a final partial, not running', () => {
     const rows = makeRows({
       discover_competitors: { status: 'skipped', required: 0 },

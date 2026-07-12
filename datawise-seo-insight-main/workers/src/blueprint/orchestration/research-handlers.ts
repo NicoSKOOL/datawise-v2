@@ -479,6 +479,26 @@ export interface CollectCompetitorEvidenceOutput {
 // actually reads.
 const MAX_TOP_PAGES = 100;
 
+// Account-wide DataForSEO conditions that no per-competitor isolation can
+// route around: whichever competitor's call hits one of these first, every
+// OTHER competitor's remaining calls this attempt would burn are guaranteed
+// to hit the exact same wall. Mirrors collectSerpTasks's own account-wide
+// classification (providers/dataforseo/serp.ts) with 'budget_exceeded' added
+// -- a per-run DataForSEO budget ceiling is exactly as account-wide as a
+// provider quota/rate-limit wall, and reserveProviderBudget/
+// assertRunWithinBudget throw it as a BlueprintApiError the same way. Any
+// other error (including provider_timeout and a genuine per-task DFS
+// failure) stays isolated to that one competitor/field, per this handler's
+// existing per-competitor try/catch design below.
+function isAccountWideProviderError(err: unknown): boolean {
+  return (
+    err instanceof BlueprintApiError &&
+    (err.code === 'provider_quota_exhausted' ||
+      err.code === 'provider_rate_limited' ||
+      err.code === 'budget_exceeded')
+  );
+}
+
 // Real collect_competitor_evidence, not a stub. Optional stage (stages.ts):
 // even so, this handler does NOT rely on the processor's optional-stage
 // throw-to-partial behavior for per-competitor failures -- with up to 5
@@ -487,7 +507,14 @@ const MAX_TOP_PAGES = 100;
 // for every OTHER competitor. So each competitor's two calls (ranked
 // keywords, relevant pages) are individually try/caught; a failure records
 // that one field as null on that competitor's row and flips the whole
-// stage's returned status to 'partial', but the loop keeps going.
+// stage's returned status to 'partial', but the loop keeps going -- UNLESS
+// the caught error is account-wide (isAccountWideProviderError above:
+// provider_quota_exhausted, provider_rate_limited, budget_exceeded), in
+// which case it is rethrown instead of swallowed: those conditions are not
+// "one competitor's bad luck", they mean every remaining call this attempt
+// would make is guaranteed to fail the same way, so the whole stage attempt
+// should land in retry_wait/fail with that code rather than quietly report
+// 'partial' with every remaining competitor's fields left null.
 //
 // Reads selected competitors directly from the `competitors` table (not
 // from discover_competitors' stage output) because `selected = 1` is the
@@ -527,7 +554,8 @@ export const collectCompetitorEvidenceHandler: StageHandler = async (ctx: StageC
         .run();
       candidateBatches.push(ranked.records.map((r) => r.candidate));
       rankedCount = ranked.records.length;
-    } catch {
+    } catch (err) {
+      if (isAccountWideProviderError(err)) throw err;
       // A single competitor's provider failure degrades that competitor's
       // reported count, never the whole handler -- per this task's brief.
       anyFailure = true;
@@ -542,7 +570,8 @@ export const collectCompetitorEvidenceHandler: StageHandler = async (ctx: StageC
         .run();
       pagesCount = pages.records.length;
       topPages = pages.records.slice(0, MAX_TOP_PAGES);
-    } catch {
+    } catch (err) {
+      if (isAccountWideProviderError(err)) throw err;
       anyFailure = true;
     }
 

@@ -117,7 +117,7 @@ function fakeProviderEnv() {
 }
 
 async function buildCtx(overrides: Partial<{ dataforseoBudgetUsdMicro: number }> = {}) {
-  const { d1 } = createTestDb();
+  const { d1, raw } = createTestDb();
   const projectId = await seedProject(d1);
   const runId = await seedRun(d1, projectId, overrides);
   const env = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: { send: async () => undefined }, ...fakeProviderEnv() };
@@ -131,7 +131,7 @@ async function buildCtx(overrides: Partial<{ dataforseoBudgetUsdMicro: number }>
     stage: 'collect_keyword_evidence',
     attempt: 1,
   };
-  return { ctx, d1, runId, projectId };
+  return { ctx, d1, runId, projectId, raw };
 }
 
 async function getRun(d1: D1Database, runId: string) {
@@ -298,6 +298,32 @@ describe('blueprintDfsCall', () => {
       .bind(runId)
       .first<{ status: string }>();
     expect(row?.status).toBe('released');
+  });
+
+  it('a bookkeeping failure AFTER a successful paid fetch reconciles the real spend instead of releasing it', async () => {
+    const { ctx, d1, runId, raw } = await buildCtx();
+    stubFetchJson(okResponse([{ keyword: 'plumber austin' }], 0.05));
+
+    // Break the evidence_refs bookkeeping write so it throws AFTER the paid
+    // fetch has already returned a parsed, known-cost ('Ok.', cost 0.05)
+    // response: this simulates the exact window Finding 3 covers (steps
+    // 6-8 of blueprintDfsCall), not a provider-call failure.
+    raw.exec('DROP TABLE evidence_refs');
+
+    await expect(blueprintDfsCall(ctx, baseSpec)).rejects.toBeInstanceOf(BlueprintApiError);
+
+    // The real DataForSEO spend must be recorded (reconciled), not silently
+    // erased (released), even though the evidence_refs write blew up.
+    const run = await getRun(d1, runId);
+    expect(run?.dataforseo_reserved_usd_micro).toBe(0);
+    expect(run?.dataforseo_actual_usd_micro).toBe(dollarsToMicro(0.05));
+
+    const row = await d1
+      .prepare(`SELECT status, actual_cost_usd_micro FROM provider_budget_reservations WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ status: string; actual_cost_usd_micro: number }>();
+    expect(row?.status).toBe('reconciled');
+    expect(row?.actual_cost_usd_micro).toBe(dollarsToMicro(0.05));
   });
 
   it('provider_usage.stage records ctx.stage, not spec.operation', async () => {

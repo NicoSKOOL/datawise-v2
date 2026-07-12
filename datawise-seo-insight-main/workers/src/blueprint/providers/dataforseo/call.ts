@@ -77,6 +77,26 @@ async function releaseQuietly(d1: D1Database, reservationId: string): Promise<vo
   }
 }
 
+// Mirrors releaseQuietly above, but for the opposite failure window: once
+// the paid fetch has returned a parsed, non-failed response, its cost is
+// already genuinely charged by the provider (parsed.totalCostUsd) regardless
+// of what a downstream bookkeeping write (artifact/evidence_refs/
+// provider_usage/KV, steps 6-8 below) does next. Releasing the reservation
+// at that point -- the prior behavior -- would make the run's ledger
+// silently forget real spend just because, say, the evidence_refs INSERT
+// failed; reconciling keeps it recorded even when the bookkeeping itself
+// fails. Same invariant as releaseQuietly: the primary bookkeeping error
+// always wins, so a secondary reconcile failure (e.g. this reservation was
+// already reconciled/released by a prior attempt) is logged, never
+// surfaced.
+async function reconcileQuietly(d1: D1Database, reservationId: string, actualUsdMicro: number): Promise<void> {
+  try {
+    await reconcileProviderBudget(d1, reservationId, actualUsdMicro);
+  } catch (reconcileErr) {
+    console.error(`blueprintDfsCall: reconcile failed for reservation ${reservationId}:`, reconcileErr);
+  }
+}
+
 async function insertEvidenceRef(
   d1: D1Database,
   args: {
@@ -206,6 +226,15 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
     throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
   }
 
+  // From this point on, the provider has genuinely returned a parseable,
+  // non-failed response for this call: its real cost is known and already
+  // charged regardless of what the bookkeeping writes below do next (see
+  // reconcileQuietly's doc comment above). Computed once here, ahead of the
+  // try block, so both the success path (step 8) and its catch below use the
+  // exact same value -- a release past this point would be the bug this
+  // reconcile-instead-of-release fix exists to close.
+  const costUsdMicro = dollarsToMicro(parsed.totalCostUsd);
+
   try {
     // 6: raw artifact to R2 + artifacts row -- billable calls only. Free
     // calls (estimateUsdMicro === 0: documented-free catalog GETs and
@@ -256,7 +285,7 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
 
     // 8: cost, evidence_refs, provider_usage -- billable calls only (see
     // the step-6 comment for why free calls skip all bookkeeping writes).
-    const costUsdMicro = dollarsToMicro(parsed.totalCostUsd);
+    // costUsdMicro was already computed above the try block.
     let evidenceRefId: string | null = null;
     if (!isFreeCall) {
       evidenceRefId = await insertEvidenceRef(d1, {
@@ -305,7 +334,14 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
       taskMetas: parsed.tasks,
     };
   } catch (err) {
-    if (reservationId) await releaseQuietly(d1, reservationId);
+    // A failure here is a bookkeeping failure AFTER a real, already-charged
+    // provider spend (costUsdMicro, computed above) -- reconcile that known
+    // cost instead of releasing it, so the run's ledger never silently
+    // forgets real spend just because an artifact/evidence/provider_usage/KV
+    // write happened to fail. Releasing here (the prior behavior) left the
+    // reservation's estimate wiped from `reserved` with nothing moved to
+    // `actual`, undercounting the run's real DataForSEO spend.
+    if (reservationId) await reconcileQuietly(d1, reservationId, costUsdMicro);
     // Preserve an already-sanitized BlueprintApiError (e.g. the missing
     // project row internal_error above); wrap anything else.
     throw err instanceof BlueprintApiError ? err : mapDfsFailure(err);
