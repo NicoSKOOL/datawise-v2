@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, getSessionToken } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Card,
   CardContent,
@@ -47,8 +49,111 @@ interface ProjectListResponse {
   nextCursor: string | null;
 }
 
+interface EstimatePlannedStage {
+  stage: string;
+  required: boolean;
+  estimatedTasks: number;
+  estimatedMinUsd: string;
+  estimatedMaxUsd: string;
+  cacheEligible: boolean;
+}
+
 interface ResearchEstimate {
   estimateId: string;
+  expiresAt: string;
+  plannedStages: EstimatePlannedStage[];
+  totals: {
+    dataForSeoMinUsd: string;
+    dataForSeoMaxUsd: string;
+    openRouterMaxUsd: string;
+    estimatedDurationSecondsMin: number;
+    estimatedDurationSecondsMax: number;
+  };
+  limitations: string[];
+  fanoutAvailability: 'enabled' | 'disabled' | 'unsupported_market';
+}
+
+interface ApiFailureBody {
+  requestId: string;
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    fieldErrors?: Record<string, string[]>;
+  };
+}
+
+// Thin wrapper around a raw fetch (mirrors the auth-header pattern in
+// src/lib/api.ts) used only where we need the real HTTP status and the
+// structured Blueprint error envelope, not just a stringified message. The
+// shared `api()` helper stringifies `errorData.error`, which for Blueprint
+// routes is an object (not a string), so it can't be used to distinguish a
+// 409 stale-estimate conflict from any other failure.
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8787';
+
+class BlueprintRequestError extends Error {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = 'BlueprintRequestError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+async function blueprintApi<T>(
+  path: string,
+  options: { method?: string; body?: unknown; headers?: Record<string, string> } = {}
+): Promise<T> {
+  const token = getSessionToken();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: options.method || 'GET',
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const fallback: ApiFailureBody = {
+      requestId: '',
+      error: { code: 'unknown', message: `API error: ${response.status}`, retryable: false },
+    };
+    const body = ((await response.json().catch(() => fallback)) as ApiFailureBody) ?? fallback;
+    throw new BlueprintRequestError(
+      response.status,
+      body.error?.code ?? 'unknown',
+      body.error?.message ?? `API error: ${response.status}`
+    );
+  }
+
+  return response.json() as Promise<T>;
+}
+
+// Client-side ceiling validation. The worker accepts any non-negative USD
+// string, but until billing exists we cap what the admin preview can submit
+// so nobody fat-fingers a large DataForSEO spend.
+const MAX_CEILING_USD = 10;
+
+function validateCeiling(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) {
+    return 'Enter a valid amount, e.g. 2.00';
+  }
+  const value = Number(trimmed);
+  if (!(value > 0)) {
+    return 'Ceiling must be greater than 0';
+  }
+  if (value > MAX_CEILING_USD) {
+    return `Ceiling cannot exceed $${MAX_CEILING_USD.toFixed(2)} (temporary client-side cap)`;
+  }
+  return null;
 }
 
 interface ResearchStageView {
@@ -197,6 +302,10 @@ export default function BlueprintHome() {
   const [creatingSample, setCreatingSample] = useState(false);
   const [startingRunFor, setStartingRunFor] = useState<Record<string, boolean>>({});
   const [activeRuns, setActiveRuns] = useState<Record<string, ResearchRunView>>({});
+  const [fetchingEstimateFor, setFetchingEstimateFor] = useState<Record<string, boolean>>({});
+  const [estimatesByProject, setEstimatesByProject] = useState<Record<string, ResearchEstimate>>({});
+  const [ceilingByProject, setCeilingByProject] = useState<Record<string, string>>({});
+  const [ceilingErrorByProject, setCeilingErrorByProject] = useState<Record<string, string | null>>({});
   const activeRunsRef = useRef(activeRuns);
   // Track consecutive failures per runId to avoid toast spam: only show on
   // first failure, stop polling after 3 consecutive failures.
@@ -304,34 +413,86 @@ export default function BlueprintHome() {
     }
   }
 
-  async function handleRunResearch(projectId: string) {
-    setStartingRunFor((prev) => ({ ...prev, [projectId]: true }));
+  async function handleGetEstimate(projectId: string) {
+    setFetchingEstimateFor((prev) => ({ ...prev, [projectId]: true }));
     try {
-      const estimateResponse = await api<ApiSuccess<ResearchEstimate>>(
+      const estimateResponse = await blueprintApi<ApiSuccess<ResearchEstimate>>(
         `/api/blueprint/v1/projects/${projectId}/research-estimates`,
         { method: 'POST', body: {} }
       );
+      setEstimatesByProject((prev) => ({ ...prev, [projectId]: estimateResponse.data }));
+      setCeilingByProject((prev) => ({ ...prev, [projectId]: prev[projectId] ?? '2.00' }));
+      setCeilingErrorByProject((prev) => ({ ...prev, [projectId]: null }));
+    } catch (err) {
+      toast({
+        title: 'Could not fetch research estimate',
+        description: (err as Error).message,
+        variant: 'destructive',
+      });
+    } finally {
+      setFetchingEstimateFor((prev) => ({ ...prev, [projectId]: false }));
+    }
+  }
 
-      const runResponse = await api<ApiSuccess<ResearchRunView>>(
+  function handleCeilingChange(projectId: string, value: string) {
+    setCeilingByProject((prev) => ({ ...prev, [projectId]: value }));
+    setCeilingErrorByProject((prev) => ({ ...prev, [projectId]: null }));
+  }
+
+  async function handleStartRun(projectId: string) {
+    const estimate = estimatesByProject[projectId];
+    if (!estimate) return;
+
+    const rawCeiling = ceilingByProject[projectId] ?? '2.00';
+    const validationError = validateCeiling(rawCeiling);
+    if (validationError) {
+      setCeilingErrorByProject((prev) => ({ ...prev, [projectId]: validationError }));
+      return;
+    }
+
+    setStartingRunFor((prev) => ({ ...prev, [projectId]: true }));
+    try {
+      const runResponse = await blueprintApi<ApiSuccess<ResearchRunView>>(
         `/api/blueprint/v1/projects/${projectId}/research-runs`,
         {
           method: 'POST',
           headers: { 'Idempotency-Key': crypto.randomUUID() },
           body: {
-            estimateId: estimateResponse.data.estimateId,
-            acceptedDataForSeoCeilingUsd: '0.00',
+            estimateId: estimate.estimateId,
+            acceptedDataForSeoCeilingUsd: rawCeiling.trim(),
             acceptedOpenRouterCeilingUsd: '0.00',
           },
         }
       );
 
       setActiveRuns((prev) => ({ ...prev, [projectId]: runResponse.data }));
-    } catch (err) {
-      toast({
-        title: 'Could not start research run',
-        description: (err as Error).message,
-        variant: 'destructive',
+      // The estimate is single-use in spirit: once a run starts, clear it so
+      // the admin fetches a fresh one for the next run on this project.
+      setEstimatesByProject((prev) => {
+        const updated = { ...prev };
+        delete updated[projectId];
+        return updated;
       });
+    } catch (err) {
+      if (err instanceof BlueprintRequestError && err.status === 409) {
+        toast({
+          title: 'Estimate is no longer current',
+          description:
+            'The project brief changed (or this request already ran) since this estimate was created. Fetch a fresh estimate and try again.',
+          variant: 'destructive',
+        });
+        setEstimatesByProject((prev) => {
+          const updated = { ...prev };
+          delete updated[projectId];
+          return updated;
+        });
+      } else {
+        toast({
+          title: 'Could not start research run',
+          description: (err as Error).message,
+          variant: 'destructive',
+        });
+      }
     } finally {
       setStartingRunFor((prev) => ({ ...prev, [projectId]: false }));
     }
@@ -347,8 +508,9 @@ export default function BlueprintHome() {
         evidence-backed site structure.
       </p>
       <p className="text-sm text-muted-foreground">
-        Stub pipeline: research stages are placeholders until Phase 3; runs finish as
-        partial with the fan-out stage skipped.
+        Research stages are live: keyword, competitor, and SERP evidence via DataForSEO.
+        Clustering and fan-out land in later phases; runs finish as partial. Every run
+        spends real DataForSEO budget, so get an estimate and set a ceiling before starting.
       </p>
 
       <Card>
@@ -377,9 +539,13 @@ export default function BlueprintHome() {
           {projects.map((project) => {
             const activeRun = activeRuns[project.id];
             const isStarting = startingRunFor[project.id] ?? false;
+            const isFetchingEstimate = fetchingEstimateFor[project.id] ?? false;
             const isRunNonTerminal = activeRun
               ? NON_TERMINAL_RUN_STATUSES.includes(activeRun.status)
               : false;
+            const estimate = estimatesByProject[project.id];
+            const ceiling = ceilingByProject[project.id] ?? '2.00';
+            const ceilingError = ceilingErrorByProject[project.id] ?? null;
 
             return (
               <div key={project.id} className="rounded-md border p-4">
@@ -395,15 +561,100 @@ export default function BlueprintHome() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => handleRunResearch(project.id)}
-                    disabled={isStarting || isRunNonTerminal}
+                    onClick={() => handleGetEstimate(project.id)}
+                    disabled={isFetchingEstimate || isStarting || isRunNonTerminal}
                   >
-                    {(isStarting || isRunNonTerminal) && (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    )}
-                    Run research (no provider costs yet)
+                    {isFetchingEstimate && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {estimate ? 'Refresh estimate' : 'Get estimate'}
                   </Button>
                 </div>
+
+                {estimate && !isRunNonTerminal && (
+                  <div className="mt-3 rounded-md border bg-muted/30 p-4 space-y-3 text-sm">
+                    <div>
+                      <p className="font-medium">Research estimate</p>
+                      <p className="text-xs text-muted-foreground">
+                        Expires {new Date(estimate.expiresAt).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-muted-foreground">
+                            <th className="pr-4 pb-1 font-medium">Stage</th>
+                            <th className="pr-4 pb-1 font-medium">Tasks</th>
+                            <th className="pr-4 pb-1 font-medium">Est. cost (USD)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {estimate.plannedStages.map((stage) => (
+                            <tr key={stage.stage} className="border-t">
+                              <td className="pr-4 py-1">
+                                {formatStageLabel(stage.stage)}
+                                {!stage.required && ' (optional)'}
+                              </td>
+                              <td className="pr-4 py-1">{stage.estimatedTasks}</td>
+                              <td className="pr-4 py-1">
+                                ${stage.estimatedMinUsd}&ndash;${stage.estimatedMaxUsd}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <p>
+                      Total DataForSEO: ${estimate.totals.dataForSeoMinUsd}&ndash;$
+                      {estimate.totals.dataForSeoMaxUsd} &middot; OpenRouter: up to $
+                      {estimate.totals.openRouterMaxUsd}
+                    </p>
+
+                    {estimate.limitations.length > 0 && (
+                      <div>
+                        <p className="font-medium">Limitations</p>
+                        <ul className="list-disc list-inside text-muted-foreground">
+                          {estimate.limitations.map((limitation) => (
+                            <li key={limitation}>{limitation}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-end gap-4 border-t pt-3">
+                      <div className="space-y-1">
+                        <Label htmlFor={`ceiling-${project.id}`} className="text-xs">
+                          DataForSEO ceiling (USD)
+                        </Label>
+                        <Input
+                          id={`ceiling-${project.id}`}
+                          value={ceiling}
+                          onChange={(e) => handleCeilingChange(project.id, e.target.value)}
+                          className="h-8 w-28"
+                          disabled={isStarting}
+                        />
+                        {ceilingError && (
+                          <p className="text-xs text-destructive">{ceilingError}</p>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium">OpenRouter ceiling (USD)</p>
+                        <p className="flex h-8 items-center text-sm text-muted-foreground">
+                          $0.00 (fixed for this phase)
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleStartRun(project.id)}
+                        disabled={isStarting || isRunNonTerminal}
+                      >
+                        {isStarting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Start research run
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {activeRun && <RunProgressPanel run={activeRun} />}
               </div>
             );
