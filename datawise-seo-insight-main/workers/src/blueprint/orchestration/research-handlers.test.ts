@@ -1519,3 +1519,85 @@ describe('persistKeywordCandidates statement-count guard', () => {
     expect(evidenceCount?.n).toBe(1000);
   });
 });
+
+// Root cause of a production collect_competitor_evidence failure: DataForSEO
+// ranked_keywords items carry CPC as a float32-precision-noise JS number
+// (e.g. 24.31999969482422, not a clean 24.32). persistKeywordCandidates used
+// to run every candidate's cpcUsd through usdToMicro(String(cpc)), which
+// enforces a strict "at most 6 fractional digits" decimal-string shape
+// (correct for user-supplied budget-ceiling strings) and throws on that many
+// digits -- crashing the whole stage on the first noisy CPC it saw. Ideas/
+// Suggestions CPCs happened to already be clean, which is why
+// collect_keyword_evidence never tripped this. Provider floats must instead
+// go through a float-safe rounding conversion that never throws.
+describe('persistKeywordCandidates float-safe CPC conversion', () => {
+  function makeUniverse(cpcUsd: number | null): KeywordUniverse {
+    return {
+      keywords: [
+        {
+          normalizedKeyword: 'emergency plumber',
+          variants: ['Emergency Plumber'],
+          sources: ['fixture'],
+          metrics: { searchVolume: 100, cpcUsd, difficulty: 40 },
+          evidenceRefs: ['ev_1'],
+        },
+      ],
+    };
+  }
+
+  it('persists the exact production float32-noise CPC as a rounded integer micro-USD, not a throw', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+
+    const universe = makeUniverse(24.31999969482422);
+
+    const persistedCount = await persistKeywordCandidates(d1, runId, universe);
+    expect(persistedCount).toBe(1);
+
+    const row = await d1
+      .prepare(`SELECT cpc_usd_micro, metrics_missing FROM keywords WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ cpc_usd_micro: number; metrics_missing: number }>();
+    expect(row?.cpc_usd_micro).toBe(24_320_000);
+    expect(row?.metrics_missing).toBe(0);
+  });
+
+  it('persists NULL cpc_usd_micro (and marks metrics_missing) for non-finite CPC instead of throwing or storing garbage', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+
+    const universe = makeUniverse(Infinity);
+
+    const persistedCount = await persistKeywordCandidates(d1, runId, universe);
+    expect(persistedCount).toBe(1);
+
+    const row = await d1
+      .prepare(`SELECT cpc_usd_micro, metrics_missing FROM keywords WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ cpc_usd_micro: number | null; metrics_missing: number }>();
+    expect(row?.cpc_usd_micro).toBeNull();
+    expect(row?.metrics_missing).toBe(1);
+  });
+
+  it('persists NULL cpc_usd_micro for NaN CPC instead of throwing', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+
+    const universe = makeUniverse(NaN);
+
+    const persistedCount = await persistKeywordCandidates(d1, runId, universe);
+    expect(persistedCount).toBe(1);
+
+    const row = await d1
+      .prepare(`SELECT cpc_usd_micro FROM keywords WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ cpc_usd_micro: number | null }>();
+    expect(row?.cpc_usd_micro).toBeNull();
+  });
+});

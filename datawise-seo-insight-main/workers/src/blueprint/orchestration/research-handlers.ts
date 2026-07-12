@@ -17,7 +17,7 @@ import { V1_LIMITS } from '../contracts/limits';
 import { mergeKeywordCandidates } from '../domain/merge';
 import { normalizeKeyword } from '../domain/keyword';
 import { normalizeDomain } from '../domain/url';
-import { newId, usdToMicro } from '../db/util';
+import { newId } from '../db/util';
 import {
   discoverCompetitorsForDomain,
   discoverSerpCompetitors,
@@ -144,6 +144,25 @@ function assertRowBudget(rowsPerStatement: number, paramsPerRow: number, label: 
 assertRowBudget(KEYWORDS_ROWS_PER_STATEMENT, KEYWORDS_PARAMS_PER_ROW, 'keywords insert');
 assertRowBudget(JOIN_ROWS_PER_STATEMENT, JOIN_PARAMS_PER_ROW, 'join table insert');
 
+// DataForSEO ranked_keywords items carry CPC as a JS number with float32
+// precision noise (e.g. 24.31999969482422, not a clean 24.32) -- unlike
+// user-supplied budget-ceiling strings, which arrive as already-validated
+// decimal strings and correctly go through db/util's usdToMicro (strict
+// "at most 6 fractional digits" shape check is the right guard there).
+// Running a provider float through usdToMicro(String(cpc)) let that long
+// fractional expansion trip the strict shape check and throw, crashing the
+// entire collect_competitor_evidence stage on the first noisy CPC merged
+// into the universe (production: "Invalid USD amount: 24.31999969482422").
+// Ideas/Suggestions CPCs happened to already be clean floats, which is why
+// collect_keyword_evidence never hit this. This helper is float-safe: it
+// rounds instead of string-validating, and treats any non-finite or
+// negative input as a missing metric (persist NULL) rather than throwing or
+// storing garbage.
+function cpcToMicro(cpc: number | null): number | null {
+  if (cpc === null || !Number.isFinite(cpc) || cpc < 0) return null;
+  return Math.round(cpc * 1_000_000);
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -226,9 +245,9 @@ export async function persistKeywordCandidates(
     for (const kw of rowsChunk) {
       const displayKeyword = kw.variants[0] ?? kw.normalizedKeyword;
       const searchVolume = kw.metrics.searchVolume;
-      const cpcUsdMicro = kw.metrics.cpcUsd != null ? usdToMicro(String(kw.metrics.cpcUsd)) : null;
+      const cpcUsdMicro = cpcToMicro(kw.metrics.cpcUsd);
       const difficulty = kw.metrics.difficulty;
-      const metricsMissing = searchVolume === null || kw.metrics.cpcUsd === null || difficulty === null ? 1 : 0;
+      const metricsMissing = searchVolume === null || cpcUsdMicro === null || difficulty === null ? 1 : 0;
       args.push(
         newId('kw'),
         runId,
