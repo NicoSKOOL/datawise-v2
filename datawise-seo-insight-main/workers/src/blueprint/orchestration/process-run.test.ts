@@ -79,6 +79,21 @@ function makeQueue() {
   return { sent, queue: { send: async (body: unknown) => { sent.push(body); } } };
 }
 
+// Task 14 registers the REAL validateSerpsAndQuestionsHandler onto
+// STAGE_HANDLERS. That handler unconditionally throws SerpTasksPendingError
+// on its very first (posting) attempt, by design (research-handlers.ts) --
+// no fetch stub can make it resolve in one attempt, and no test in this file
+// below is actually testing SERP behavior (Task 13's own tests further down
+// pass validateSerpsAndQuestionsHandler explicitly where they want it).
+// Tests that just want a normal terminal drive use this trivial always-
+// succeeds stub in their overrides instead, restoring this file's original
+// pre-Task-14 assumption that every stage but the ones a test explicitly
+// cares about is a deterministic, zero-cost no-op.
+const stubValidateSerps: StageHandler = async () => ({
+  output: { stage: 'validate_serps_and_questions' as const, stub: true },
+  status: 'succeeded' as const,
+});
+
 // Stub provider bindings/credentials this file's tests never actually
 // exercise (no handler override here reads ctx.env), but processResearchRun
 // now requires a BlueprintProviderEnv, so every constructed env needs these
@@ -182,10 +197,11 @@ describe('processResearchRun', () => {
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
     const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides = { validate_serps_and_questions: stubValidateSerps };
 
     // Behavior 1: first invocation runs validate_intake, marks it succeeded,
     // sets current_stage, and enqueues { runId }.
-    const first = await processResearchRun(env, runId, 'w1');
+    const first = await processResearchRun(env, runId, 'w1', overrides);
     expect(first).toEqual({ advanced: true, runStatus: 'running' });
     expect(sent).toEqual([{ runId }]);
 
@@ -199,7 +215,7 @@ describe('processResearchRun', () => {
     // Behavior 2: drive the queue loop to completion.
     while (sent.length) {
       sent.pop();
-      await processResearchRun(env, runId, 'w1');
+      await processResearchRun(env, runId, 'w1', overrides);
     }
 
     const finalRun = await getRun(d1, runId);
@@ -505,6 +521,7 @@ describe('processResearchRun', () => {
       discover_competitors: async () => {
         throw new Error('boom-optional');
       },
+      validate_serps_and_questions: stubValidateSerps,
     };
 
     // 5 stages precede discover_competitors in BLUEPRINT_STAGES order.

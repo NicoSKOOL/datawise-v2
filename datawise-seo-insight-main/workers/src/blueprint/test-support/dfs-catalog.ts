@@ -79,6 +79,14 @@ const LABS_KEYWORD_ENDPOINTS = [
   '/dataforseo_labs/google/bulk_keyword_difficulty/live',
   '/dataforseo_labs/google/competitors_domain/live',
   '/dataforseo_labs/google/serp_competitors/live',
+  // Task 12 adds collect_competitor_evidence as a fourth real stage handler
+  // in this same full-drive path. A known (user-supplied) competitor is
+  // always selected regardless of what competitors_domain/serp_competitors
+  // discovered above, so any full-drive test whose sample brief carries a
+  // knownCompetitorDomains entry (e.g. process-run.test.ts's SAMPLE_BRIEF_
+  // INPUT) reaches these two endpoints too. Same empty-item convention.
+  '/dataforseo_labs/google/ranked_keywords/live',
+  '/dataforseo_labs/google/relevant_pages/live',
 ];
 
 // Installs the stub and returns a restore function; callers are responsible
