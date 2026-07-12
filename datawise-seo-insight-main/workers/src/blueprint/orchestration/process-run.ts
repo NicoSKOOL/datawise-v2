@@ -282,6 +282,13 @@ export async function processResearchRun(
         costUsdMicro: stageCostUsdMicro,
       });
     } catch (err) {
+      // Operator-only diagnostics: the persisted stage row is sanitized by
+      // design, so the raw cause must be visible somewhere. Worker logs
+      // (wrangler tail / dashboard) are operator-scoped, never user-facing.
+      console.error(
+        `[blueprint] stage ${stage} attempt ${lease.attemptCount} threw:`,
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      );
       if (err instanceof BlueprintValidationError) {
         // Permanent, user-correctable failure (e.g. resolve_market's
         // unsupported-language throw): retrying can never succeed, only a
