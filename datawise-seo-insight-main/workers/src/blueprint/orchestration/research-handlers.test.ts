@@ -11,7 +11,9 @@ import {
   collectCompetitorEvidenceHandler,
   validateSerpsAndQuestionsHandler,
   buildSerpQueriesFromSeeds,
+  persistKeywordCandidates,
 } from './research-handlers';
+import type { KeywordUniverse } from '../contracts/types';
 import type { StageHandler, StageContext } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
 import { BlueprintApiError } from '../domain/api-errors';
@@ -1421,5 +1423,99 @@ describe('validateSerpsAndQuestionsHandler', () => {
     await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toMatchObject({
       code: 'provider_invalid_response',
     } satisfies Partial<BlueprintApiError>);
+  });
+});
+
+// Regression test for the production subrequest-limit bug: the original
+// persistKeywordCandidates did 3 sequential D1 round-trips PER merged
+// keyword (INSERT, re-SELECT id, evidence-ref INSERT), so
+// collect_competitor_evidence persisting ~2,500 candidates meant ~7,600
+// statements in one queue-consumer invocation -- over Cloudflare's
+// per-invocation subrequest cap (D1 statements count against it). This pins
+// the batched rewrite against ever regressing back to that per-row shape by
+// counting actual D1 round-trips (a directly-awaited .run()/.all()/.first()
+// call, or one d1.batch([...]) invocation -- NOT the cheap, non-I/O
+// .prepare() call itself) while persisting a synthetic 1,000-candidate
+// universe.
+describe('persistKeywordCandidates statement-count guard', () => {
+  // Wraps a test-support D1Database so every real round-trip -- a directly
+  // awaited statement.run()/all()/first(), or one d1.batch([...]) call --
+  // increments a shared counter. Preserves the test-support adapter's
+  // internal __sql/__args properties across .bind() (spreading the real
+  // bound statement) so a wrapped statement handed to the real .batch()
+  // still works: the fake's batch() reads __sql/__args directly rather than
+  // calling .run() on each statement (see test-support/d1.ts).
+  function countingD1(real: D1Database): { d1: D1Database; getCallCount: () => number } {
+    let callCount = 0;
+    const wrapStatement = (stmt: D1PreparedStatement): D1PreparedStatement => {
+      return {
+        ...(stmt as unknown as Record<string, unknown>),
+        bind: (...args: unknown[]) => wrapStatement((stmt.bind as (...a: unknown[]) => D1PreparedStatement)(...args)),
+        run: async () => {
+          callCount += 1;
+          return stmt.run();
+        },
+        all: async <T = unknown>() => {
+          callCount += 1;
+          return stmt.all<T>();
+        },
+        first: async <T = unknown>() => {
+          callCount += 1;
+          return stmt.first<T>();
+        },
+      } as unknown as D1PreparedStatement;
+    };
+    const wrapped: D1Database = {
+      ...(real as unknown as Record<string, unknown>),
+      prepare: (sql: string) => wrapStatement(real.prepare(sql)),
+      batch: async <T = unknown>(statements: D1PreparedStatement[]) => {
+        callCount += 1;
+        return real.batch<T>(statements);
+      },
+    } as unknown as D1Database;
+    return { d1: wrapped, getCallCount: () => callCount };
+  }
+
+  function makeSyntheticUniverse(count: number): KeywordUniverse {
+    const keywords = [];
+    for (let i = 0; i < count; i++) {
+      keywords.push({
+        normalizedKeyword: `synthetic keyword ${i}`,
+        variants: [`Synthetic Keyword ${i}`],
+        sources: ['fixture'],
+        metrics: { searchVolume: i, cpcUsd: 1.5, difficulty: 40 },
+        evidenceRefs: [`ev_${i}`],
+      });
+    }
+    return { keywords };
+  }
+
+  it('persists 1,000 synthetic candidates in fewer than 100 total D1 calls (prepare-run + batch invocations combined)', async () => {
+    const { d1: realD1 } = createTestDb();
+    const projectId = await seedProject(realD1);
+    const briefVersionId = await seedBriefVersion(realD1, projectId);
+    const runId = await seedRun(realD1, projectId, briefVersionId);
+
+    const universe = makeSyntheticUniverse(1000);
+    const { d1: countedD1, getCallCount } = countingD1(realD1);
+
+    const persistedCount = await persistKeywordCandidates(countedD1, runId, universe);
+
+    expect(persistedCount).toBe(1000);
+    expect(getCallCount()).toBeLessThan(100);
+
+    const rowCount = await realD1
+      .prepare(`SELECT COUNT(*) AS n FROM keywords WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(rowCount?.n).toBe(1000);
+
+    const evidenceCount = await realD1
+      .prepare(
+        `SELECT COUNT(*) AS n FROM keyword_evidence_refs ker JOIN keywords k ON k.id = ker.keyword_id WHERE k.run_id = ?`
+      )
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(evidenceCount?.n).toBe(1000);
   });
 });

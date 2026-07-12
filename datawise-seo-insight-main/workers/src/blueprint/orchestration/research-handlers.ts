@@ -89,6 +89,102 @@ function appendMissingUserSeeds(universe: KeywordUniverse, seeds: SeedQuery[], l
   return { keywords: [...universe.keywords, ...appended] };
 }
 
+// D1 caps bound parameters at 100 per prepared statement, and a Worker
+// invocation (queue consumer included) caps total subrequests -- D1
+// statements count against that cap. The original version of this function
+// did 3 sequential round-trips PER merged keyword (INSERT, re-SELECT id,
+// evidence-ref INSERT); collect_competitor_evidence persisting ~2,500
+// candidates meant ~7,600 statements in one invocation, which blew the
+// subrequest ceiling and failed the whole stage with a sanitized
+// internal_error (never reproduced locally: better-sqlite3, which backs
+// createTestDb, has no such cap). Every insert below is instead a chunked,
+// multi-row `INSERT OR IGNORE ... VALUES (?,?,...),(?,?,...)` statement, and
+// groups of those statements are sent through as few d1.batch() calls as
+// possible, so persisting the same 2,500 candidates now costs on the order
+// of tens of D1 calls, not thousands.
+const D1_MAX_BOUND_PARAMS = 100;
+
+// keywords row = (id, run_id, display_keyword, normalized_keyword,
+// search_volume, cpc_usd_micro, keyword_difficulty, metrics_missing): 8
+// bound params per row. floor(100 / 8) = 12; back off to 10 rows/statement
+// (80 params) for headroom.
+const KEYWORDS_PARAMS_PER_ROW = 8;
+const KEYWORDS_ROWS_PER_STATEMENT = 10;
+
+// keyword_services / keyword_service_areas / keyword_evidence_refs are all
+// (keyword_id, other_id): 2 bound params per row. floor(100 / 2) = 50; back
+// off to 45 rows/statement (90 params) for headroom.
+const JOIN_PARAMS_PER_ROW = 2;
+const JOIN_ROWS_PER_STATEMENT = 45;
+
+// Re-read SELECT: 1 bound param for run_id plus one per normalized_keyword
+// in the IN (...) list. 90 keywords + run_id = 91 params, comfortably under
+// the 100 cap.
+const REREAD_KEYWORDS_PER_STATEMENT = 90;
+
+// How many prepared statements ride in a single d1.batch() call. D1 has no
+// documented hard statement-count-per-batch ceiling, but batching everything
+// into one call would still make one very large request; splitting into
+// groups keeps each batch call itself modest.
+const STATEMENTS_PER_BATCH = 40;
+
+// Runtime guard (this codebase has no compile-time static_assert): if a
+// future column addition to one of these tables changes params-per-row
+// without updating the matching ROWS_PER_STATEMENT constant, this throws
+// immediately at module load instead of silently reintroducing the
+// subrequest-cap bug this function exists to fix.
+function assertRowBudget(rowsPerStatement: number, paramsPerRow: number, label: string): void {
+  const total = rowsPerStatement * paramsPerRow;
+  if (total > D1_MAX_BOUND_PARAMS) {
+    throw new Error(
+      `${label}: ${rowsPerStatement} rows * ${paramsPerRow} params/row = ${total} exceeds D1's ${D1_MAX_BOUND_PARAMS}-bound-parameter-per-statement limit`
+    );
+  }
+}
+assertRowBudget(KEYWORDS_ROWS_PER_STATEMENT, KEYWORDS_PARAMS_PER_ROW, 'keywords insert');
+assertRowBudget(JOIN_ROWS_PER_STATEMENT, JOIN_PARAMS_PER_ROW, 'join table insert');
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+// Sends `statements` through d1.batch() in groups of STATEMENTS_PER_BATCH.
+// d1.batch() is transactional per call (not across calls), which matches
+// this function's existing consistency contract: it was never atomic across
+// its own 3-round-trips-per-keyword loop either, so grouping into several
+// batch() calls introduces no new partial-write exposure versus the
+// original.
+async function runBatchedStatements(d1: D1Database, statements: D1PreparedStatement[]): Promise<void> {
+  for (const group of chunk(statements, STATEMENTS_PER_BATCH)) {
+    if (group.length === 0) continue;
+    await d1.batch(group);
+  }
+}
+
+// Builds and persists one join table's rows (keyword_services,
+// keyword_service_areas, keyword_evidence_refs) as chunked multi-row
+// INSERT OR IGNORE statements. All three tables share the same
+// (keyword_id, other_id) composite-PK shape, so one helper covers all three.
+async function persistJoinRows(
+  d1: D1Database,
+  table: 'keyword_services' | 'keyword_service_areas' | 'keyword_evidence_refs',
+  otherColumn: string,
+  rows: Array<[string, string]>
+): Promise<void> {
+  if (rows.length === 0) return;
+  const statements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(rows, JOIN_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?, ?)').join(',');
+    const args = rowsChunk.flat();
+    statements.push(
+      d1.prepare(`INSERT OR IGNORE INTO ${table} (keyword_id, ${otherColumn}) VALUES ${placeholders}`).bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, statements);
+}
+
 // Shared by BOTH collect_keyword_evidence (Task 10, seed-query provenance:
 // which service/service-area seed produced this keyword) and
 // collect_competitor_evidence (Task 12, no seed provenance at all -- a
@@ -104,40 +200,86 @@ function appendMissingUserSeeds(universe: KeywordUniverse, seeds: SeedQuery[], l
 // keyword -- never violates UNIQUE(run_id, normalized_keyword); the second
 // caller's evidence just gets attached (INSERT OR IGNORE) to the row the
 // first caller already created.
-async function persistKeywordCandidates(
+//
+// Same dedup/NULL-metric/return-value behavior as the original per-row
+// version, just batched: chunked multi-row INSERT OR IGNORE, then a chunked
+// re-read of ids for every normalized_keyword in this universe (covers both
+// rows this call just inserted AND rows an earlier attempt/caller already
+// committed -- identical to the original's per-row SELECT-after-INSERT),
+// then chunked multi-row INSERT OR IGNORE for every join-table row.
+//
+// Exported (same rationale as buildSerpQueriesFromSeeds above) so the
+// statement-count regression test can drive it directly with a synthetic
+// large universe, without needing a full stage/DB/provider-stub setup.
+export async function persistKeywordCandidates(
   d1: D1Database,
   runId: string,
   universe: KeywordUniverse,
   seedProvenance: Map<string, SeedQuery[]> = new Map()
 ): Promise<number> {
+  if (universe.keywords.length === 0) return 0;
+
+  const insertStatements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(universe.keywords, KEYWORDS_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(',');
+    const args: unknown[] = [];
+    for (const kw of rowsChunk) {
+      const displayKeyword = kw.variants[0] ?? kw.normalizedKeyword;
+      const searchVolume = kw.metrics.searchVolume;
+      const cpcUsdMicro = kw.metrics.cpcUsd != null ? usdToMicro(String(kw.metrics.cpcUsd)) : null;
+      const difficulty = kw.metrics.difficulty;
+      const metricsMissing = searchVolume === null || kw.metrics.cpcUsd === null || difficulty === null ? 1 : 0;
+      args.push(
+        newId('kw'),
+        runId,
+        displayKeyword,
+        kw.normalizedKeyword,
+        searchVolume,
+        cpcUsdMicro,
+        difficulty,
+        metricsMissing
+      );
+    }
+    insertStatements.push(
+      d1
+        .prepare(
+          `INSERT INTO keywords
+            (id, run_id, display_keyword, normalized_keyword, search_volume, cpc_usd_micro, keyword_difficulty, metrics_missing)
+           VALUES ${placeholders}
+           ON CONFLICT(run_id, normalized_keyword) DO NOTHING`
+        )
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, insertStatements);
+
+  // Re-read the id for every normalized_keyword in this universe: either a
+  // row this call's INSERT just created, or (on a retry landing after a
+  // partial prior write for this same stage attempt hash, or a keyword an
+  // earlier caller already persisted) a row already committed.
+  const allNormalized = universe.keywords.map((kw) => kw.normalizedKeyword);
+  const idByNormalized = new Map<string, string>();
+  for (const normalizedChunk of chunk(allNormalized, REREAD_KEYWORDS_PER_STATEMENT)) {
+    const placeholders = normalizedChunk.map(() => '?').join(',');
+    const rows = await d1
+      .prepare(
+        `SELECT id, normalized_keyword FROM keywords WHERE run_id = ? AND normalized_keyword IN (${placeholders})`
+      )
+      .bind(runId, ...normalizedChunk)
+      .all<{ id: string; normalized_keyword: string }>();
+    for (const row of rows.results ?? []) {
+      idByNormalized.set(row.normalized_keyword, row.id);
+    }
+  }
+
   let persistedCount = 0;
+  const serviceRows: Array<[string, string]> = [];
+  const serviceAreaRows: Array<[string, string]> = [];
+  const evidenceRefRows: Array<[string, string]> = [];
 
   for (const kw of universe.keywords) {
-    const displayKeyword = kw.variants[0] ?? kw.normalizedKeyword;
-    const searchVolume = kw.metrics.searchVolume;
-    const cpcUsdMicro = kw.metrics.cpcUsd != null ? usdToMicro(String(kw.metrics.cpcUsd)) : null;
-    const difficulty = kw.metrics.difficulty;
-    const metricsMissing = searchVolume === null || kw.metrics.cpcUsd === null || difficulty === null ? 1 : 0;
-
-    await d1
-      .prepare(
-        `INSERT INTO keywords
-          (id, run_id, display_keyword, normalized_keyword, search_volume, cpc_usd_micro, keyword_difficulty, metrics_missing)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(run_id, normalized_keyword) DO NOTHING`
-      )
-      .bind(newId('kw'), runId, displayKeyword, kw.normalizedKeyword, searchVolume, cpcUsdMicro, difficulty, metricsMissing)
-      .run();
-
-    // Re-read the id: either the row this INSERT just created, or (on a
-    // retry landing after a partial prior write for this same stage
-    // attempt hash) the row an earlier attempt already committed.
-    const row = await d1
-      .prepare(`SELECT id FROM keywords WHERE run_id = ? AND normalized_keyword = ?`)
-      .bind(runId, kw.normalizedKeyword)
-      .first<{ id: string }>();
-    if (!row) continue;
-    const keywordId = row.id;
+    const keywordId = idByNormalized.get(kw.normalizedKeyword);
+    if (!keywordId) continue;
     persistedCount += 1;
 
     const provenances = seedProvenance.get(kw.normalizedKeyword) ?? [];
@@ -145,25 +287,14 @@ async function persistKeywordCandidates(
     const serviceAreaIds = new Set(
       provenances.map((p) => p.serviceAreaId).filter((id): id is string => id != null)
     );
-    for (const serviceId of serviceIds) {
-      await d1
-        .prepare(`INSERT OR IGNORE INTO keyword_services (keyword_id, service_id) VALUES (?, ?)`)
-        .bind(keywordId, serviceId)
-        .run();
-    }
-    for (const serviceAreaId of serviceAreaIds) {
-      await d1
-        .prepare(`INSERT OR IGNORE INTO keyword_service_areas (keyword_id, service_area_id) VALUES (?, ?)`)
-        .bind(keywordId, serviceAreaId)
-        .run();
-    }
-    for (const evidenceRefId of new Set(kw.evidenceRefs)) {
-      await d1
-        .prepare(`INSERT OR IGNORE INTO keyword_evidence_refs (keyword_id, evidence_ref_id) VALUES (?, ?)`)
-        .bind(keywordId, evidenceRefId)
-        .run();
-    }
+    for (const serviceId of serviceIds) serviceRows.push([keywordId, serviceId]);
+    for (const serviceAreaId of serviceAreaIds) serviceAreaRows.push([keywordId, serviceAreaId]);
+    for (const evidenceRefId of new Set(kw.evidenceRefs)) evidenceRefRows.push([keywordId, evidenceRefId]);
   }
+
+  await persistJoinRows(d1, 'keyword_services', 'service_id', serviceRows);
+  await persistJoinRows(d1, 'keyword_service_areas', 'service_area_id', serviceAreaRows);
+  await persistJoinRows(d1, 'keyword_evidence_refs', 'evidence_ref_id', evidenceRefRows);
 
   return persistedCount;
 }
