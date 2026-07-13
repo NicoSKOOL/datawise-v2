@@ -42,6 +42,16 @@ interface LLMResponseShape {
   reasoning?: unknown;
 }
 
+// Output budget for the rewrite call. The JSON itself is ~150 tokens, but
+// hidden reasoning counts against max_tokens on reasoning models, so the
+// budget must cover the model's long-thinking mode too. Exported for tests.
+export const META_REWRITE_MAX_TOKENS = 4000;
+export const META_REWRITE_MAX_TOKENS_CEILING = 8000;
+
+export function escalateTruncationBudget(current: number): number {
+  return Math.min(current * 2, META_REWRITE_MAX_TOKENS_CEILING);
+}
+
 const VALID_ISSUES: IssueType[] = [
   'missing_title', 'long_title', 'short_title', 'duplicate_title',
   'missing_desc', 'long_desc', 'short_desc',
@@ -230,6 +240,12 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
 
   // 4. Call LLM with up to 2 length-retry rounds (3 attempts total).
   let attempt = 0;
+  // Reasoning models (DeepSeek V4 Pro et al.) count hidden reasoning tokens
+  // against max_tokens even with reasoning excluded, and their reasoning
+  // length is bimodal: the long mode alone blew a 1200 cap twice in a row
+  // with zero visible JSON (finish=length, outputTokens=1200). Start with
+  // room for the long mode and escalate on truncation.
+  let maxTokens = META_REWRITE_MAX_TOKENS;
   let parsed: LLMResponseShape | null = null;
   let title = '';
   let description = '';
@@ -243,7 +259,7 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     attempt++;
     let result;
     try {
-      result = await provider.chatComplete(messages, env, body.llm_config, 1200, { responseFormat: 'json' });
+      result = await provider.chatComplete(messages, env, body.llm_config, maxTokens, { responseFormat: 'json' });
     } catch (err) {
       return json({ error: `LLM error: ${err instanceof Error ? err.message : 'Unknown error'}` }, 502);
     }
@@ -255,14 +271,20 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
     console.log(`[meta-rewrite] attempt=${attempt} model=${body.llm_config?.model || 'default'} finish=${result.finishReason || 'unknown'} parsedOk=${validShape} outputTokens=${result.usage.output_tokens}`);
 
     if (!validShape || !parsed) {
-      // Truncation is a different failure than a malformed reply — surface it
-      // distinctly so the user knows to retry rather than thinking the LLM
-      // misbehaved.
-      if (result.finishReason === 'length' && attempt >= 2) {
-        return json({
-          error: 'The model output was cut off before it finished writing the JSON. Try again, or pick a model with a higher token budget in Settings.',
-          raw: result.text.slice(0, 500),
-        }, 502);
+      // Truncation is a budget failure, not a formatting failure: retry the
+      // SAME messages with a bigger budget (appending the half-written JSON
+      // plus a "reply with only JSON" nudge only grows the input and hits the
+      // same wall). Surface it distinctly once the escalated budget also runs
+      // out so the user knows to retry rather than thinking the LLM misbehaved.
+      if (result.finishReason === 'length') {
+        if (attempt >= 2) {
+          return json({
+            error: 'The model output was cut off before it finished writing the JSON. Try again, or pick a model with a higher token budget in Settings.',
+            raw: result.text.slice(0, 500),
+          }, 502);
+        }
+        maxTokens = escalateTruncationBudget(maxTokens);
+        continue;
       }
       // Single re-ask with stricter wording, then bail.
       if (attempt >= 2) {
