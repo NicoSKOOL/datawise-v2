@@ -1,6 +1,15 @@
-import type { Env } from '../index';
-
 const DATAFORSEO_BASE = 'https://api.dataforseo.com/v3';
+
+// Structural env subset this client actually needs. The full worker Env
+// (and blueprint's BlueprintProviderEnv) both satisfy this, so callers keep
+// passing their full env objects unchanged; this just lets code that only
+// has a narrower env (e.g. blueprint stage handlers) call this client
+// without importing the whole worker Env type.
+export interface DataForSeoEnv {
+  KV: KVNamespace;
+  DATAFORSEO_EMAIL: string;
+  DATAFORSEO_PASSWORD: string;
+}
 
 export interface DataForSeoCacheOptions {
   ttlSeconds?: number;
@@ -18,7 +27,7 @@ export class DataForSeoQuotaError extends Error {
   }
 }
 
-function getCredentials(env: Env): string {
+function getCredentials(env: DataForSeoEnv): string {
   return btoa(`${env.DATAFORSEO_EMAIL}:${env.DATAFORSEO_PASSWORD}`);
 }
 
@@ -40,7 +49,7 @@ function secondsUntilNextUtcMidnight(): number {
 }
 
 async function fetchDataForSeo(
-  env: Env,
+  env: DataForSeoEnv,
   endpoint: string,
   init: RequestInit,
   timeoutMs?: number
@@ -91,7 +100,7 @@ async function fetchDataForSeo(
 }
 
 export async function dataforseoRequest(
-  env: Env,
+  env: DataForSeoEnv,
   endpoint: string,
   body: unknown[],
   timeoutMs?: number
@@ -107,7 +116,7 @@ export async function dataforseoRequest(
 }
 
 export async function dataforseoGet(
-  env: Env,
+  env: DataForSeoEnv,
   endpoint: string,
   timeoutMs?: number
 ): Promise<any> {
@@ -132,7 +141,7 @@ async function dataforseoCacheKey(
 }
 
 export async function dataforseoRequestCached(
-  env: Env,
+  env: DataForSeoEnv,
   endpoint: string,
   body: unknown[],
   options: DataForSeoCacheOptions = {}
@@ -154,7 +163,7 @@ export async function dataforseoRequestCached(
 }
 
 export async function dataforseoGetCached(
-  env: Env,
+  env: DataForSeoEnv,
   endpoint: string,
   options: DataForSeoCacheOptions = {}
 ): Promise<any> {

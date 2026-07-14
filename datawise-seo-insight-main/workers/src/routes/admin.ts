@@ -6,8 +6,18 @@ import { logTierChange } from '../lib/tier-changes';
 
 const ADMIN_EMAIL = 'nico@airankingskool.com';
 
-export function isAdmin(user: AuthUser): boolean {
-  return isTruthyFlag(user.is_admin) || user.email === ADMIN_EMAIL;
+// env is optional so the many existing one-arg call sites (feedback.ts,
+// admin-activity.ts, admin-content-writer-prompts.ts, etc.) keep compiling
+// unchanged; they fall back to the single hardcoded admin email. Passing
+// env lets a route (currently only the blueprint router) check against the
+// ADMIN_EMAILS allowlist (wrangler.toml [vars]) instead.
+export function isAdmin(user: AuthUser, env?: { ADMIN_EMAILS?: string }): boolean {
+  if (isTruthyFlag(user.is_admin)) return true;
+  const allowlist = (env?.ADMIN_EMAILS ?? ADMIN_EMAIL)
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return allowlist.includes(user.email.toLowerCase());
 }
 
 interface CommunitySyncUser {

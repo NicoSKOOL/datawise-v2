@@ -63,6 +63,12 @@ describe('normalizeProjectBrief', () => {
     expect(brief.maxRecommendedPages).toBe(V1_LIMITS.defaultMaxRecommendedPages);
     expect(brief.inputHash).toMatch(/^[0-9a-f]{64}$/);
   });
+  it('rejects a private-host websiteUrl (SSRF guard)', async () => {
+    const withPrivateUrl = { ...validInput, websiteUrl: 'http://127.0.0.1/admin' };
+    await expect(normalizeProjectBrief(parseProjectBrief(withPrivateUrl), V1_LIMITS)).rejects.toThrow(
+      BlueprintValidationError
+    );
+  });
   it('greenfield mode when no website', async () => {
     const { websiteUrl, ...rest } = validInput;
     const brief = await normalizeProjectBrief(parseProjectBrief(rest), V1_LIMITS);

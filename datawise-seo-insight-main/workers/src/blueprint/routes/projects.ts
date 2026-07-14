@@ -1,17 +1,98 @@
 import type { ProjectView, ResearchEstimate, StartResearchRunInput } from '../contracts/api';
-import type { ProjectMode } from '../contracts/enums';
+import type { ProjectMode, BlueprintStage } from '../contracts/enums';
 import type { NormalizedProjectBrief } from '../contracts/types';
 import { V1_LIMITS } from '../contracts/limits';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { hashNormalizedInput } from '../domain/hash';
 import { BlueprintApiError } from '../domain/api-errors';
-import { newId, nowIso, usdToMicro } from '../db/util';
+import { newId, nowIso, usdToMicro, microToUsd } from '../db/util';
 import { assertProjectAccess, type Actor, type ProjectRow } from '../db/access';
 import { beginIdempotentRequest, completeIdempotentRequest, failIdempotentRequest } from '../db/idempotency';
 import { STAGE_REGISTRY } from '../orchestration/stages';
-import type { BlueprintQueueEnv } from '../orchestration/process-run';
+import type { BlueprintQueueEnv, BlueprintProviderEnv } from '../orchestration/process-run';
+import { loadDfsCostEstimates, buildCallPlan, type CallPlan } from '../providers/dataforseo/costs';
 import { ok, noContent, successEnvelope, readJsonBody, JSON_HEADERS } from './envelope';
-import { buildRunView } from './runs';
+import { buildRunView, CANCELLABLE_STATUSES } from './runs';
+
+// Maps each priced DataForSEO call-plan operation onto the pipeline stage
+// that will actually make the call. Used only to shape the estimate DTO's
+// per-stage breakdown; the budget gate in plan_research prices the plan as
+// a flat total and does not care about this grouping.
+const OPERATION_STAGE: Record<string, BlueprintStage> = {
+  keyword_ideas: 'collect_keyword_evidence',
+  keyword_suggestions: 'collect_keyword_evidence',
+  keywords_for_site: 'collect_keyword_evidence',
+  competitor_discovery: 'discover_competitors',
+  ranked_keywords: 'collect_competitor_evidence',
+  relevant_pages: 'collect_competitor_evidence',
+  metric_enrichment: 'normalize_keyword_universe',
+  serp_task_post: 'validate_serps_and_questions',
+};
+
+// Every operation this route knows how to price today is a labs call
+// billed via cache-hit assumptions, except serp_task_post: SERP validation
+// always runs live for the estimate's min bound (see buildEstimateTotals),
+// so it is never "cache eligible" from the estimate's point of view even
+// though CallPlanLine.cacheEligible is hardcoded true for every line today.
+function isCacheEligibleForEstimate(operation: string): boolean {
+  return operation !== 'serp_task_post';
+}
+
+// min = cost floor assuming every cache-eligible (labs) call is a cache hit,
+// i.e. only the always-live serp_task_post line is priced. max = the full
+// plan total (every line priced, the worst case with no cache hits at all).
+//
+// A plan can legally have no serp_task_post line at all (a brief with zero
+// service areas produces no primary-area seeds). The serp-only sum is then 0,
+// but at least one uncached provider call always executes on a fresh run, so
+// a zero min would be dishonest: floor it to the cheapest single planned task
+// across all lines instead (tasks is always > 0 for surviving lines).
+function buildEstimateTotals(plan: CallPlan): { minUsdMicro: number; maxUsdMicro: number } {
+  let minUsdMicro = plan.lines
+    .filter((line) => !isCacheEligibleForEstimate(line.operation))
+    .reduce((sum, line) => sum + line.estimatedUsdMicro, 0);
+  if (minUsdMicro === 0 && plan.totalUsdMicro > 0) {
+    minUsdMicro = Math.min(...plan.lines.map((line) => Math.round(line.estimatedUsdMicro / line.tasks)));
+  }
+  return { minUsdMicro, maxUsdMicro: plan.totalUsdMicro };
+}
+
+function buildPlannedStages(plan: CallPlan): ResearchEstimate['plannedStages'] {
+  interface StageBucket {
+    tasks: number;
+    minUsdMicro: number;
+    maxUsdMicro: number;
+    cacheEligible: boolean;
+  }
+  const byStage = new Map<BlueprintStage, StageBucket>();
+  for (const line of plan.lines) {
+    const stage = OPERATION_STAGE[line.operation];
+    if (!stage) continue; // unmapped operation: not yet surfaced per-stage, still counted in the flat totals
+    const cacheEligible = isCacheEligibleForEstimate(line.operation);
+    const bucket = byStage.get(stage) ?? { tasks: 0, minUsdMicro: 0, maxUsdMicro: 0, cacheEligible: true };
+    bucket.tasks += line.tasks;
+    bucket.maxUsdMicro += line.estimatedUsdMicro;
+    if (!cacheEligible) bucket.minUsdMicro += line.estimatedUsdMicro;
+    bucket.cacheEligible = bucket.cacheEligible && cacheEligible;
+    byStage.set(stage, bucket);
+  }
+
+  return STAGE_REGISTRY.map((meta) => {
+    const bucket = byStage.get(meta.stage);
+    return {
+      stage: meta.stage,
+      required: meta.required,
+      estimatedTasks: bucket?.tasks ?? 0,
+      estimatedMinUsd: microToUsd(bucket?.minUsdMicro ?? 0),
+      estimatedMaxUsd: microToUsd(bucket?.maxUsdMicro ?? 0),
+      cacheEligible: bucket?.cacheEligible ?? false,
+    };
+  });
+}
+
+const ESTIMATE_LIMITATIONS = [
+  'US fan-out, content parsing, and clustering land in later phases; costs shown cover keyword, competitor, and SERP research.',
+];
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 function idempotencyExpiry(): string {
@@ -50,6 +131,17 @@ async function buildProjectView(d1: D1Database, project: ProjectRow): Promise<Pr
     latestBlueprintRevisionId: project.latest_blueprint_revision_id,
     version: project.version,
   };
+}
+
+async function loadNormalizedBrief(d1: D1Database, briefVersionId: string): Promise<NormalizedProjectBrief> {
+  const row = await d1
+    .prepare('SELECT normalized_json FROM project_brief_versions WHERE id = ?')
+    .bind(briefVersionId)
+    .first<{ normalized_json: string }>();
+  if (!row) {
+    throw new Error(`Brief version not found: ${briefVersionId}`);
+  }
+  return JSON.parse(row.normalized_json);
 }
 
 function encodeCursor(value: { createdAt: string; id: string }): string {
@@ -373,6 +465,22 @@ export async function deleteProject(
 ): Promise<Response> {
   const project = await assertProjectAccess(env.BLUEPRINT_DB, actor, params.id);
   const now = nowIso();
+
+  // Request cancellation of every non-terminal run before soft-deleting the
+  // project: mirrors the exact UPDATE cancelRun uses (runs.ts), just scoped
+  // to project_id instead of a single run id, so an in-flight run never
+  // keeps burning provider budget against a project that's gone. The
+  // cancel_requested -> cancelled conversion itself still happens the same
+  // way it does for a single cancel: the next queue delivery (or a stalled
+  // run's retry) picks it up in processResearchRun.
+  await env.BLUEPRINT_DB
+    .prepare(
+      `UPDATE research_runs SET status = 'cancel_requested'
+       WHERE project_id = ? AND status IN (${CANCELLABLE_STATUSES.map(() => '?').join(',')})`
+    )
+    .bind(project.id, ...CANCELLABLE_STATUSES)
+    .run();
+
   await env.BLUEPRINT_DB
     .prepare('UPDATE projects SET deleted_at = ?, updated_at = ? WHERE id = ?')
     .bind(now, now, project.id)
@@ -380,12 +488,15 @@ export async function deleteProject(
   return noContent();
 }
 
-// POST /projects/:id/research-estimates: Phase 2 estimate is fully stubbed
-// (cost estimation ships with the provider adapters in Phase 3). The input
-// body is read (to reject malformed JSON) but otherwise unused.
+// POST /projects/:id/research-estimates: prices the real DataForSEO call
+// plan (Task 6's buildCallPlan) against the project's CURRENT normalized
+// brief. The estimate is bound to that brief version (active_brief_version_id
+// at the moment of estimation); startResearchRun rejects the estimate once
+// the project's active brief version moves on, so an estimate can never be
+// accepted against research a later brief edit invalidated.
 export async function createEstimate(
   request: Request,
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   actor: Actor,
   params: Record<string, string>
 ): Promise<Response> {
@@ -396,31 +507,28 @@ export async function createEstimate(
     throw new BlueprintApiError('invalid_input', 'Project has no active brief version');
   }
 
+  const brief = await loadNormalizedBrief(env.BLUEPRINT_DB, project.active_brief_version_id);
+  const costs = await loadDfsCostEstimates(env.KV);
+  const plan = buildCallPlan(brief, costs);
+  const { minUsdMicro, maxUsdMicro } = buildEstimateTotals(plan);
+  const plannedStages = buildPlannedStages(plan);
+
   const estimateId = newId('est');
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
-
-  const plannedStages = STAGE_REGISTRY.map((meta) => ({
-    stage: meta.stage,
-    required: meta.required,
-    estimatedTasks: 0,
-    estimatedMinUsd: '0.00',
-    estimatedMaxUsd: '0.00',
-    cacheEligible: false,
-  }));
 
   const estimate: ResearchEstimate = {
     estimateId,
     expiresAt,
     plannedStages,
     totals: {
-      dataForSeoMinUsd: '0.00',
-      dataForSeoMaxUsd: '0.00',
+      dataForSeoMinUsd: microToUsd(minUsdMicro),
+      dataForSeoMaxUsd: microToUsd(maxUsdMicro),
       openRouterMaxUsd: '0.00',
       estimatedDurationSecondsMin: 60,
       estimatedDurationSecondsMax: 300,
     },
-    limitations: ['Cost estimation is stubbed until provider adapters ship in Phase 3'],
+    limitations: ESTIMATE_LIMITATIONS,
     fanoutAvailability: 'disabled',
   };
 
@@ -428,13 +536,15 @@ export async function createEstimate(
     .prepare(
       `INSERT INTO research_estimates
         (id, project_id, brief_version_id, plan_json, min_cost_usd_micro, max_cost_usd_micro, expires_at, created_at)
-       VALUES (?, ?, ?, ?, 0, 0, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       estimateId,
       project.id,
       project.active_brief_version_id,
-      JSON.stringify(plannedStages),
+      JSON.stringify(plan),
+      minUsdMicro,
+      maxUsdMicro,
       expiresAt,
       now.toISOString()
     )
@@ -542,6 +652,18 @@ export async function startResearchRun(
     }
     if (!project.active_brief_version_id) {
       throw new BlueprintApiError('invalid_input', 'Project has no active brief version');
+    }
+    // The estimate was priced against whatever brief version was active at
+    // the time it was created. If the project's brief has since moved on
+    // (a PATCH landed a new version), the estimate's plan and cost totals no
+    // longer describe what a run would actually do: reject with the same
+    // conflict code updateProject uses for a racing/stale brief edit rather
+    // than silently starting a run against stale pricing.
+    if (estimate.brief_version_id !== project.active_brief_version_id) {
+      throw new BlueprintApiError(
+        'stage_conflict',
+        'Research estimate no longer matches the project brief; request a new estimate'
+      );
     }
 
     const dataForSeoBudgetMicro = toMicroOrThrow('acceptedDataForSeoCeilingUsd', input.acceptedDataForSeoCeilingUsd);

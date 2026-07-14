@@ -6,13 +6,31 @@ import { hashNormalizedInput } from '../domain/hash';
 import { V1_LIMITS } from '../contracts/limits';
 import { newId, nowIso } from '../db/util';
 import { loadGapStageNames } from './run-status';
+import type { BlueprintProviderEnv } from './process-run';
+import { loadDfsCostEstimates, buildCallPlan } from '../providers/dataforseo/costs';
+import { BlueprintApiError } from '../domain/api-errors';
+import { safeErrorMessage } from '../providers/dataforseo/envelope';
+import { resolveMarket } from '../providers/dataforseo/catalogs';
+import {
+  collectKeywordEvidenceHandler,
+  discoverCompetitorsHandler,
+  collectCompetitorEvidenceHandler,
+  validateSerpsAndQuestionsHandler,
+} from './research-handlers';
 
 export interface StageContext {
+  env: BlueprintProviderEnv;
   d1: D1Database;
   runId: string;
   projectId: string;
   briefVersionId: string;
   normalizedBrief: NormalizedProjectBrief;
+  // The stage being executed and the lease's attempt count for this
+  // invocation. Provider wrappers scope budget reservation keys by attempt
+  // so a retry after a released reservation reserves fresh instead of
+  // colliding with the prior attempt's terminal reservation row.
+  stage: BlueprintStage;
+  attempt: number;
 }
 
 export type StageHandler = (
@@ -185,11 +203,57 @@ async function publishBlueprintHandler(ctx: StageContext) {
   };
 }
 
+interface RunBudgetRow {
+  dataforseo_budget_usd_micro: number;
+}
+
+// The fail-fast budget gate before any paid stage: recomputes the request
+// plan fresh from the normalized brief and the (KV-overridable) cost
+// estimates, then throws budget_exceeded if the plan's total would blow the
+// run's approved DataForSEO budget ceiling. This is a REQUIRED stage: the
+// throw fails the whole run rather than skipping ahead into paid calls.
+async function planResearchHandler(ctx: StageContext) {
+  const runRow = await ctx.d1
+    .prepare(`SELECT dataforseo_budget_usd_micro FROM research_runs WHERE id = ?`)
+    .bind(ctx.runId)
+    .first<RunBudgetRow>();
+  if (!runRow) throw new Error(`Research run not found: ${ctx.runId}`);
+
+  const costs = await loadDfsCostEstimates(ctx.env.KV);
+  const plan = buildCallPlan(ctx.normalizedBrief, costs);
+
+  if (plan.totalUsdMicro > runRow.dataforseo_budget_usd_micro) {
+    throw new BlueprintApiError('budget_exceeded', safeErrorMessage('budget_exceeded'));
+  }
+
+  return { output: { stage: 'plan_research' as const, plan } };
+}
+
+// Real market resolution, not a stub: pins the Labs location code, the
+// per-service-area SERP location codes, and the run's language against the
+// live DataForSEO catalogs. Required stage, but never throws for an
+// individual unresolved service area -- those degrade into
+// unresolvedAreaIds (downstream stages fall back to the country-level SERP
+// code for them) rather than failing the whole run. It DOES throw for an
+// unsupported language (BlueprintValidationError, permanent/user-correctable)
+// or a country missing from a catalog (BlueprintApiError
+// provider_invalid_response, via resolveMarket).
+async function resolveMarketHandler(ctx: StageContext) {
+  const market = await resolveMarket(ctx);
+  return { output: market, status: 'succeeded' as const };
+}
+
 export const STAGE_HANDLERS: Record<BlueprintStage, StageHandler> = Object.fromEntries(
   BLUEPRINT_STAGES.map((stage) => [stage, makeStubStage(stage)])
 ) as Record<BlueprintStage, StageHandler>;
 
 STAGE_HANDLERS.validate_intake = validateIntakeHandler;
+STAGE_HANDLERS.resolve_market = resolveMarketHandler;
 STAGE_HANDLERS.normalize_brief = normalizeBriefHandler;
+STAGE_HANDLERS.plan_research = planResearchHandler;
+STAGE_HANDLERS.collect_keyword_evidence = collectKeywordEvidenceHandler;
+STAGE_HANDLERS.discover_competitors = discoverCompetitorsHandler;
+STAGE_HANDLERS.collect_competitor_evidence = collectCompetitorEvidenceHandler;
+STAGE_HANDLERS.validate_serps_and_questions = validateSerpsAndQuestionsHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
 STAGE_HANDLERS.publish_blueprint = publishBlueprintHandler;

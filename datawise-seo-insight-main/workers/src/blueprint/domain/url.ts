@@ -43,3 +43,23 @@ export function normalizeAbsoluteUrl(input: string): URL {
   }
   return url;
 }
+
+// SSRF guard for any websiteUrl a provider stage will actually fetch.
+// normalizeAbsoluteUrl already rejects garbage, non-http(s) schemes,
+// credentials, and fragments; this layers on a private/internal-host
+// rejection so a project can never point provider fetches at localhost,
+// RFC1918/link-local ranges, or an IPv6 host.
+const PRIVATE_HOST = /^(localhost|.*\.local|(\d{1,3}\.){3}\d{1,3}|\[[0-9a-f:]+\])$/i;
+const PRIVATE_IPV4 = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+export function assertPublicWebTarget(rawUrl: string): string {
+  const normalized = normalizeAbsoluteUrl(rawUrl); // throws on garbage / non-http(s)
+  const host = normalized.hostname.toLowerCase();
+  const bareIp = host.replace(/^\[/, '').replace(/\]$/, '');
+  if (PRIVATE_HOST.test(host) || PRIVATE_IPV4.test(bareIp) || bareIp === '::1') {
+    throw new BlueprintValidationError('invalid_website_url', [
+      { path: 'websiteUrl', message: 'URL must be a public website' },
+    ]);
+  }
+  return normalized.href;
+}

@@ -6,7 +6,7 @@ describe('test D1 adapter', () => {
   it('applies the schema and supports prepare/bind/first/all/run', async () => {
     const { d1 } = createTestDb();
     const meta = await d1.prepare("SELECT value FROM blueprint_meta WHERE key = 'schema_version'").first<{ value: string }>();
-    expect(meta?.value).toBe('2');
+    expect(meta?.value).toBe('3');
     const id = newId('proj');
     await d1
       .prepare('INSERT INTO projects (id, organization_id, owner_user_id, name, mode, country_iso, language_code, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')

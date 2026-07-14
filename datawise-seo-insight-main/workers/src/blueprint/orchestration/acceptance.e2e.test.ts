@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { createTestDb } from '../test-support/d1';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { handleBlueprintRequest } from '../routes/router';
 import { newId } from '../db/util';
 import { processResearchRun } from './process-run';
-import type { BlueprintQueueEnv } from './process-run';
+import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
+import { fakeEnv, drainQueue } from '../test-support/env';
+import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 import type { AuthUser } from '../../auth/google';
 import type {
   ApiSuccess,
@@ -38,16 +39,6 @@ const adminUser = {
   is_admin: true,
   credits_used: 0,
 } as AuthUser;
-
-function fakeEnv(): BlueprintQueueEnv & { BLUEPRINT_KV: unknown; BLUEPRINT_QUEUE: { sent: unknown[]; send: (body: unknown) => Promise<void> } } {
-  const { d1 } = createTestDb();
-  const sent: unknown[] = [];
-  return {
-    BLUEPRINT_DB: d1,
-    BLUEPRINT_QUEUE: { sent, send: async (body: unknown) => void sent.push(body) },
-    BLUEPRINT_KV: { put: async () => undefined },
-  } as any;
-}
 
 function makeRequest(
   path: string,
@@ -128,29 +119,6 @@ async function startRun(
   return { res, json };
 }
 
-// Standard drain: pops every queued message and runs it to completion. This
-// is correct whenever every stage attempt either advances immediately or
-// terminates the run outright -- i.e. whenever nothing lands in retry_wait,
-// since a 'wait' outcome is never re-enqueued by processResearchRun itself
-// (see process-run.ts's finalizeStageAttempt: the 'wait' branch updates the
-// run row but does not call BLUEPRINT_QUEUE.send).
-async function drainQueue(
-  env: BlueprintQueueEnv,
-  sent: unknown[],
-  workerId = 'w1',
-  overrides?: Partial<Record<BlueprintStage, StageHandler>>,
-  maxIterations = 200
-): Promise<void> {
-  let iterations = 0;
-  while (sent.length) {
-    if (iterations++ > maxIterations) {
-      throw new Error(`drainQueue exceeded ${maxIterations} iterations without settling`);
-    }
-    const msg = sent.pop() as { runId: string };
-    await processResearchRun(env, msg.runId, workerId, overrides);
-  }
-}
-
 async function getRunStatus(d1: D1Database, runId: string): Promise<string> {
   const row = await d1.prepare(`SELECT status FROM research_runs WHERE id = ?`).bind(runId).first<{ status: string }>();
   if (!row) throw new Error(`run not found: ${runId}`);
@@ -170,6 +138,22 @@ async function getStageRow(
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'partial', 'failed', 'cancelled']);
 
+// Task 14 registers the REAL validateSerpsAndQuestionsHandler onto
+// STAGE_HANDLERS. That handler unconditionally throws SerpTasksPendingError
+// on its very first (posting) attempt, by design (research-handlers.ts): no
+// fetch stub can make it resolve in a single attempt, and this file's own
+// standard drainQueue helper never re-drives a stage sitting in retry_wait
+// (a 'wait' outcome is never re-enqueued -- see env.ts's own doc comment).
+// None of the tests below are testing SERP-specific behavior (that lives in
+// research-handlers.test.ts and process-run.test.ts's own Task 13 cases), so
+// they restore this file's original pre-Task-14 assumption -- every stage
+// but the one under test is a deterministic, zero-cost no-op -- via this
+// trivial always-succeeds stub.
+const stubValidateSerps: StageHandler = async () => ({
+  output: { stage: 'validate_serps_and_questions' as const, stub: true },
+  status: 'succeeded' as const,
+});
+
 // A REQUIRED stage stuck in retry_wait is never redelivered by the queue in
 // this in-memory harness (the 30s RETRY_BACKOFF_MS in process-run.ts is real
 // wall-clock time, and finalizeStageAttempt does not enqueue a 'wait'
@@ -180,7 +164,7 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'partial', 'failed', 'cancelled'
 // processResearchRun directly, standing in for the queue message that would
 // eventually be redelivered. Bounded to 10 iterations per the task brief.
 async function driveRequiredStageToFailure(
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   d1: D1Database,
   runId: string,
   stage: string,
@@ -203,6 +187,18 @@ async function driveRequiredStageToFailure(
 }
 
 describe('Phase 2 orchestration acceptance', () => {
+  // resolve_market (Task 8) makes real DataForSEO catalog GETs; this whole
+  // file drains runs through the real STAGE_HANDLERS registry (that is the
+  // point of an acceptance e2e test), so every drive needs canned catalog
+  // data instead of hitting the real network.
+  let restoreFetch: () => void;
+  beforeEach(() => {
+    restoreFetch = installDfsCatalogFetchStub();
+  });
+  afterEach(() => {
+    restoreFetch();
+  });
+
   it('acceptance: idempotent run start replays the same runId for the same key+body, 409s on same key + different body', async () => {
     const env = fakeEnv();
     const { json: project } = await createProject(env);
@@ -248,7 +244,7 @@ describe('Phase 2 orchestration acceptance', () => {
     const { json: run } = await startRun(env, project.data.id, estimate.estimateId, newId('idem'));
     expect(run.data.status).toBe('queued');
 
-    await drainQueue(env, env.BLUEPRINT_QUEUE.sent);
+    await drainQueue(env, env.BLUEPRINT_QUEUE.sent, 'w1', { validate_serps_and_questions: stubValidateSerps });
 
     const finalStatus = await getRunStatus(env.BLUEPRINT_DB, run.data.id);
     // Settled semantics: collect_us_fanout's stub always reports 'skipped'
@@ -326,6 +322,13 @@ describe('Phase 2 orchestration acceptance', () => {
       validate_blueprint: async () => {
         throw new Error('boom-validate-blueprint');
       },
+      // validate_serps_and_questions (Task 13/14) sits before validate_blueprint
+      // in BLUEPRINT_STAGES order and always throws SerpTasksPendingError into
+      // retry_wait on its first attempt; stubbed here so this test's drain
+      // reaches validate_blueprint's own injected failure instead of stalling
+      // on validate_serps_and_questions first (see stubValidateSerps's doc
+      // comment above).
+      validate_serps_and_questions: stubValidateSerps,
     };
 
     // Drive forward through the normal queue drain until the injected
@@ -364,8 +367,9 @@ describe('Phase 2 orchestration acceptance', () => {
     expect(resetValidateBlueprint?.attemptCount).toBe(0);
 
     // Drain WITHOUT the failing override: validate_blueprint now succeeds
-    // for real and the run proceeds to a terminal status.
-    await drainQueue(env, sent, 'w1');
+    // for real and the run proceeds to a terminal status. Still stubs
+    // validate_serps_and_questions (not itself under test here).
+    await drainQueue(env, sent, 'w1', { validate_serps_and_questions: stubValidateSerps });
 
     const finalStatus = await getRunStatus(env.BLUEPRINT_DB, runId);
     // Same declared gap as the clean-drive acceptance case: collect_us_fanout
@@ -398,7 +402,7 @@ describe('Phase 2 orchestration acceptance', () => {
     // Run 1: drive to completion and publish.
     const estimate1 = await createEstimate(env, projectId);
     const { json: run1 } = await startRun(env, projectId, estimate1.estimateId, newId('idem'));
-    await drainQueue(env, env.BLUEPRINT_QUEUE.sent);
+    await drainQueue(env, env.BLUEPRINT_QUEUE.sent, 'w1', { validate_serps_and_questions: stubValidateSerps });
     expect(await getRunStatus(env.BLUEPRINT_DB, run1.data.id)).toBe('partial');
 
     const version1 = await env.BLUEPRINT_DB

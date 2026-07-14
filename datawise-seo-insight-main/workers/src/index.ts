@@ -26,6 +26,9 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   KIMI_API_KEY: string;
   OPENROUTER_API_KEY: string;
+  // Comma-separated admin email allowlist (wrangler.toml [vars]); isAdmin()
+  // falls back to a single hardcoded email when this is unset.
+  ADMIN_EMAILS: string;
   // Blueprint module (admin-gated)
   BLUEPRINT_DB: D1Database;
   BLUEPRINT_KV: KVNamespace;

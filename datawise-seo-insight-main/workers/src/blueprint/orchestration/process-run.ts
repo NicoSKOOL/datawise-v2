@@ -1,5 +1,7 @@
 import type { BlueprintStage, RunStatus } from '../contracts/enums';
-import { NotFoundError } from '../domain/api-errors';
+import { BlueprintApiError, NotFoundError } from '../domain/api-errors';
+import { BlueprintValidationError } from '../domain/errors';
+import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { buildStageInputHash, hashNormalizedInput } from '../domain/hash';
 import type { NormalizedProjectBrief } from '../contracts/types';
 import { nowIso } from '../db/util';
@@ -7,12 +9,25 @@ import { acquireStageLease, completeStage, failStage } from '../db/leases';
 import { STAGE_HANDLERS } from './handlers';
 import type { StageContext, StageHandler } from './handlers';
 import { stageMeta } from './stages';
+import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import { nextRunnableStage, deriveRunStatus, loadGapStageNames } from './run-status';
 import type { StageRowLite } from './run-status';
 
 export interface BlueprintQueueEnv {
   BLUEPRINT_DB: D1Database;
   BLUEPRINT_QUEUE: { send(body: unknown, options?: { delaySeconds?: number }): Promise<void> };
+}
+
+// Widens BlueprintQueueEnv with the provider bindings/credentials real stage
+// handlers need (KV cache, R2 raw-artifact storage, DataForSEO creds) so
+// handlers can call out to providers without importing the full worker Env.
+// The full worker Env structurally satisfies this (and BlueprintQueueEnv),
+// so index.ts's route/queue call sites keep compiling unchanged.
+export interface BlueprintProviderEnv extends BlueprintQueueEnv {
+  KV: KVNamespace;
+  BLUEPRINT_ARTIFACTS: R2Bucket;
+  DATAFORSEO_EMAIL: string;
+  DATAFORSEO_PASSWORD: string;
 }
 
 // Leases outlive a single Worker invocation only in spirit (Phase 2 has no
@@ -73,7 +88,7 @@ async function reloadRunStatus(d1: D1Database, runId: string, fallback: RunStatu
 // was in flight, the UPDATE simply does not match, and we return the run's
 // real (reloaded) status instead of clobbering it back to 'running'.
 async function finalizeStageAttempt(
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   runId: string,
   currentStatus: RunStatus,
   stageJustProcessed: BlueprintStage
@@ -132,7 +147,7 @@ async function finalizeStageAttempt(
 // expected to keep invoking this (driven by the queue consumer in Task 9)
 // until `advanced` is false.
 export async function processResearchRun(
-  env: BlueprintQueueEnv,
+  env: BlueprintProviderEnv,
   runId: string,
   workerId: string,
   overrides?: Partial<Record<BlueprintStage, StageHandler>>
@@ -234,11 +249,14 @@ export async function processResearchRun(
 
   if (lease.kind === 'acquired') {
     const ctx: StageContext = {
+      env,
       d1,
       runId,
       projectId: run.project_id,
       briefVersionId: run.brief_version_id,
       normalizedBrief,
+      stage,
+      attempt: lease.attemptCount,
     };
     const handler = overrides?.[stage] ?? STAGE_HANDLERS[stage];
 
@@ -246,16 +264,71 @@ export async function processResearchRun(
       const result = await handler(ctx);
       const outputJson = JSON.stringify(result.output);
       const outputHash = await hashNormalizedInput(result.output);
-      await completeStage(d1, lease.lease, outputJson, outputHash, { status: result.status ?? 'succeeded' });
+      // A handler that tracked its own real provider spend (so far only
+      // collect_keyword_evidence, Task 10) reports it as a numeric
+      // stageCostUsdMicro field on its output; forward that into the stage
+      // row's cost_usd_micro rather than leaving it at completeStage's
+      // default of 0. Every other (stub/free) handler's output has no such
+      // field, so costUsdMicro stays undefined and completeStage's own
+      // COALESCE(?, cost_usd_micro) leaves the column untouched.
+      const stageCostUsdMicro =
+        result.output != null &&
+        typeof result.output === 'object' &&
+        typeof (result.output as Record<string, unknown>).stageCostUsdMicro === 'number'
+          ? (result.output as Record<string, number>).stageCostUsdMicro
+          : undefined;
+      await completeStage(d1, lease.lease, outputJson, outputHash, {
+        status: result.status ?? 'succeeded',
+        costUsdMicro: stageCostUsdMicro,
+      });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (lease.attemptCount < MAX_ATTEMPTS) {
-        const nextRetryAt = new Date(Date.now() + RETRY_BACKOFF_MS).toISOString();
-        await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'retry_wait', nextRetryAt });
-      } else if (meta.required) {
-        await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'failed' });
+      // Operator-only diagnostics: the persisted stage row is sanitized by
+      // design, so the raw cause must be visible somewhere. Worker logs
+      // (wrangler tail / dashboard) are operator-scoped, never user-facing.
+      console.error(
+        `[blueprint] stage ${stage} attempt ${lease.attemptCount} threw:`,
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      );
+      if (err instanceof BlueprintValidationError) {
+        // Permanent, user-correctable failure (e.g. resolve_market's
+        // unsupported-language throw): retrying can never succeed, only a
+        // brief change can, so fail/skip the stage immediately instead of
+        // burning MAX_ATTEMPTS retry cycles and then masking the real reason
+        // behind a generic internal_error. The message is our own validation
+        // text (never raw provider output), so it is safe to persist.
+        const decision = meta.required ? ({ kind: 'failed' } as const) : ({ kind: 'skipped' } as const);
+        await failStage(d1, lease.lease, { code: 'invalid_input', message: err.message }, decision);
       } else {
-        await failStage(d1, lease.lease, { code: 'internal_error', message }, { kind: 'skipped' });
+        // Only a BlueprintApiError has already been through a sanitizer (e.g.
+        // mapDfsFailure) and carries a code/message safe to persist verbatim.
+        // Anything else (raw provider errors, thrown strings, bugs) could
+        // contain account emails, internal URLs, or other provider-body text,
+        // so it is always collapsed to the fixed internal_error message
+        // before it reaches the stage row (never store `err.message` as-is).
+        // SerpTasksPendingError (Task 13) is neither: it is a plain Error
+        // subclass, thrown deliberately by validate_serps_and_questions
+        // while its DataForSEO SERP batch is still processing, so it is
+        // classified like the generic retryable path but with its own safe
+        // code/message (provider_timeout) rather than falling through to the
+        // generic internal_error label.
+        const { code, message } =
+          err instanceof SerpTasksPendingError
+            ? { code: 'provider_timeout' as const, message: safeErrorMessage('provider_timeout') }
+            : err instanceof BlueprintApiError
+              ? { code: err.code, message: err.message }
+              : { code: 'internal_error' as const, message: safeErrorMessage('internal_error') };
+        // Per-stage overrides (stages.ts StageMeta.maxAttempts/retryBackoffMs)
+        // fall back to the generic MAX_ATTEMPTS/RETRY_BACKOFF_MS when unset.
+        const maxAttempts = meta.maxAttempts ?? MAX_ATTEMPTS;
+        const retryBackoffMs = meta.retryBackoffMs ?? RETRY_BACKOFF_MS;
+        if (lease.attemptCount < maxAttempts) {
+          const nextRetryAt = new Date(Date.now() + retryBackoffMs).toISOString();
+          await failStage(d1, lease.lease, { code, message }, { kind: 'retry_wait', nextRetryAt });
+        } else if (meta.required) {
+          await failStage(d1, lease.lease, { code, message }, { kind: 'failed' });
+        } else {
+          await failStage(d1, lease.lease, { code, message }, { kind: 'skipped' });
+        }
       }
     }
   }

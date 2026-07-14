@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTestDb } from '../test-support/d1';
 import { newId, nowIso } from '../db/util';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
@@ -7,8 +7,14 @@ import { buildStageInputHash } from '../domain/hash';
 import { acquireStageLease } from '../db/leases';
 import type { BlueprintStage } from '../contracts/enums';
 import { processResearchRun } from './process-run';
-import type { BlueprintQueueEnv } from './process-run';
+import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler } from './handlers';
+import { BlueprintApiError } from '../domain/api-errors';
+import { BlueprintValidationError } from '../domain/errors';
+import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
+import { SerpTasksPendingError } from '../providers/dataforseo/serp';
+import { validateSerpsAndQuestionsHandler } from './research-handlers';
+import { DataForSeoQuotaError } from '../../dataforseo/client';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -43,6 +49,7 @@ interface StageRow {
   required: number;
   attempt_count: number;
   safe_error_code: string | null;
+  safe_error_message: string | null;
 }
 
 interface BlueprintVersionRow {
@@ -70,6 +77,41 @@ interface ProjectRow {
 function makeQueue() {
   const sent: unknown[] = [];
   return { sent, queue: { send: async (body: unknown) => { sent.push(body); } } };
+}
+
+// Task 14 registers the REAL validateSerpsAndQuestionsHandler onto
+// STAGE_HANDLERS. That handler unconditionally throws SerpTasksPendingError
+// on its very first (posting) attempt, by design (research-handlers.ts) --
+// no fetch stub can make it resolve in one attempt, and no test in this file
+// below is actually testing SERP behavior (Task 13's own tests further down
+// pass validateSerpsAndQuestionsHandler explicitly where they want it).
+// Tests that just want a normal terminal drive use this trivial always-
+// succeeds stub in their overrides instead, restoring this file's original
+// pre-Task-14 assumption that every stage but the ones a test explicitly
+// cares about is a deterministic, zero-cost no-op.
+const stubValidateSerps: StageHandler = async () => ({
+  output: { stage: 'validate_serps_and_questions' as const, stub: true },
+  status: 'succeeded' as const,
+});
+
+// Stub provider bindings/credentials this file's tests never actually
+// exercise (no handler override here reads ctx.env), but processResearchRun
+// now requires a BlueprintProviderEnv, so every constructed env needs these
+// fields to satisfy the type.
+function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+  return {
+    KV: {
+      get: async () => null,
+      put: async () => undefined,
+      delete: async () => undefined,
+    } as unknown as KVNamespace,
+    BLUEPRINT_ARTIFACTS: {
+      put: async () => undefined,
+      get: async () => null,
+    } as unknown as R2Bucket,
+    DATAFORSEO_EMAIL: 'test@example.com',
+    DATAFORSEO_PASSWORD: 'test-password',
+  };
 }
 
 async function seedProject(d1: D1Database): Promise<string> {
@@ -105,7 +147,7 @@ async function seedRun(d1: D1Database, projectId: string, briefVersionId: string
       `INSERT INTO research_runs
         (id, project_id, brief_version_id, estimate_id, status,
          dataforseo_budget_usd_micro, openrouter_budget_usd_micro, created_by, created_at)
-       VALUES (?, ?, ?, ?, 'queued', 0, 0, 'u1', ?)`
+       VALUES (?, ?, ?, ?, 'queued', 2000000, 0, 'u1', ?)`
     )
     .bind(id, projectId, briefVersionId, 'estimate1', nowIso())
     .run();
@@ -138,15 +180,28 @@ async function forceRetryNow(d1: D1Database, runId: string, stage: string): Prom
 }
 
 describe('processResearchRun', () => {
+  // resolve_market (Task 8) makes real DataForSEO catalog GETs; every test in
+  // this file drives runs through it without overriding it (a handful of
+  // tests below DO override resolve_market to test retry/error-mapping
+  // behavior, which takes precedence and never reaches the stub fetch).
+  let restoreFetch: () => void;
+  beforeEach(() => {
+    restoreFetch = installDfsCatalogFetchStub();
+  });
+  afterEach(() => {
+    restoreFetch();
+  });
+
   it('behaviors 1-3: drives a full run stage-by-stage to a terminal status, then is a no-op', async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides = { validate_serps_and_questions: stubValidateSerps };
 
     // Behavior 1: first invocation runs validate_intake, marks it succeeded,
     // sets current_stage, and enqueues { runId }.
-    const first = await processResearchRun(env, runId, 'w1');
+    const first = await processResearchRun(env, runId, 'w1', overrides);
     expect(first).toEqual({ advanced: true, runStatus: 'running' });
     expect(sent).toEqual([{ runId }]);
 
@@ -160,7 +215,7 @@ describe('processResearchRun', () => {
     // Behavior 2: drive the queue loop to completion.
     while (sent.length) {
       sent.pop();
-      await processResearchRun(env, runId, 'w1');
+      await processResearchRun(env, runId, 'w1', overrides);
     }
 
     const finalRun = await getRun(d1, runId);
@@ -225,7 +280,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     // Drive exactly 3 stages forward.
     for (let i = 0; i < 3; i++) {
@@ -283,8 +338,8 @@ describe('processResearchRun', () => {
     const runB = await seedRun(d1, projectId, briefVersionId);
     const { queue: queueA } = makeQueue();
     const { queue: queueB } = makeQueue();
-    const envA: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueA };
-    const envB: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueB };
+    const envA: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueA, ...providerFields() };
+    const envB: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queueB, ...providerFields() };
 
     await processResearchRun(envA, runA, 'w1');
     await processResearchRun(envB, runB, 'w1');
@@ -328,7 +383,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
       resolve_market: async () => {
         throw new Error('boom-required');
@@ -371,15 +426,102 @@ describe('processResearchRun', () => {
     expect(resolveMarketRow?.attempt_count).toBe(3);
   });
 
+  it('sanitizes a raw (non-BlueprintApiError) stage failure before it reaches the stage row', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const rawMessage =
+      'DataForSEO auth failed for account ops@client-example.com against https://internal-provider.example.com/v3/task';
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        throw new Error(rawMessage);
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market throws -> retry_wait
+
+    const rows = await getStageRows(d1, runId);
+    const resolveMarketRow = rows.find((r) => r.stage_name === 'resolve_market');
+    expect(resolveMarketRow?.safe_error_code).toBe('internal_error');
+    expect(resolveMarketRow?.safe_error_message).toBeTruthy();
+    expect(resolveMarketRow?.safe_error_message).not.toContain('ops@client-example.com');
+    expect(resolveMarketRow?.safe_error_message).not.toContain('internal-provider.example.com');
+    expect(resolveMarketRow?.safe_error_message).toBe('The research step failed.');
+  });
+
+  it('a BlueprintValidationError from a REQUIRED stage fails immediately on attempt 1 (permanent, no retry_wait) with code invalid_input', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { sent, queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        throw new BlueprintValidationError('invalid_input', [
+          { path: 'languageCode', message: 'Unsupported market: language "xx" is not available for SERP research in US.' },
+        ]);
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    sent.pop();
+    const result = await processResearchRun(env, runId, 'w1', overrides); // resolve_market throws validation error
+
+    // Permanent user-correctable failure: no retry_wait, the run fails on
+    // the FIRST attempt with the validation signal preserved (retrying an
+    // unsupported market can never succeed; only a brief change can).
+    expect(result.runStatus).toBe('failed');
+
+    const rows = await getStageRows(d1, runId);
+    const resolveMarketRow = rows.find((r) => r.stage_name === 'resolve_market');
+    expect(resolveMarketRow?.status).toBe('failed');
+    expect(resolveMarketRow?.attempt_count).toBe(1);
+    expect(resolveMarketRow?.safe_error_code).toBe('invalid_input');
+    expect(resolveMarketRow?.safe_error_message).toBe(
+      'Unsupported market: language "xx" is not available for SERP research in US.'
+    );
+
+    const run = await getRun(d1, runId);
+    expect(run.status).toBe('failed');
+    expect(run.finished_at).toBeTruthy();
+  });
+
+  it('preserves the code and message of a stage failure that already threw a BlueprintApiError', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        throw new BlueprintApiError(
+          'provider_rate_limited',
+          'The research provider rate-limited this request. It will be retried automatically.'
+        );
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market throws -> retry_wait
+
+    const rows = await getStageRows(d1, runId);
+    const resolveMarketRow = rows.find((r) => r.stage_name === 'resolve_market');
+    expect(resolveMarketRow?.safe_error_code).toBe('provider_rate_limited');
+    expect(resolveMarketRow?.safe_error_message).toBe(
+      'The research provider rate-limited this request. It will be retried automatically.'
+    );
+  });
+
   it('behavior 6b: an OPTIONAL stage handler that throws is skipped after 3 attempts and the run continues to partial', async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
       discover_competitors: async () => {
         throw new Error('boom-optional');
       },
+      validate_serps_and_questions: stubValidateSerps,
     };
 
     // 5 stages precede discover_competitors in BLUEPRINT_STAGES order.
@@ -418,11 +560,124 @@ describe('processResearchRun', () => {
     expect(JSON.parse(versions.results[0].partial_reasons_json)).toContain('discover_competitors');
   });
 
+  it('Task 13: validate_serps_and_questions honors its per-stage maxAttempts: 12 -- a 4th attempt is still scheduled (retry_wait), not skipped', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_serps_and_questions: async () => {
+        throw new Error('serp-still-pending');
+      },
+    };
+
+    // 10 stages precede validate_serps_and_questions in BLUEPRINT_STAGES
+    // order (validate_intake through build_provisional_clusters); every one
+    // of them is either a Phase 2 deterministic stub or a real Task 8-12
+    // handler that succeeds cleanly against the DFS catalog stub installed
+    // in this describe block's beforeEach.
+    for (let i = 0; i < 10; i++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+    }
+
+    // Under the GENERIC MAX_ATTEMPTS (3), a 4th attempt would already have
+    // been skipped (see behavior 6b above). This stage's maxAttempts: 12
+    // override must still schedule it.
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+      const rows = await getStageRows(d1, runId);
+      const row = rows.find((r) => r.stage_name === 'validate_serps_and_questions');
+      expect(row?.status).toBe('retry_wait');
+      expect(row?.attempt_count).toBe(attempt);
+      expect(row?.safe_error_code).toBe('internal_error'); // generic Error, not SerpTasksPendingError, here
+      if (attempt < 4) await forceRetryNow(d1, runId, 'validate_serps_and_questions');
+    }
+  });
+
+  it('Task 13: a quota error during a real task_get poll lands the stage in retry_wait with safe_error_code provider_quota_exhausted and leaves serp rows posted', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    // Run the REAL handler (it is exported but not registered until Task
+    // 14's sweep), driven through the processor so the stage row's
+    // safe_error_code is what gets asserted, not just the thrown error.
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_serps_and_questions: validateSerpsAndQuestionsHandler,
+    };
+
+    for (let i = 0; i < 10; i++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+    }
+
+    // Pre-seed one posted dfs_serp_tasks row so the handler takes the
+    // collect (task_get) path rather than the first-attempt post path.
+    const serpRowId = newId('serpt');
+    await d1
+      .prepare(
+        `INSERT INTO dfs_serp_tasks (id, run_id, keyword, service_area_id, location_code, provider_task_id, status, posted_at)
+         VALUES (?, ?, 'emergency plumbing austin', 'a1', 1023191, 'task-quota', 'posted', ?)`
+      )
+      .bind(serpRowId, runId, nowIso())
+      .run();
+
+    // task_get hits the provider quota wall; every other endpoint keeps
+    // being served by the catalog stub installed in beforeEach.
+    const stubFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: any, init?: any) => {
+      if (String(url).includes('/serp/google/organic/task_get/')) {
+        throw new DataForSeoQuotaError('daily limit reached for ops@internal.example');
+      }
+      return (stubFetch as any)(url, init);
+    }) as any;
+
+    await processResearchRun(env, runId, 'w1', overrides);
+
+    const rows = await getStageRows(d1, runId);
+    const row = rows.find((r) => r.stage_name === 'validate_serps_and_questions');
+    expect(row?.status).toBe('retry_wait');
+    expect(row?.safe_error_code).toBe('provider_quota_exhausted');
+    expect(row?.safe_error_message).toBe(
+      'The research provider daily quota is exhausted. The run will resume when quota is available.'
+    );
+
+    const serpRow = await d1
+      .prepare(`SELECT status FROM dfs_serp_tasks WHERE id = ?`)
+      .bind(serpRowId)
+      .first<{ status: string }>();
+    expect(serpRow?.status).toBe('posted');
+  });
+
+  it('Task 13: a thrown SerpTasksPendingError is classified as provider_timeout (not internal_error) and lands in retry_wait', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      validate_serps_and_questions: async () => {
+        throw new SerpTasksPendingError('SERP tasks posted; awaiting task_get results');
+      },
+    };
+
+    for (let i = 0; i < 10; i++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+    }
+    await processResearchRun(env, runId, 'w1', overrides);
+
+    const rows = await getStageRows(d1, runId);
+    const row = rows.find((r) => r.stage_name === 'validate_serps_and_questions');
+    expect(row?.status).toBe('retry_wait');
+    expect(row?.safe_error_code).toBe('provider_timeout');
+    expect(row?.safe_error_message).toBe(
+      'The research provider timed out. It will be retried automatically.'
+    );
+  });
+
   it('behavior 7 (Task 8 Fix 1): a cancel_requested set concurrently mid-stage is not clobbered back to running, and the next invocation finishes the cancellation', async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
       validate_intake: async (ctx) => {
@@ -469,7 +724,7 @@ describe('processResearchRun', () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { sent, queue } = makeQueue();
-    const env: BlueprintQueueEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue };
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
     await d1
       .prepare(`UPDATE research_runs SET status = 'cancelled', finished_at = ? WHERE id = ?`)
@@ -485,5 +740,92 @@ describe('processResearchRun', () => {
 
     const run = await getRun(d1, runId);
     expect(run.status).toBe('cancelled');
+  });
+
+  // Task 10: collect_keyword_evidence is the first real handler that tracks
+  // its own provider spend and reports it back as a numeric
+  // stageCostUsdMicro field on its output (see research-handlers.ts). This
+  // proves the processor's forwarding in isolation, with a stub handler
+  // standing in for any future handler that reports the same field --
+  // completeStage itself already accepted a costUsdMicro extra (db/leases.ts,
+  // pre-existing), the only new wiring here is process-run.ts reading it off
+  // the handler's own output.
+  it('Task 10: forwards a handler-reported stageCostUsdMicro onto the stage row as cost_usd_micro', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => ({
+        output: { stage: 'resolve_market' as const, stub: true, stageCostUsdMicro: 123_456 },
+      }),
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, reports cost)
+
+    const stageRow = await d1
+      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, 'resolve_market')
+      .first<{ cost_usd_micro: number }>();
+    expect(stageRow?.cost_usd_micro).toBe(123_456);
+  });
+
+  it("Task 10: a handler output with no stageCostUsdMicro field leaves cost_usd_micro at completeStage's default (0)", async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+
+    await processResearchRun(env, runId, 'w1'); // validate_intake: real handler, no stageCostUsdMicro field
+
+    const stageRow = await d1
+      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, 'validate_intake')
+      .first<{ cost_usd_micro: number }>();
+    expect(stageRow?.cost_usd_micro).toBe(0);
+  });
+
+  // Finding 1 (final whole-branch review): collect_keyword_evidence is a
+  // REQUIRED stage that can end 'partial' on its own (enrichmentTruncated),
+  // not just via retry exhaustion. Before the fix, deriveRunStatus's inline
+  // gap check only counted a 'partial' row as a gap when it was optional, so
+  // this run would have finished 'succeeded' while partial_reasons_json
+  // (loadGapStageNames, which counted ANY 'partial' row) still named
+  // collect_keyword_evidence -- the exact disagreement Finding 1 flagged.
+  it('Finding 1: a REQUIRED stage handler that reports status partial directly degrades the whole run to partial, and the stage name appears in partial_reasons', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      collect_keyword_evidence: async () => ({
+        output: { stage: 'collect_keyword_evidence' as const, enrichmentTruncated: true },
+        status: 'partial' as const,
+      }),
+      validate_serps_and_questions: stubValidateSerps,
+    };
+
+    let result: { advanced: boolean; runStatus: string } = { advanced: true, runStatus: 'running' };
+    for (let i = 0; i < 25 && result.advanced; i++) {
+      result = await processResearchRun(env, runId, 'w1', overrides);
+    }
+
+    const finalRun = await getRun(d1, runId);
+    expect(finalRun.status).toBe('partial');
+    expect(JSON.parse(finalRun.partial_reasons_json)).toContain('collect_keyword_evidence');
+
+    const stageRows = await getStageRows(d1, runId);
+    const stageRow = stageRows.find((r) => r.stage_name === 'collect_keyword_evidence');
+    expect(stageRow?.status).toBe('partial');
+    expect(stageRow?.required).toBe(1);
+
+    const versions = await d1
+      .prepare(`SELECT * FROM blueprint_versions WHERE project_id = ? AND run_id = ?`)
+      .bind(projectId, runId)
+      .all<BlueprintVersionRow>();
+    expect(versions.results.length).toBe(1);
+    expect(versions.results[0].completeness).toBe('partial');
+    expect(JSON.parse(versions.results[0].partial_reasons_json)).toContain('collect_keyword_evidence');
   });
 });

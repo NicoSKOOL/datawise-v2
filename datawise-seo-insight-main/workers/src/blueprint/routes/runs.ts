@@ -154,7 +154,9 @@ export async function getRun(
   return ok(view);
 }
 
-const CANCELLABLE_STATUSES = ['queued', 'running', 'partial'];
+// Exported so other routes (deleteProject) that need to cancel runs in bulk
+// reuse the exact same non-terminal status set instead of re-deriving it.
+export const CANCELLABLE_STATUSES = ['queued', 'running', 'partial'];
 const TERMINAL_RUN_STATUSES = new Set<RunStatus>(['succeeded', 'failed', 'cancelled']);
 
 export async function cancelRun(
