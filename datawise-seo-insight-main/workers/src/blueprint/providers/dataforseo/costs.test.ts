@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_DFS_COST_ESTIMATES, loadDfsCostEstimates, buildCallPlan } from './costs';
+import { DEFAULT_DFS_COST_ESTIMATES, loadDfsCostEstimates, buildCallPlan, OPERATION_STAGE } from './costs';
 import type { CallPlan } from './costs';
 import { parseProjectBrief, normalizeProjectBrief } from '../../domain/brief';
 import { V1_LIMITS } from '../../contracts/limits';
@@ -104,6 +104,31 @@ describe('buildCallPlan', () => {
     const labsTotalDefault = defaultPlan.totalUsdMicro - serpDefault;
     const labsTotalHalved = halvedPlan.totalUsdMicro - serpHalved;
     expect(labsTotalHalved).toBe(labsTotalDefault / 2);
+  });
+});
+
+describe('OPERATION_STAGE (buildCallPlan exhaustiveness)', () => {
+  it('assigns a stage to every operation buildCallPlan can produce, across brief shapes', async () => {
+    const briefs = [await makeBrief(), await makeBrief({ withWebsite: true })];
+    for (const brief of briefs) {
+      const plan = buildCallPlan(brief, DEFAULT_DFS_COST_ESTIMATES);
+      for (const line of plan.lines) {
+        // A missing OPERATION_STAGE entry makes this undefined at runtime even
+        // though CallPlanLine.stage is typed as the non-optional BlueprintStage:
+        // this assertion is what actually catches a new operation that forgot
+        // to register a stage, not the type checker.
+        expect(OPERATION_STAGE[line.operation]).toBeDefined();
+        expect(line.stage).toBe(OPERATION_STAGE[line.operation]);
+      }
+    }
+  });
+
+  it('maps metric_enrichment to collect_keyword_evidence, not normalize_keyword_universe', () => {
+    // enrichMissingMetrics (keywords.ts) runs inside collectKeywordEvidenceHandler
+    // (orchestration/research-handlers.ts), which is registered under the
+    // collect_keyword_evidence stage (orchestration/handlers.ts). It never runs
+    // as part of normalize_keyword_universe.
+    expect(OPERATION_STAGE.metric_enrichment).toBe('collect_keyword_evidence');
   });
 });
 

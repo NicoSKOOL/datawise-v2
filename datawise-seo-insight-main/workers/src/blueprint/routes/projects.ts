@@ -14,21 +14,6 @@ import { loadDfsCostEstimates, buildCallPlan, type CallPlan } from '../providers
 import { ok, noContent, successEnvelope, readJsonBody, JSON_HEADERS } from './envelope';
 import { buildRunView, CANCELLABLE_STATUSES } from './runs';
 
-// Maps each priced DataForSEO call-plan operation onto the pipeline stage
-// that will actually make the call. Used only to shape the estimate DTO's
-// per-stage breakdown; the budget gate in plan_research prices the plan as
-// a flat total and does not care about this grouping.
-const OPERATION_STAGE: Record<string, BlueprintStage> = {
-  keyword_ideas: 'collect_keyword_evidence',
-  keyword_suggestions: 'collect_keyword_evidence',
-  keywords_for_site: 'collect_keyword_evidence',
-  competitor_discovery: 'discover_competitors',
-  ranked_keywords: 'collect_competitor_evidence',
-  relevant_pages: 'collect_competitor_evidence',
-  metric_enrichment: 'normalize_keyword_universe',
-  serp_task_post: 'validate_serps_and_questions',
-};
-
 // Every operation this route knows how to price today is a labs call
 // billed via cache-hit assumptions, except serp_task_post: SERP validation
 // always runs live for the estimate's min bound (see buildEstimateTotals),
@@ -66,8 +51,7 @@ function buildPlannedStages(plan: CallPlan): ResearchEstimate['plannedStages'] {
   }
   const byStage = new Map<BlueprintStage, StageBucket>();
   for (const line of plan.lines) {
-    const stage = OPERATION_STAGE[line.operation];
-    if (!stage) continue; // unmapped operation: not yet surfaced per-stage, still counted in the flat totals
+    const stage = line.stage;
     const cacheEligible = isCacheEligibleForEstimate(line.operation);
     const bucket = byStage.get(stage) ?? { tasks: 0, minUsdMicro: 0, maxUsdMicro: 0, cacheEligible: true };
     bucket.tasks += line.tasks;

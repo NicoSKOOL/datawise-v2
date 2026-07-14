@@ -430,6 +430,15 @@ describe('POST /api/blueprint/v1/projects/:id/research-estimates', () => {
     const operations = plan.lines.map((line) => line.operation);
     expect(operations).toContain('keyword_ideas');
     expect(operations).toContain('serp_task_post');
+
+    // metric_enrichment (enrichMissingMetrics) actually runs inside
+    // collectKeywordEvidenceHandler, not as part of normalize_keyword_universe:
+    // its tasks/cost must land in the collect_keyword_evidence bucket.
+    // validBrief carries a websiteUrl, so the plan also includes keywords_for_site.
+    const keywordEvidenceStage = body.data.plannedStages.find((s) => s.stage === 'collect_keyword_evidence')!;
+    expect(keywordEvidenceStage.estimatedTasks).toBe(1 + 1 + 1 + 2); // keyword_ideas + keyword_suggestions + keywords_for_site + metric_enrichment
+    const normalizeStage = body.data.plannedStages.find((s) => s.stage === 'normalize_keyword_universe')!;
+    expect(normalizeStage.estimatedTasks).toBe(0);
   });
 
   it('floors the min cost above zero for a serp-less plan (zero service areas)', async () => {

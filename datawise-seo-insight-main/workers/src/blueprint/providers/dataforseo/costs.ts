@@ -1,4 +1,5 @@
 import type { NormalizedProjectBrief } from '../../contracts/types';
+import type { BlueprintStage } from '../../contracts/enums';
 import { buildSeedQueries } from '../../domain/seeds';
 import { V1_LIMITS } from '../../contracts/limits';
 
@@ -52,12 +53,52 @@ export interface CallPlanLine {
   tasks: number;
   estimatedUsdMicro: number;
   cacheEligible: boolean;
+  stage: BlueprintStage;
 }
 
 export interface CallPlan {
   lines: CallPlanLine[];
   totalUsdMicro: number;
 }
+
+// Single owner of "which pipeline stage actually makes this DataForSEO call".
+// Both the priced call-plan lines below (buildCallPlan) and the unpriced
+// catalog/reference calls (catalogs.ts) are listed here so nothing else in
+// the codebase needs (or is allowed to keep) its own copy of this mapping.
+//
+// A missing entry is not caught by the type checker: Record<string, ...>
+// indexing types the lookup as BlueprintStage even for an operation string
+// that isn't actually a key, so a forgotten mapping silently resolves to
+// `undefined` at runtime. costs.test.ts's exhaustiveness test is what
+// actually catches that, by asserting every operation buildCallPlan can
+// produce has an entry here.
+export const OPERATION_STAGE: Record<string, BlueprintStage> = {
+  keyword_ideas: 'collect_keyword_evidence',
+  keyword_suggestions: 'collect_keyword_evidence',
+  keywords_for_site: 'collect_keyword_evidence',
+  // Fix: enrichMissingMetrics (keywords.ts) runs inside
+  // collectKeywordEvidenceHandler (orchestration/research-handlers.ts),
+  // which is registered under collect_keyword_evidence
+  // (orchestration/handlers.ts). It never runs as part of
+  // normalize_keyword_universe, which is where this used to point.
+  metric_enrichment: 'collect_keyword_evidence',
+  competitor_discovery: 'discover_competitors',
+  ranked_keywords: 'collect_competitor_evidence',
+  relevant_pages: 'collect_competitor_evidence',
+  serp_task_post: 'validate_serps_and_questions',
+  // Catalog/reference calls (catalogs.ts): unpriced (estimateUsdMicro: 0),
+  // never appear in buildCallPlan's lines, but resolveMarket runs them as
+  // part of the resolve_market stage, so they belong in the same map.
+  labs_locations_and_languages: 'resolve_market',
+  serp_locations_catalog: 'resolve_market',
+  serp_languages_catalog: 'resolve_market',
+  // Phase 4 forward entries: these operations do not exist yet (no caller
+  // makes them today). The entries are inert until a later Phase 4 task
+  // adds the actual DataForSEO calls; kept here now so OPERATION_STAGE has
+  // one owner from the start instead of catching up after the fact.
+  content_parsing: 'parse_competitor_pages',
+  site_ranked_urls: 'overlay_existing_site',
+};
 
 // Upper-bound planning constants (catalog Sec 15, adapted to Phase 3 scope).
 // Competitor count is a plan-time guess: the real selected-competitor count
@@ -69,7 +110,13 @@ const MAX_SERP_SEEDS = 20;
 const METRIC_ENRICHMENT_TASKS = 2; // one overview chunk + one bulk-KD chunk, upper bound
 
 function planLine(operation: string, tasks: number, unitUsdMicro: number): CallPlanLine {
-  return { operation, tasks, estimatedUsdMicro: tasks * unitUsdMicro, cacheEligible: true };
+  return {
+    operation,
+    tasks,
+    estimatedUsdMicro: tasks * unitUsdMicro,
+    cacheEligible: true,
+    stage: OPERATION_STAGE[operation],
+  };
 }
 
 // Recomputes the plan from the normalized brief every time: this is the
