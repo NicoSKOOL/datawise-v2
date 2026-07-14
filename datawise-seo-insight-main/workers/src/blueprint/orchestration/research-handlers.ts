@@ -30,6 +30,7 @@ import {
 import type { CompetitorCandidate, RelevantPageRecord } from '../providers/dataforseo/competitors';
 import { postSerpTasks, collectSerpTasks, SerpTasksPendingError } from '../providers/dataforseo/serp';
 import type { SerpQuery } from '../providers/dataforseo/serp';
+import type { BuildProvisionalClustersOutput } from './clustering-handlers';
 
 // Catalog Sec 3: max 8 keyword_suggestions seeds per run (one per
 // service-in-primary-area seed). This module is the home for every real
@@ -762,9 +763,72 @@ export function buildSerpQueriesFromSeeds(seeds: SeedQuery[], market: ResolvedMa
     }));
 }
 
+// Task 11: build_provisional_clusters (a REQUIRED stage that always runs
+// immediately before this one, per stages.ts's BLUEPRINT_STAGES order) now
+// emits up to 20 representative queries, one per non-singleton provisional
+// cluster (clustering-handlers.ts). Those queries are a strictly better SERP
+// validation target than the old seed-derived list (one SERP snapshot per
+// real page-candidate cluster, instead of one per raw service-in-primary-area
+// seed with no clustering signal behind it), so this handler prefers them
+// whenever they exist and only falls back to the seed-derived list when
+// build_provisional_clusters produced none (clusters skipped, or a universe
+// with zero non-singleton clusters). Same dedup-by-normalized-keyword and
+// MAX_SERP_QUERIES cap as buildSerpQueriesFromSeeds, since the same
+// dfs_serp_tasks UNIQUE(run_id, keyword, location_code) constraint and the
+// same catalog Sec 15 operating point apply to either source. Exported
+// standalone (same rationale as buildSerpQueriesFromSeeds) for direct unit
+// testing.
+export function buildSerpQueriesFromClusterRepresentatives(
+  representativeQueries: BuildProvisionalClustersOutput['representativeQueries'],
+  market: ResolvedMarket,
+  locale: string
+): SerpQuery[] {
+  const locationByServiceArea = new Map(market.serpLocations.map((l) => [l.serviceAreaId, l.locationCode]));
+  const seenNormalized = new Set<string>();
+  const queries: SerpQuery[] = [];
+  for (const rep of representativeQueries) {
+    const normalized = normalizeKeyword(rep.query, locale);
+    if (!normalized || seenNormalized.has(normalized)) continue;
+    seenNormalized.add(normalized);
+    queries.push({
+      keyword: rep.query,
+      serviceAreaId: rep.serviceAreaId,
+      locationCode:
+        (rep.serviceAreaId ? locationByServiceArea.get(rep.serviceAreaId) : undefined) ??
+        market.fallbackSerpLocationCode,
+    });
+    if (queries.length >= MAX_SERP_QUERIES) break;
+  }
+  return queries;
+}
+
+// Re-checks, on ANY attempt of this stage, whether build_provisional_clusters
+// produced representative queries for this run. build_provisional_clusters
+// is a REQUIRED stage that always finishes (successfully) before this stage's
+// first attempt ever runs, and its output never changes across this stage's
+// own later attempts, so re-reading it here (rather than threading the
+// decision through some new persisted column) is safe and gives every
+// attempt, first or last, the same answer.
+async function usedClusterRepresentativeQueries(d1: D1Database, runId: string): Promise<boolean> {
+  const clustersOutput = await loadStageOutput<Pick<BuildProvisionalClustersOutput, 'representativeQueries'>>(
+    d1,
+    runId,
+    'build_provisional_clusters'
+  );
+  return !!clustersOutput && clustersOutput.representativeQueries.length > 0;
+}
+
 export interface ValidateSerpsAndQuestionsOutput {
   snapshots: number;
   failed: number;
+  // Task 11: which query population this run's SERP batch was built from.
+  // 'clusters' whenever build_provisional_clusters had at least one
+  // non-singleton cluster to represent, 'seeds' otherwise (clusters stage
+  // skipped, or a universe with zero non-singleton clusters). queryCount is
+  // the number of distinct queries actually posted (dfs_serp_tasks row count
+  // for this run), true regardless of which attempt this output came from.
+  querySource: 'clusters' | 'seeds';
+  queryCount: number;
 }
 
 // Real validate_serps_and_questions, not a stub. Optional stage (stages.ts),
@@ -800,21 +864,35 @@ export const validateSerpsAndQuestionsHandler: StageHandler = async (ctx: StageC
       throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
     }
 
-    const costs = await loadDfsCostEstimates(ctx.env.KV);
-    const { seeds } = buildSeedQueries(ctx.normalizedBrief, {
-      maxTotalSeeds: V1_LIMITS.maxSeedQueries,
-      includePrimaryAreaSeeds: true,
-    });
-    const queries = buildSerpQueriesFromSeeds(seeds, market);
+    const locale = `${ctx.normalizedBrief.languageCode}-${ctx.normalizedBrief.countryIso}`;
+    const clustersOutput = await loadStageOutput<BuildProvisionalClustersOutput>(
+      ctx.d1,
+      ctx.runId,
+      'build_provisional_clusters'
+    );
+    const useClusterQueries = !!clustersOutput && clustersOutput.representativeQueries.length > 0;
+
+    const queries = useClusterQueries
+      ? buildSerpQueriesFromClusterRepresentatives(clustersOutput!.representativeQueries, market, locale)
+      : buildSerpQueriesFromSeeds(
+          buildSeedQueries(ctx.normalizedBrief, {
+            maxTotalSeeds: V1_LIMITS.maxSeedQueries,
+            includePrimaryAreaSeeds: true,
+          }).seeds,
+          market
+        );
+    const querySource: 'clusters' | 'seeds' = useClusterQueries ? 'clusters' : 'seeds';
 
     if (queries.length === 0) {
       // No service-in-primary-area seeds to validate against (a brief with
       // no primary area, which normalize_brief/validate_intake should never
-      // actually allow through) -- nothing to post, nothing pending.
-      const output: ValidateSerpsAndQuestionsOutput = { snapshots: 0, failed: 0 };
+      // actually allow through) and no cluster representative queries either
+      // -- nothing to post, nothing pending.
+      const output: ValidateSerpsAndQuestionsOutput = { snapshots: 0, failed: 0, querySource, queryCount: 0 };
       return { output, status: 'succeeded' as const };
     }
 
+    const costs = await loadDfsCostEstimates(ctx.env.KV);
     await postSerpTasks(ctx, queries, costs);
     throw new SerpTasksPendingError('SERP tasks posted; awaiting task_get results');
   }
@@ -824,6 +902,19 @@ export const validateSerpsAndQuestionsHandler: StageHandler = async (ctx: StageC
     throw new SerpTasksPendingError('SERP tasks still processing');
   }
 
-  const output: ValidateSerpsAndQuestionsOutput = { snapshots: completed, failed };
+  const postedCountRow = await ctx.d1
+    .prepare(`SELECT COUNT(*) AS n FROM dfs_serp_tasks WHERE run_id = ?`)
+    .bind(ctx.runId)
+    .first<{ n: number }>();
+  const querySource: 'clusters' | 'seeds' = (await usedClusterRepresentativeQueries(ctx.d1, ctx.runId))
+    ? 'clusters'
+    : 'seeds';
+
+  const output: ValidateSerpsAndQuestionsOutput = {
+    snapshots: completed,
+    failed,
+    querySource,
+    queryCount: postedCountRow?.n ?? 0,
+  };
   return { output, status: failed > 0 ? ('partial' as const) : ('succeeded' as const) };
 };

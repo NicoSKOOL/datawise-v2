@@ -1337,6 +1337,52 @@ describe('validateSerpsAndQuestionsHandler', () => {
     return { restore: () => { globalThis.fetch = original; } };
   }
 
+  // Task 11: like taskPostFetchStub, but also records every task_post
+  // request's parsed body array so a test can assert on the exact keywords
+  // posted (proving cluster-representative queries -- or their seed-derived
+  // fallback -- reached task_post, not just that SOME batch was posted).
+  // Mints one task id per body entry, in submission order, matching the same
+  // "provider returns tasks in request order" assumption serp.ts's
+  // postSerpTasks already relies on.
+  function taskPostCapturingFetchStub(): { restore: () => void; calls: any[][] } {
+    const original = globalThis.fetch;
+    const calls: any[][] = [];
+    globalThis.fetch = (async (_url: any, init?: any) => {
+      const bodies = init?.body ? JSON.parse(init.body) : [];
+      calls.push(bodies);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status_code: 20000,
+          tasks: bodies.map((_b: unknown, i: number) => ({
+            id: `task-${i + 1}`,
+            status_code: 20100,
+            status_message: 'Task Created.',
+            cost: 0.01,
+            result: [{ id: `task-${i + 1}` }],
+          })),
+        }),
+      };
+    }) as any;
+    return { restore: () => { globalThis.fetch = original; }, calls };
+  }
+
+  async function seedClustersStage(
+    d1: D1Database,
+    runId: string,
+    representativeQueries: Array<{ clusterId: string; keywordId: string; query: string; serviceAreaId: string | null }>
+  ): Promise<void> {
+    await d1
+      .prepare(
+        `INSERT INTO research_stage_runs
+          (id, run_id, stage_name, stage_input_hash, status, required, attempt_count, output_json, finished_at)
+         VALUES (?, ?, 'build_provisional_clusters', 'hash-clusters', 'succeeded', 1, 1, ?, ?)`
+      )
+      .bind(newId('stagerun'), runId, JSON.stringify({ representativeQueries }), nowIso())
+      .run();
+  }
+
   it('first attempt (no dfs_serp_tasks rows yet): posts a batch and throws SerpTasksPendingError', async () => {
     const { d1 } = createTestDb();
     const projectId = await seedProject(d1);
@@ -1466,9 +1512,197 @@ describe('validateSerpsAndQuestionsHandler', () => {
     const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
     const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
 
+    // Task 11: no build_provisional_clusters stage output was seeded for
+    // this run, so this stays on the seeds fallback path -- querySource
+    // 'seeds', queryCount is the one dfs_serp_tasks row this run posted.
     const { output, status } = await validateSerpsAndQuestionsHandler(ctx);
     expect(status).toBe('succeeded');
-    expect(output).toEqual({ snapshots: 1, failed: 0 });
+    expect(output).toEqual({ snapshots: 1, failed: 0, querySource: 'seeds', queryCount: 1 });
+  });
+
+  it('Task 11: prefers cluster representative queries over seed-derived queries when build_provisional_clusters produced them', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const representativeQueries = [
+      { clusterId: 'kcl_1', keywordId: 'kw_1', query: 'emergency plumbing near me', serviceAreaId: 'a1' },
+      { clusterId: 'kcl_2', keywordId: 'kw_2', query: 'water heater repair austin', serviceAreaId: null },
+    ];
+    await seedClustersStage(d1, runId, representativeQueries);
+    await seedKeywordRows(d1, runId, ['emergency plumbing near me', 'water heater repair austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    // Exactly the two cluster representative queries were posted, one
+    // task_post call -- NOT the seed-derived 'emergency plumbing austin'/
+    // 'drain cleaning austin' this same brief would otherwise produce (see
+    // SAMPLE_BRIEF_INPUT above).
+    expect(calls).toHaveLength(1);
+    const postedKeywords = calls[0].map((b: any) => b.keyword);
+    expect(postedKeywords).toEqual(['emergency plumbing near me', 'water heater repair austin']);
+    expect(postedKeywords).not.toContain('emergency plumbing austin');
+    expect(postedKeywords).not.toContain('drain cleaning austin');
+
+    const rows = await d1
+      .prepare(
+        `SELECT keyword, service_area_id, location_code FROM dfs_serp_tasks WHERE run_id = ? ORDER BY keyword ASC`
+      )
+      .bind(runId)
+      .all<{ keyword: string; service_area_id: string | null; location_code: number }>();
+    expect(rows.results).toEqual([
+      { keyword: 'emergency plumbing near me', service_area_id: 'a1', location_code: 1023191 },
+      { keyword: 'water heater repair austin', service_area_id: null, location_code: MARKET.fallbackSerpLocationCode },
+    ]);
+  });
+
+  it('Task 11: falls back to seed-derived queries when build_provisional_clusters produced no stage output at all', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    // Deliberately no build_provisional_clusters stage row at all (e.g. the
+    // clusters stage has not run yet, or was skipped).
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin', 'drain cleaning austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    expect(calls).toHaveLength(1);
+    const postedKeywords = calls[0].map((b: any) => b.keyword);
+    expect(postedKeywords).toEqual(['emergency plumbing austin', 'drain cleaning austin']);
+  });
+
+  it('Task 11: falls back to seed-derived queries when build_provisional_clusters output exists but representativeQueries is empty', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    // A real build_provisional_clusters output, but zero non-singleton
+    // clusters (e.g. this run's whole universe clustered into singletons).
+    await seedClustersStage(d1, runId, []);
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin', 'drain cleaning austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    expect(calls).toHaveLength(1);
+    const postedKeywords = calls[0].map((b: any) => b.keyword);
+    expect(postedKeywords).toEqual(['emergency plumbing austin', 'drain cleaning austin']);
+  });
+
+  it('Task 11: dedupes duplicate cluster representative queries (same normalized keyword) before posting', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    // Two different clusters whose primary keyword display text normalizes
+    // to the exact same keyword (differing only by case/whitespace) -- must
+    // collapse to a single posted query, same as dfs_serp_tasks's own
+    // UNIQUE(run_id, keyword, location_code) semantics require.
+    const representativeQueries = [
+      { clusterId: 'kcl_1', keywordId: 'kw_1', query: 'Emergency Plumbing Austin', serviceAreaId: 'a1' },
+      { clusterId: 'kcl_2', keywordId: 'kw_2', query: 'emergency  plumbing   austin', serviceAreaId: 'a1' },
+    ];
+    await seedClustersStage(d1, runId, representativeQueries);
+    await seedKeywordRows(d1, runId, ['Emergency Plumbing Austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(1);
+    expect(calls[0][0].keyword).toBe('Emergency Plumbing Austin');
+
+    const countRow = await d1
+      .prepare(`SELECT COUNT(*) AS n FROM dfs_serp_tasks WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(countRow?.n).toBe(1);
+  });
+
+  it('Task 11: final output reports querySource clusters and the deduped queryCount once cluster-sourced SERP tasks complete', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const representativeQueries = [
+      { clusterId: 'kcl_1', keywordId: 'kw_1', query: 'emergency plumbing near me', serviceAreaId: 'a1' },
+      { clusterId: 'kcl_2', keywordId: 'kw_2', query: 'water heater repair austin', serviceAreaId: null },
+    ];
+    await seedClustersStage(d1, runId, representativeQueries);
+    await seedKeywordRows(d1, runId, ['emergency plumbing near me', 'water heater repair austin']);
+
+    const { restore: restorePost, calls } = taskPostCapturingFetchStub();
+    await expect(validateSerpsAndQuestionsHandler(
+      buildCtx(d1, runId, projectId, briefVersionId, await normalizeProjectBrief(parseProjectBrief(SAMPLE_BRIEF_INPUT), V1_LIMITS))
+    )).rejects.toBeInstanceOf(SerpTasksPendingError);
+    restorePost();
+    expect(calls).toHaveLength(1);
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: any) => {
+      const href = String(url);
+      const taskId = href.split('/serp/google/organic/task_get/advanced/')[1];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status_code: 20000,
+          tasks: [
+            {
+              id: taskId,
+              status_code: 20000,
+              status_message: 'Ok.',
+              cost: 0,
+              result: [{ items: [{ type: 'organic', rank_group: 1, url: 'https://a.com', title: 'A', domain: 'a.com' }] }],
+            },
+          ],
+        }),
+      };
+    }) as any;
+    restoreFetch = () => { globalThis.fetch = original; };
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output, status } = await validateSerpsAndQuestionsHandler(ctx);
+    expect(status).toBe('succeeded');
+    expect(output).toEqual({ snapshots: 2, failed: 0, querySource: 'clusters', queryCount: 2 });
   });
 
   it('throws provider_invalid_response when resolve_market has no output to read', async () => {
