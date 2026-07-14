@@ -21,6 +21,7 @@ import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import type { SeedQuery } from '../domain/seeds';
 import { DataForSeoQuotaError } from '../../dataforseo/client';
+import { pseudoVector } from '../test-support/env';
 
 // This is the same STAGE_HANDLERS-driven approach process-run.test.ts and
 // acceptance.e2e.test.ts already use: drive the real registry through
@@ -54,7 +55,7 @@ const SAMPLE_BRIEF_INPUT = {
   serviceAreas: [{ clientId: 'a1', city: 'Austin', countryIso: 'us', isPrimary: true }],
 };
 
-function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD' | 'AI'> {
   return {
     KV: {
       get: async () => null,
@@ -67,6 +68,16 @@ function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACT
     } as unknown as R2Bucket,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
+    // These full-drive tests run past normalize_keyword_universe into
+    // embed_keyword_features (Phase 4 Task 8), which now really calls
+    // env.AI.run -- same deterministic pseudoVector fake as
+    // test-support/env.ts's fakeEnv().
+    AI: {
+      async run(_model: string, input: Record<string, unknown>) {
+        const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+        return { shape: [texts.length, 32], data: texts.map(pseudoVector) };
+      },
+    },
   };
 }
 

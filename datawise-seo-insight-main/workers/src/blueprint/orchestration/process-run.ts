@@ -29,6 +29,14 @@ export interface BlueprintProviderEnv extends BlueprintQueueEnv {
   BLUEPRINT_ARTIFACTS: R2Bucket;
   DATAFORSEO_EMAIL: string;
   DATAFORSEO_PASSWORD: string;
+  // Workers AI binding (wrangler.toml [ai]): the only caller today is
+  // embed_keyword_features via providers/embeddings/workers-ai.ts, which
+  // calls @cf/baai/bge-m3 with { text: string[] } and expects the model's
+  // real response shape back: { shape: [n, dims], data: number[][] }.
+  // Typed as the minimal `run` surface this module needs rather than
+  // Cloudflare's full Ai type, matching how this file already widens
+  // BlueprintQueueEnv with just the fields real handlers need.
+  AI: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
 }
 
 // Leases outlive a single Worker invocation only in spirit (Phase 2 has no

@@ -9,6 +9,55 @@ import type { BlueprintStage } from '../contracts/enums';
 // them without one test file importing another (which re-collects the
 // imported file's describe blocks into the importer's run).
 
+// Deterministic 32-bit FNV-1a hash, seeded per output dimension (the `${dim}:`
+// prefix) so each of the 32 dimensions gets an independent-looking hash
+// stream instead of reusing the same scalar 32 times.
+function fnv1a(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+// Fixed output width for the fake AI binding below. Real @cf/baai/bge-m3
+// returns 1024 dims (CLUSTER_RULESET_V1.embedding.dimensions); tests do not
+// need real dimensionality, only a fixed, uniform width across every fake
+// vector and full determinism (same text -> same vector, every time).
+export const FAKE_AI_DIMENSIONS = 32;
+
+// A fixed-length, unit-normalized pseudo-embedding derived purely from
+// `text` -- no randomness, no clock, no I/O. Same input always produces the
+// same output, which is what lets workers-ai.ts's reuse path (matching a
+// batch's expected content hashes against what is already stored) and
+// idempotency tests reason about "the same keyword always embeds the same
+// way" without a real model call.
+export function pseudoVector(text: string): number[] {
+  const raw: number[] = [];
+  for (let dim = 0; dim < FAKE_AI_DIMENSIONS; dim++) {
+    const hash = fnv1a(`${dim}:${text}`);
+    raw.push((hash / 0xffffffff) * 2 - 1); // uint32 -> [-1, 1]
+  }
+  const magnitude = Math.sqrt(raw.reduce((sum, v) => sum + v * v, 0)) || 1;
+  return raw.map((v) => v / magnitude);
+}
+
+// Fake Workers AI binding shaped like the real @cf/baai/bge-m3 response:
+// `{ shape: [n, dims], data: number[][] }` (Workers AI's documented
+// embedding-model output). `input.text` is always an array in this
+// codebase's usage (providers/embeddings/workers-ai.ts always calls with
+// `{ text: string[] }`, never a single string), so this fake does not
+// bother handling the single-string-input variant real bge-m3 also accepts.
+function fakeAiBinding(): BlueprintProviderEnv['AI'] {
+  return {
+    async run(_model: string, input: Record<string, unknown>) {
+      const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+      return { shape: [texts.length, FAKE_AI_DIMENSIONS], data: texts.map(pseudoVector) };
+    },
+  };
+}
+
 export function fakeEnv(): BlueprintProviderEnv & { BLUEPRINT_KV: unknown; BLUEPRINT_QUEUE: { sent: unknown[]; send: (body: unknown) => Promise<void> } } {
   const { d1 } = createTestDb();
   const sent: unknown[] = [];
@@ -33,6 +82,7 @@ export function fakeEnv(): BlueprintProviderEnv & { BLUEPRINT_KV: unknown; BLUEP
     })() as unknown as R2Bucket,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
+    AI: fakeAiBinding(),
   } as any;
 }
 

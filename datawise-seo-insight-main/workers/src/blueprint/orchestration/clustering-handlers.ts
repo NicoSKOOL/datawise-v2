@@ -5,6 +5,9 @@ import { planUniverseNormalization } from '../domain/clustering/universe';
 import type { KeywordRowLite } from '../domain/clustering/universe';
 import { CLUSTER_RULESET_V1 } from '../domain/clustering/ruleset';
 import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
+import { buildEmbeddingText, embeddingContentHash } from '../domain/clustering/features';
+import type { EmbeddingInput } from '../domain/clustering/features';
+import { embedKeywordTexts } from '../providers/embeddings/workers-ai';
 
 // Home for Phase 4's clustering-track stage handlers (normalize_keyword_universe
 // onward), the same way orchestration/research-handlers.ts is the home for
@@ -219,4 +222,75 @@ export const normalizeKeywordUniverseHandler: StageHandler = async (ctx: StageCo
   };
 
   return { output, status: artifactsMissing > 0 ? ('partial' as const) : ('succeeded' as const) };
+};
+
+interface RetainedKeywordRow {
+  id: string;
+  display_keyword: string;
+  core_keyword: string | null;
+  normalized_keyword: string;
+}
+
+export interface EmbedKeywordFeaturesOutput {
+  stage: 'embed_keyword_features';
+  model: string;
+  dimensions: number;
+  vectorCount: number;
+  batchCount: number;
+  inputHash: string;
+  truncatedCount: number;
+  artifacts: Array<{ artifactId: string; storageKey: string; count: number }>;
+  rulesetVersion: string;
+}
+
+// Real embed_keyword_features, not a stub (Phase 4 Task 8). Optional stage
+// (stages.ts): embeds every RETAINED keyword (excluded_reason IS NULL --
+// normalize_keyword_universe already decided which keywords survive) with
+// Workers AI, ordered by normalized_keyword so a retry's chunking lines up
+// with providers/embeddings/workers-ai.ts's deterministic per-run,
+// per-batch-index R2 keys. A run whose universe exceeds
+// CLUSTER_RULESET_V1.embedding.maxBatchesPerRun * batchSize degrades to
+// 'partial' (truncatedCount > 0) rather than failing outright -- the
+// clustering stages downstream still get a real, just incomplete, feature
+// set for this run, matching normalize_keyword_universe's own
+// partial-on-gap precedent above.
+export const embedKeywordFeaturesHandler: StageHandler = async (ctx: StageContext) => {
+  const rows = await ctx.d1
+    .prepare(
+      `SELECT id, display_keyword, core_keyword, normalized_keyword
+       FROM keywords WHERE run_id = ? AND excluded_reason IS NULL ORDER BY normalized_keyword ASC`
+    )
+    .bind(ctx.runId)
+    .all<RetainedKeywordRow>();
+  const retained = rows.results ?? [];
+
+  const { contextTemplate } = CLUSTER_RULESET_V1.embedding;
+  const brief = { category: ctx.normalizedBrief.category };
+
+  const inputs: EmbeddingInput[] = [];
+  for (const row of retained) {
+    const text = buildEmbeddingText(
+      { displayKeyword: row.display_keyword, coreKeyword: row.core_keyword },
+      brief,
+      contextTemplate
+    );
+    const contentHash = await embeddingContentHash(CLUSTER_RULESET_V1.embedding.model, contextTemplate, text);
+    inputs.push({ keywordId: row.id, normalizedKeyword: row.normalized_keyword, text, contentHash });
+  }
+
+  const result = await embedKeywordTexts(ctx, inputs, CLUSTER_RULESET_V1);
+
+  const output: EmbedKeywordFeaturesOutput = {
+    stage: 'embed_keyword_features',
+    model: result.model,
+    dimensions: result.dimensions,
+    vectorCount: result.vectorCount,
+    batchCount: result.batches.length,
+    inputHash: result.inputHash,
+    truncatedCount: result.truncatedCount,
+    artifacts: result.batches,
+    rulesetVersion: CLUSTER_RULESET_V1.version,
+  };
+
+  return { output, status: result.truncatedCount > 0 ? ('partial' as const) : ('succeeded' as const) };
 };

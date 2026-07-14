@@ -17,7 +17,7 @@ import {
   collectCompetitorEvidenceHandler,
   validateSerpsAndQuestionsHandler,
 } from './research-handlers';
-import { normalizeKeywordUniverseHandler } from './clustering-handlers';
+import { normalizeKeywordUniverseHandler, embedKeywordFeaturesHandler } from './clustering-handlers';
 
 export interface StageContext {
   env: BlueprintProviderEnv;
@@ -257,5 +257,6 @@ STAGE_HANDLERS.discover_competitors = discoverCompetitorsHandler;
 STAGE_HANDLERS.collect_competitor_evidence = collectCompetitorEvidenceHandler;
 STAGE_HANDLERS.validate_serps_and_questions = validateSerpsAndQuestionsHandler;
 STAGE_HANDLERS.normalize_keyword_universe = normalizeKeywordUniverseHandler;
+STAGE_HANDLERS.embed_keyword_features = embedKeywordFeaturesHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
 STAGE_HANDLERS.publish_blueprint = publishBlueprintHandler;

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createTestDb } from '../test-support/d1';
+import { pseudoVector } from '../test-support/env';
 import { newId, nowIso } from '../db/util';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { V1_LIMITS } from '../contracts/limits';
@@ -38,15 +39,26 @@ const SAMPLE_BRIEF_INPUT = {
   excludedTopics: ['jobs'],
 };
 
+// Fake Workers AI binding, same deterministic pseudoVector shared with
+// test-support/env.ts's fakeEnv() (this file builds its own env object
+// rather than using fakeEnv() directly -- see the R2/KV fixture comment
+// below -- but the pseudoVector helper itself is exactly the kind of
+// reusable, non-test module thing test-support/ exists for).
 function providerFields(r2: R2Bucket, kv: KVNamespace): Pick<
   BlueprintProviderEnv,
-  'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'
+  'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD' | 'AI'
 > {
   return {
     KV: kv,
     BLUEPRINT_ARTIFACTS: r2,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
+    AI: {
+      async run(_model: string, input: Record<string, unknown>) {
+        const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+        return { shape: [texts.length, 32], data: texts.map(pseudoVector) };
+      },
+    },
   };
 }
 
@@ -390,5 +402,73 @@ describe('normalizeKeywordUniverseHandler (via processResearchRun)', () => {
     const output = JSON.parse(stageRow!.output_json);
     expect(output.artifactsMissing).toBe(1);
     expect(output.artifactsRead).toBe(0);
+  });
+});
+
+describe('embedKeywordFeaturesHandler (via processResearchRun)', () => {
+  it('embeds only retained keywords, stamps ruleset_version, and reports succeeded with no truncation', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+
+    const r2 = fakeR2();
+    const kv = fakeKv();
+    const sent: unknown[] = [];
+    const env: BlueprintProviderEnv = {
+      BLUEPRINT_DB: d1,
+      BLUEPRINT_QUEUE: { send: async (body: unknown) => void sent.push(body) },
+      ...providerFields(r2, kv),
+    };
+
+    // No overrides for normalize_keyword_universe or embed_keyword_features:
+    // both run for real, so normalize_keyword_universe's own excluded_reason
+    // decision is what actually determines which keywords get embedded.
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      ...baseOverrides(),
+      collect_keyword_evidence: async (ctx: StageContext) => {
+        await insertKeywordRow(ctx.d1, ctx.runId, {
+          id: 'kw_retained_1',
+          normalizedKeyword: 'drain cleaning austin',
+          searchVolume: 500,
+        });
+        await insertKeywordRow(ctx.d1, ctx.runId, {
+          id: 'kw_retained_2',
+          normalizedKeyword: 'drain cleaning services austin',
+        });
+        await insertKeywordRow(ctx.d1, ctx.runId, {
+          id: 'kw_excluded',
+          normalizedKeyword: 'plumber jobs',
+        });
+        return { output: { stub: true }, status: 'succeeded' as const };
+      },
+    };
+
+    await driveToNormalizeUniverse(env, runId, sent, overrides);
+
+    const stageRow = await d1
+      .prepare(`SELECT status, output_json, ruleset_version FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, 'embed_keyword_features')
+      .first<{ status: string; output_json: string; ruleset_version: string }>();
+    expect(stageRow).toBeTruthy();
+    expect(stageRow!.status).toBe('succeeded');
+    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+
+    const output = JSON.parse(stageRow!.output_json);
+    expect(output.stage).toBe('embed_keyword_features');
+    expect(output.model).toBe('@cf/baai/bge-m3');
+    expect(output.vectorCount).toBe(2); // kw_excluded was never sent to AI
+    expect(output.truncatedCount).toBe(0);
+    expect(output.rulesetVersion).toBe('cluster-v1');
+    expect(Array.isArray(output.artifacts)).toBe(true);
+    expect(output.artifacts.length).toBeGreaterThan(0);
+
+    // Confirm the excluded keyword's id never shows up in any persisted batch.
+    for (const batch of output.artifacts as Array<{ storageKey: string }>) {
+      const obj = await r2.get(batch.storageKey);
+      const parsed = JSON.parse(await (obj as any).text());
+      const ids = parsed.vectors.map((v: any) => v.keywordId);
+      expect(ids).not.toContain('kw_excluded');
+    }
   });
 });

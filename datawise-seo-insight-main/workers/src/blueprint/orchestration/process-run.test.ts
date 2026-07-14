@@ -16,6 +16,7 @@ import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import { validateSerpsAndQuestionsHandler } from './research-handlers';
 import { DataForSeoQuotaError } from '../../dataforseo/client';
+import { pseudoVector } from '../test-support/env';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -112,7 +113,7 @@ const stubValidateSerps: StageHandler = async () => ({
 // stores, get really returns it) is what production R2/KV actually do, so
 // this is a fixture-fidelity fix, not a behavior change to what's being
 // tested here.
-function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD' | 'AI'> {
   const kvStore = new Map<string, string>();
   const r2Store = new Map<string, string>();
   return {
@@ -136,6 +137,17 @@ function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACT
     } as unknown as R2Bucket,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
+    // Phase 4 Task 8: embed_keyword_features is now a REAL handler that
+    // calls env.AI.run for every retained keyword, so every full-drive test
+    // in this file needs a working (not undefined) AI binding -- same
+    // deterministic pseudoVector fake test-support/env.ts's own fakeEnv()
+    // uses, not a real model call.
+    AI: {
+      async run(_model: string, input: Record<string, unknown>) {
+        const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+        return { shape: [texts.length, 32], data: texts.map(pseudoVector) };
+      },
+    },
   };
 }
 
