@@ -18,6 +18,7 @@ import { mergeKeywordCandidates } from '../domain/merge';
 import { normalizeKeyword } from '../domain/keyword';
 import { normalizeDomain } from '../domain/url';
 import { newId } from '../db/util';
+import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
 import {
   discoverCompetitorsForDomain,
   discoverSerpCompetitors,
@@ -101,8 +102,9 @@ function appendMissingUserSeeds(universe: KeywordUniverse, seeds: SeedQuery[], l
 // multi-row `INSERT OR IGNORE ... VALUES (?,?,...),(?,?,...)` statement, and
 // groups of those statements are sent through as few d1.batch() calls as
 // possible, so persisting the same 2,500 candidates now costs on the order
-// of tens of D1 calls, not thousands.
-const D1_MAX_BOUND_PARAMS = 100;
+// of tens of D1 calls, not thousands. chunk/runBatchedStatements/
+// assertRowBudget/D1_MAX_BOUND_PARAMS now live in ../db/batch (Phase 4
+// Task 1 extraction) so later persistence code can reuse them.
 
 // keywords row = (id, run_id, display_keyword, normalized_keyword,
 // search_volume, cpc_usd_micro, keyword_difficulty, metrics_missing): 8
@@ -122,25 +124,11 @@ const JOIN_ROWS_PER_STATEMENT = 45;
 // the 100 cap.
 const REREAD_KEYWORDS_PER_STATEMENT = 90;
 
-// How many prepared statements ride in a single d1.batch() call. D1 has no
-// documented hard statement-count-per-batch ceiling, but batching everything
-// into one call would still make one very large request; splitting into
-// groups keeps each batch call itself modest.
-const STATEMENTS_PER_BATCH = 40;
-
 // Runtime guard (this codebase has no compile-time static_assert): if a
 // future column addition to one of these tables changes params-per-row
 // without updating the matching ROWS_PER_STATEMENT constant, this throws
 // immediately at module load instead of silently reintroducing the
-// subrequest-cap bug this function exists to fix.
-function assertRowBudget(rowsPerStatement: number, paramsPerRow: number, label: string): void {
-  const total = rowsPerStatement * paramsPerRow;
-  if (total > D1_MAX_BOUND_PARAMS) {
-    throw new Error(
-      `${label}: ${rowsPerStatement} rows * ${paramsPerRow} params/row = ${total} exceeds D1's ${D1_MAX_BOUND_PARAMS}-bound-parameter-per-statement limit`
-    );
-  }
-}
+// subrequest-cap bug this function exists to fix. Imported from ../db/batch.
 assertRowBudget(KEYWORDS_ROWS_PER_STATEMENT, KEYWORDS_PARAMS_PER_ROW, 'keywords insert');
 assertRowBudget(JOIN_ROWS_PER_STATEMENT, JOIN_PARAMS_PER_ROW, 'join table insert');
 
@@ -161,25 +149,6 @@ assertRowBudget(JOIN_ROWS_PER_STATEMENT, JOIN_PARAMS_PER_ROW, 'join table insert
 function cpcToMicro(cpc: number | null): number | null {
   if (cpc === null || !Number.isFinite(cpc) || cpc < 0) return null;
   return Math.round(cpc * 1_000_000);
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
-// Sends `statements` through d1.batch() in groups of STATEMENTS_PER_BATCH.
-// d1.batch() is transactional per call (not across calls), which matches
-// this function's existing consistency contract: it was never atomic across
-// its own 3-round-trips-per-keyword loop either, so grouping into several
-// batch() calls introduces no new partial-write exposure versus the
-// original.
-async function runBatchedStatements(d1: D1Database, statements: D1PreparedStatement[]): Promise<void> {
-  for (const group of chunk(statements, STATEMENTS_PER_BATCH)) {
-    if (group.length === 0) continue;
-    await d1.batch(group);
-  }
 }
 
 // Builds and persists one join table's rows (keyword_services,
