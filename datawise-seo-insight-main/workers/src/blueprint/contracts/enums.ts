@@ -12,8 +12,10 @@ export const PAGE_TYPES = [
 ] as const;
 export type PageType = (typeof PAGE_TYPES)[number];
 
-export type SearchIntent =
-  | 'transactional' | 'commercial' | 'informational' | 'navigational' | 'unknown';
+export const SEARCH_INTENTS = [
+  'transactional', 'commercial', 'informational', 'navigational', 'unknown',
+] as const;
+export type SearchIntent = (typeof SEARCH_INTENTS)[number];
 
 export type EvidenceProvider = 'dataforseo' | 'openrouter' | 'existing_site' | 'user';
 

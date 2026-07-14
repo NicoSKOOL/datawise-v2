@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createTestDb } from '../../test-support/d1';
 import { newId, nowIso } from '../../db/util';
 import { normalizeKeyword } from '../../domain/keyword';
+import { dfsCacheKey } from './call';
 import {
   loadKeywordEnrichmentFromArtifacts,
   loadCompetitorRankingUrls,
@@ -43,6 +44,41 @@ function fakeR2() {
       objects.set(key, { body: value, size });
     },
   };
+}
+
+// In-memory KV fake, standing in for call.ts's env.KV response cache. Only
+// get/put are needed here; expirationTtl is accepted (matching call.ts's
+// step 7 signature) but not enforced -- absence/expiry is modeled by simply
+// never seeding a key, not by simulating a clock.
+function fakeKv() {
+  const store = new Map<string, string>();
+  const get = vi.fn(async (key: string) => store.get(key) ?? null);
+  const bucket = {
+    get,
+    async put(key: string, value: string, _opts?: { expirationTtl?: number }) {
+      store.set(key, value);
+    },
+  };
+  return { kv: bucket as unknown as KVNamespace, get };
+}
+
+// Inserts an evidence_refs row shaped exactly like a cache-hit call.ts
+// produces (blueprintDfsCall step 1-2): artifact_id NULL, operation suffixed
+// ':cache', no corresponding artifacts row at all. Callers separately seed
+// the response under fakeKv() at dfsCacheKey(requestHash) to model the
+// still-warm KV entry the row's request_hash points at.
+async function seedCacheHitEvidenceRef(
+  d1: D1Database,
+  args: { runId: string; kind: string; operation: string; requestHash: string }
+): Promise<void> {
+  await d1
+    .prepare(
+      `INSERT INTO evidence_refs
+        (id, run_id, provider, kind, operation, request_hash, fetched_at, cost_usd_micro, artifact_id)
+       VALUES (?, ?, 'dataforseo', ?, ?, ?, ?, 0, NULL)`
+    )
+    .bind(newId('evr'), args.runId, args.kind, args.operation, args.requestHash, nowIso())
+    .run();
 }
 
 async function seedOrg(d1: D1Database): Promise<{ projectId: string; runId: string }> {
@@ -101,6 +137,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     const item = {
       keyword: 'AC Repair Austin',
       keyword_properties: { core_keyword: 'ac repair' },
@@ -120,7 +157,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       body: dfsEnvelope([item]),
     });
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(1);
     expect(result.artifactsMissing).toBe(0);
@@ -140,6 +177,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     const item = {
       keyword_data: {
         keyword: 'plumber round rock',
@@ -161,7 +199,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       body: dfsEnvelope([item]),
     });
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     const key = normalizeKeyword('plumber round rock', LOCALE);
     expect(result.data.get(key)).toEqual({
@@ -179,6 +217,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     // "aaa" sorts before "bbb": the first artifact's core_keyword wins, but
     // its missing avg_backlinks_info is backfilled from the second artifact.
     await seedArtifact(d1, r2, {
@@ -209,7 +248,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       ]),
     });
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     const key = normalizeKeyword('roof repair', LOCALE);
     const enrichment = result.data.get(key);
@@ -222,6 +261,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'keyword_metric',
@@ -248,7 +288,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       .bind(newId('evr'), runId, nowIso(), artifactId)
       .run();
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(1);
     expect(result.artifactsMissing).toBe(1);
@@ -259,6 +299,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     const storageKey = `runs/${runId}/dfs/huge.json`;
     r2.putWithSize(storageKey, JSON.stringify(dfsEnvelope([{ keyword: 'too big' }])), 26 * 1024 * 1024);
     const artifactId = newId('art');
@@ -279,7 +320,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       .bind(newId('evr'), runId, nowIso(), artifactId)
       .run();
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(0);
     expect(result.artifactsMissing).toBe(1);
@@ -290,6 +331,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'keyword_metric',
@@ -305,7 +347,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       body: dfsEnvelope([{ keyword: 'ac repair austin', keyword_info: { competition: 0.3 } }]),
     });
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.data.size).toBe(1);
     const enrichment = result.data.get(normalizeKeyword('ac repair austin', LOCALE));
@@ -317,6 +359,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'keyword_metric',
@@ -325,7 +368,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       body: dfsEnvelope([{ keyword: 'no data keyword' }]),
     });
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     // Design choice (documented in the brief as either acceptable): a
     // keyword with zero enrichable fields still gets a map entry, all null.
@@ -343,10 +386,88 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
     });
   });
 
+  it('nulls out main_intent for a label outside the SearchIntent union instead of casting it through', async () => {
+    const { d1 } = createTestDb();
+    const { runId } = await seedOrg(d1);
+    const r2 = fakeR2();
+    const { kv } = fakeKv();
+    await seedArtifact(d1, r2, {
+      runId,
+      kind: 'keyword_metric',
+      operation: 'keyword_ideas',
+      storageKey: `runs/${runId}/dfs/unexpected-intent.json`,
+      body: dfsEnvelope([
+        { keyword: 'weird intent keyword', search_intent_info: { main_intent: 'Promotional' } },
+      ]),
+    });
+
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
+
+    expect(result.data.get(normalizeKeyword('weird intent keyword', LOCALE))?.mainIntent).toBeNull();
+  });
+
+  // Models the real cache-hit shape (call.ts blueprintDfsCall step 1-2): the
+  // evidence_refs row has artifact_id NULL and the response is only
+  // recoverable from the KV response cache. Before this fix, the discovery
+  // query's INNER JOIN silently dropped rows exactly like this one.
+  it('recovers a cache-hit evidence_refs row (artifact_id NULL) from the KV response cache', async () => {
+    const { d1 } = createTestDb();
+    const { runId } = await seedOrg(d1);
+    const r2 = fakeR2();
+    const { kv } = fakeKv();
+    const requestHash = 'reqhash-enrichment-cache-hit';
+    await seedCacheHitEvidenceRef(d1, {
+      runId,
+      kind: 'keyword_metric',
+      operation: 'keyword_ideas:cache',
+      requestHash,
+    });
+    await kv.put(
+      dfsCacheKey(requestHash),
+      JSON.stringify(
+        dfsEnvelope([{ keyword: 'furnace repair', keyword_properties: { core_keyword: 'furnace' } }])
+      )
+    );
+
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
+
+    expect(result.artifactsRead).toBe(1);
+    expect(result.artifactsMissing).toBe(0);
+    expect(result.data.get(normalizeKeyword('furnace repair', LOCALE))?.coreKeyword).toBe('furnace');
+  });
+
+  it('counts a cache-hit row as artifactsMissing when its KV entry is expired/absent, without dropping other artifacts', async () => {
+    const { d1 } = createTestDb();
+    const { runId } = await seedOrg(d1);
+    const r2 = fakeR2();
+    const { kv } = fakeKv();
+    await seedArtifact(d1, r2, {
+      runId,
+      kind: 'keyword_metric',
+      operation: 'keyword_ideas',
+      storageKey: `runs/${runId}/dfs/present.json`,
+      body: dfsEnvelope([{ keyword: 'gutter cleaning', keyword_properties: { core_keyword: 'gutter' } }]),
+    });
+    // Cache-hit row whose KV entry was never seeded (expired or evicted).
+    await seedCacheHitEvidenceRef(d1, {
+      runId,
+      kind: 'keyword_metric',
+      operation: 'keyword_ideas:cache',
+      requestHash: 'reqhash-enrichment-gone',
+    });
+
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
+
+    expect(result.artifactsRead).toBe(1);
+    expect(result.artifactsMissing).toBe(1);
+    expect(result.data.get(normalizeKeyword('gutter cleaning', LOCALE))?.coreKeyword).toBe('gutter');
+  });
+
   it('ignores non-keyword-shaped ranking items (e.g. competitor_discovery domain items) without throwing', async () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'ranking',
@@ -355,7 +476,7 @@ describe('loadKeywordEnrichmentFromArtifacts', () => {
       body: dfsEnvelope([{ domain: 'rival.com', intersections: 5 }]),
     });
 
-    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, runId, LOCALE);
+    const result = await loadKeywordEnrichmentFromArtifacts(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(1);
     expect(result.artifactsMissing).toBe(0);
@@ -374,6 +495,7 @@ describe('loadCompetitorRankingUrls', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'ranking',
@@ -386,7 +508,7 @@ describe('loadCompetitorRankingUrls', () => {
       ]),
     });
 
-    const result = await loadCompetitorRankingUrls(d1, r2.bucket, runId, LOCALE);
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(1);
     expect(result.artifactsMissing).toBe(0);
@@ -394,28 +516,128 @@ describe('loadCompetitorRankingUrls', () => {
     expect(result.data.get(key)).toEqual(['other.com/plumbing', 'rival.com/services/plumbing']);
   });
 
-  it('also reads the ranked_keywords:cache operation variant', async () => {
+  // Models the real cache-hit shape (call.ts blueprintDfsCall step 1-2): no
+  // R2 object or artifacts row for this run at all -- artifact_id is NULL --
+  // and the response is only recoverable from the KV response cache, keyed
+  // by dfsCacheKey(request_hash). Before this fix, the discovery query's
+  // INNER JOIN silently dropped rows exactly like this one.
+  it('also reads the ranked_keywords:cache operation variant, recovered from the KV response cache', async () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
-    await seedArtifact(d1, r2, {
+    const { kv } = fakeKv();
+    const requestHash = 'reqhash-cache-hit';
+    await seedCacheHitEvidenceRef(d1, {
       runId,
       kind: 'ranking',
       operation: 'ranked_keywords:cache',
-      storageKey: `runs/${runId}/dfs/cached.json`,
-      body: dfsEnvelope([rankedItem('drain cleaning', 'https://cached-rival.com/drains')]),
+      requestHash,
     });
+    await kv.put(
+      dfsCacheKey(requestHash),
+      JSON.stringify(dfsEnvelope([rankedItem('drain cleaning', 'https://cached-rival.com/drains')]))
+    );
 
-    const result = await loadCompetitorRankingUrls(d1, r2.bucket, runId, LOCALE);
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(1);
+    expect(result.artifactsMissing).toBe(0);
     expect(result.data.get(normalizeKeyword('drain cleaning', LOCALE))).toEqual(['cached-rival.com/drains']);
+  });
+
+  it('counts a cache-hit row as artifactsMissing when its KV entry is expired/absent, without dropping other rows', async () => {
+    const { d1 } = createTestDb();
+    const { runId } = await seedOrg(d1);
+    const r2 = fakeR2();
+    const { kv } = fakeKv();
+    // Present: a real R2 artifact.
+    await seedArtifact(d1, r2, {
+      runId,
+      kind: 'ranking',
+      operation: 'ranked_keywords',
+      storageKey: `runs/${runId}/dfs/present.json`,
+      body: dfsEnvelope([rankedItem('emergency plumber', 'https://rival.com/plumbing')]),
+    });
+    // Cache-hit row whose KV entry was never seeded (expired or evicted).
+    await seedCacheHitEvidenceRef(d1, {
+      runId,
+      kind: 'ranking',
+      operation: 'ranked_keywords:cache',
+      requestHash: 'reqhash-gone',
+    });
+
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
+
+    expect(result.artifactsRead).toBe(1);
+    expect(result.artifactsMissing).toBe(1);
+    expect(result.data.get(normalizeKeyword('emergency plumber', LOCALE))).toEqual(['rival.com/plumbing']);
+  });
+
+  it('dedupes the KV fetch by request_hash when multiple cache-hit rows share one request', async () => {
+    const { d1 } = createTestDb();
+    const { runId } = await seedOrg(d1);
+    const r2 = fakeR2();
+    const { kv, get } = fakeKv();
+    const requestHash = 'reqhash-shared';
+    await seedCacheHitEvidenceRef(d1, { runId, kind: 'ranking', operation: 'ranked_keywords:cache', requestHash });
+    await seedCacheHitEvidenceRef(d1, { runId, kind: 'ranking', operation: 'ranked_keywords:cache', requestHash });
+    await kv.put(
+      dfsCacheKey(requestHash),
+      JSON.stringify(dfsEnvelope([rankedItem('drain cleaning', 'https://cached-rival.com/drains')]))
+    );
+
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
+
+    // Both evidence_refs rows are counted, but the underlying KV read only
+    // happens once (the DISTINCT SQL already collapses two identical
+    // (storageKey=null, requestHash) rows into one, so a single call is the
+    // correct outcome here, not "would have been 2 without dedup").
+    expect(result.artifactsRead).toBe(1);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(result.data.get(normalizeKeyword('drain cleaning', LOCALE))).toEqual(['cached-rival.com/drains']);
+  });
+
+  // True production shape (competitors.ts normalizeRankedKeywordItem /
+  // routes/competitors.ts): keyword lives nested under keyword_data, while
+  // the ranking URL is NOT nested under keyword_data -- it's a sibling
+  // ranked_serp_element.serp_item.url. The rankedItem() fixture above (a
+  // flat `keyword` field) is not representative of a real ranked_keywords
+  // response; this exercises the actual nesting extractRankingUrlItem must
+  // handle.
+  it('reads a true production-shaped ranked_keywords item (keyword nested under keyword_data)', async () => {
+    const { d1 } = createTestDb();
+    const { runId } = await seedOrg(d1);
+    const r2 = fakeR2();
+    const { kv } = fakeKv();
+    const productionShapedItem = {
+      keyword_data: {
+        keyword: 'water heater installation',
+        keyword_info: { search_volume: 90 },
+      },
+      ranked_serp_element: {
+        serp_item: { url: 'https://rival.com/water-heater-installation', rank_group: 3, type: 'organic' },
+      },
+    };
+    await seedArtifact(d1, r2, {
+      runId,
+      kind: 'ranking',
+      operation: 'ranked_keywords',
+      storageKey: `runs/${runId}/dfs/production-shaped.json`,
+      body: dfsEnvelope([productionShapedItem]),
+    });
+
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
+
+    expect(result.artifactsRead).toBe(1);
+    const key = normalizeKeyword('water heater installation', LOCALE);
+    expect(result.data.get(key)).toEqual(['rival.com/water-heater-installation']);
   });
 
   it('excludes competitor_discovery ranking artifacts (wrong operation) from the ranked_keywords readback', async () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'ranking',
@@ -424,7 +646,7 @@ describe('loadCompetitorRankingUrls', () => {
       body: dfsEnvelope([{ domain: 'rival.com', intersections: 5 }]),
     });
 
-    const result = await loadCompetitorRankingUrls(d1, r2.bucket, runId, LOCALE);
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(0);
     expect(result.artifactsMissing).toBe(0);
@@ -435,6 +657,7 @@ describe('loadCompetitorRankingUrls', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     const artifactId = newId('art');
     await d1
       .prepare(
@@ -453,7 +676,7 @@ describe('loadCompetitorRankingUrls', () => {
       .bind(newId('evr'), runId, nowIso(), artifactId)
       .run();
 
-    const result = await loadCompetitorRankingUrls(d1, r2.bucket, runId, LOCALE);
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.artifactsRead).toBe(0);
     expect(result.artifactsMissing).toBe(1);
@@ -464,6 +687,7 @@ describe('loadCompetitorRankingUrls', () => {
     const { d1 } = createTestDb();
     const { runId } = await seedOrg(d1);
     const r2 = fakeR2();
+    const { kv } = fakeKv();
     await seedArtifact(d1, r2, {
       runId,
       kind: 'ranking',
@@ -475,7 +699,7 @@ describe('loadCompetitorRankingUrls', () => {
       ]),
     });
 
-    const result = await loadCompetitorRankingUrls(d1, r2.bucket, runId, LOCALE);
+    const result = await loadCompetitorRankingUrls(d1, r2.bucket, kv, runId, LOCALE);
 
     expect(result.data.size).toBe(1);
     expect(result.data.get(normalizeKeyword('water heater repair', LOCALE))).toEqual(['a.com/wh', 'b.com/wh']);

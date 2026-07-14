@@ -17,6 +17,15 @@ export function dollarsToMicro(usd: number): number {
   return Math.round(usd * 1_000_000);
 }
 
+// The KV key every DFS response (paid or free-catalog) is cached under,
+// keyed by the same request_hash recorded on evidence_refs. Exported so
+// evidence-readback.ts can recover a cache-hit call's response (artifact_id
+// NULL, no R2 object for that run) from the still-warm KV entry instead of
+// duplicating this string format.
+export function dfsCacheKey(requestHash: string): string {
+  return `bp:dfs:${requestHash}`;
+}
+
 export interface DfsCallSpec {
   method: 'GET' | 'POST';
   endpoint: string; // e.g. '/dataforseo_labs/google/keyword_ideas/live'
@@ -136,7 +145,7 @@ export async function blueprintDfsCall(ctx: StageContext, spec: DfsCallSpec): Pr
   const isFreeCall = spec.estimateUsdMicro === 0;
 
   const requestHash = await hashNormalizedInput([spec.method, spec.endpoint, spec.body ?? spec.bodies ?? null]);
-  const cacheKey = `bp:dfs:${requestHash}`;
+  const cacheKey = dfsCacheKey(requestHash);
 
   // 1-2: cache hit. Zero fetches, zero reservations, cost 0. Evidence is
   // still recorded for billable operations (operation suffixed ':cache') so
