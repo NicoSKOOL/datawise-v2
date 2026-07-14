@@ -8,6 +8,7 @@ import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler, StageContext } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
+import { buildProvisionalClustersHandler } from './clustering-handlers';
 
 // Same STAGE_HANDLERS-driven approach research-handlers.test.ts uses: drive
 // the real registry through processResearchRun so completeStage really
@@ -470,5 +471,545 @@ describe('embedKeywordFeaturesHandler (via processResearchRun)', () => {
       const ids = parsed.vectors.map((v: any) => v.keywordId);
       expect(ids).not.toContain('kw_excluded');
     }
+  });
+});
+
+// ===== buildProvisionalClustersHandler =====
+
+// Seeds a ranked_keywords-shaped artifact so loadCompetitorRankingUrls's
+// readback finds real SERP URLs for the given keyword/url pairs. Mirrors
+// seedEnrichmentArtifact above but with kind='ranking'/operation=
+// 'ranked_keywords' and the ranked_serp_element.serp_item.url shape
+// evidence-readback.ts's extractRankingUrlItem reads.
+async function seedRankingUrlArtifact(
+  d1: D1Database,
+  r2: R2Bucket,
+  args: { runId: string; storageKey: string; items: Array<{ keyword: string; url: string }> }
+): Promise<void> {
+  const artifactId = newId('art');
+  await r2.put(
+    args.storageKey,
+    JSON.stringify(
+      dfsEnvelope(
+        args.items.map((i) => ({ keyword: i.keyword, ranked_serp_element: { serp_item: { url: i.url } } }))
+      )
+    )
+  );
+  await d1
+    .prepare(
+      `INSERT INTO artifacts (id, organization_id, run_id, kind, storage_key, sha256, content_type, byte_size, encrypted, created_at)
+       VALUES (?, 'org1', ?, 'ranking', ?, 'sha', 'application/json', 1, 0, ?)`
+    )
+    .bind(artifactId, args.runId, args.storageKey, nowIso())
+    .run();
+  await d1
+    .prepare(
+      `INSERT INTO evidence_refs (id, run_id, provider, kind, operation, request_hash, fetched_at, cost_usd_micro, artifact_id)
+       VALUES (?, ?, 'dataforseo', 'ranking', 'ranked_keywords', ?, ?, 0, ?)`
+    )
+    .bind(newId('evr'), args.runId, args.storageKey, nowIso(), artifactId)
+    .run();
+}
+
+// Inserts a research_stage_runs row directly (bypassing the lease/queue
+// machinery entirely), so a handler can be unit-tested via a hand-built
+// StageContext without driving the whole pipeline through
+// processResearchRun. Mirrors what completeStage (db/leases.ts) would leave
+// behind for loadStageOutput's purposes: only status/output_json/finished_at
+// matter to that reader.
+async function seedStageOutput(
+  d1: D1Database,
+  runId: string,
+  stage: string,
+  output: unknown,
+  status: 'succeeded' | 'partial' | 'skipped' = 'succeeded'
+): Promise<void> {
+  await d1
+    .prepare(
+      `INSERT INTO research_stage_runs (id, run_id, stage_name, stage_input_hash, status, output_json, finished_at)
+       VALUES (?, ?, ?, 'hash', ?, ?, ?)`
+    )
+    .bind(newId('rsr'), runId, stage, status, JSON.stringify(output), nowIso())
+    .run();
+}
+
+async function seedBaseRun(): Promise<{
+  d1: D1Database;
+  raw: import('better-sqlite3').Database;
+  runId: string;
+  projectId: string;
+  briefVersionId: string;
+}> {
+  const { d1, raw } = createTestDb();
+  const projectId = await seedProject(d1);
+  const briefVersionId = await seedBriefVersion(d1, projectId);
+  const runId = await seedRun(d1, projectId, briefVersionId);
+  return { d1, raw, runId, projectId, briefVersionId };
+}
+
+// Hand-built StageContext for direct handler unit tests (same pattern
+// research-handlers.test.ts's "throws provider_invalid_response when
+// resolve_market has no output" test uses for collectKeywordEvidenceHandler).
+async function buildDirectCtx(
+  d1: D1Database,
+  r2: R2Bucket,
+  kv: KVNamespace,
+  runId: string,
+  projectId: string,
+  briefVersionId: string
+): Promise<StageContext> {
+  const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+  const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+  return {
+    env: { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: { send: async () => undefined }, ...providerFields(r2, kv) } as any,
+    d1,
+    runId,
+    projectId,
+    briefVersionId,
+    normalizedBrief,
+    stage: 'build_provisional_clusters',
+    attempt: 1,
+  };
+}
+
+describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
+  it('persists clusters with sane confidence, exactly one primary per cluster, and representative queries', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+
+    const r2 = fakeR2();
+    const kv = fakeKv();
+    const sent: unknown[] = [];
+    const env: BlueprintProviderEnv = {
+      BLUEPRINT_DB: d1,
+      BLUEPRINT_QUEUE: { send: async (body: unknown) => void sent.push(body) },
+      ...providerFields(r2, kv),
+    };
+
+    let evidenceRefId = '';
+
+    // Fixed vectors (not the real embedKeywordFeaturesHandler / fake AI
+    // binding): identical vectors give an exact cosine of 1, orthogonal
+    // vectors give an exact cosine of 0, so this cluster's shape is fully
+    // deterministic instead of depending on pseudoVector's hash-based
+    // (effectively random, for unrelated strings) similarity.
+    const VEC: Record<string, number[]> = {
+      'drain cleaning austin': [1, 0, 0, 0],
+      'drain cleaning services austin': [1, 0, 0, 0],
+      'plumber austin reviews': [0, 1, 0, 0],
+      'bluedogplumbing austin': [0, 0, 1, 0],
+    };
+
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      ...baseOverrides(),
+      discover_competitors: async (ctx: StageContext) => {
+        await ctx.d1
+          .prepare(`INSERT INTO competitors (id, run_id, domain, source, selected) VALUES (?, ?, ?, 'dfs_discovery', 1)`)
+          .bind(newId('cmp'), ctx.runId, 'bluedogplumbing.com')
+          .run();
+        return { output: { stub: true }, status: 'succeeded' as const };
+      },
+      collect_keyword_evidence: async (ctx: StageContext) => {
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_a', normalizedKeyword: 'drain cleaning austin', searchVolume: 500 });
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_b', normalizedKeyword: 'drain cleaning services austin' });
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_c', normalizedKeyword: 'plumber austin reviews', searchVolume: 300 });
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_brand', normalizedKeyword: 'bluedogplumbing austin' });
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_excluded', normalizedKeyword: 'plumber jobs' });
+
+        await seedEnrichmentArtifact(ctx.d1, r2, {
+          runId: ctx.runId,
+          storageKey: `runs/${ctx.runId}/dfs/a.json`,
+          keyword: 'drain cleaning austin',
+          coreKeyword: 'drain cleaning',
+          mainIntent: 'transactional',
+        });
+        await seedEnrichmentArtifact(ctx.d1, r2, {
+          runId: ctx.runId,
+          storageKey: `runs/${ctx.runId}/dfs/b.json`,
+          keyword: 'drain cleaning services austin',
+          coreKeyword: 'drain cleaning',
+          mainIntent: 'transactional',
+        });
+        await seedEnrichmentArtifact(ctx.d1, r2, {
+          runId: ctx.runId,
+          storageKey: `runs/${ctx.runId}/dfs/c.json`,
+          keyword: 'plumber austin reviews',
+          coreKeyword: 'plumber reviews',
+          mainIntent: 'informational',
+        });
+        await seedEnrichmentArtifact(ctx.d1, r2, {
+          runId: ctx.runId,
+          storageKey: `runs/${ctx.runId}/dfs/brand.json`,
+          keyword: 'bluedogplumbing austin',
+          coreKeyword: 'bluedogplumbing',
+          mainIntent: 'navigational',
+        });
+
+        evidenceRefId = newId('evr');
+        await ctx.d1
+          .prepare(
+            `INSERT INTO evidence_refs (id, run_id, provider, kind, operation, request_hash, fetched_at, cost_usd_micro)
+             VALUES (?, ?, 'dataforseo', 'keyword_metric', 'keyword_ideas', 'evref-1', ?, 0)`
+          )
+          .bind(evidenceRefId, ctx.runId, nowIso())
+          .run();
+        await ctx.d1
+          .prepare(`INSERT INTO keyword_evidence_refs (keyword_id, evidence_ref_id) VALUES (?, ?)`)
+          .bind('kw_a', evidenceRefId)
+          .run();
+
+        return { output: { stub: true }, status: 'succeeded' as const };
+      },
+      embed_keyword_features: async (ctx: StageContext) => {
+        const result = await ctx.d1
+          .prepare(
+            `SELECT id, normalized_keyword FROM keywords WHERE run_id = ? AND excluded_reason IS NULL ORDER BY normalized_keyword ASC`
+          )
+          .bind(ctx.runId)
+          .all<{ id: string; normalized_keyword: string }>();
+        const retained = result.results ?? [];
+        const vectors = retained.map((row) => ({
+          keywordId: row.id,
+          normalizedKeyword: row.normalized_keyword,
+          contentHash: 'h',
+          vector: VEC[row.normalized_keyword],
+        }));
+        const storageKey = `runs/${ctx.runId}/embeddings/0.json`;
+        await r2.put(storageKey, JSON.stringify({ model: 'fake-model', dimensions: 4, template: 'kw_v1', vectors }));
+        return {
+          output: {
+            stage: 'embed_keyword_features',
+            model: 'fake-model',
+            dimensions: 4,
+            vectorCount: vectors.length,
+            batchCount: 1,
+            inputHash: 'fake-hash',
+            truncatedCount: 0,
+            artifacts: [{ artifactId: 'art_fake', storageKey, count: vectors.length }],
+            rulesetVersion: 'cluster-v1',
+          },
+          status: 'succeeded' as const,
+        };
+      },
+    };
+
+    await driveToNormalizeUniverse(env, runId, sent, overrides);
+
+    const stageRow = await d1
+      .prepare(`SELECT status, output_json, ruleset_version FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, 'build_provisional_clusters')
+      .first<{ status: string; output_json: string; ruleset_version: string }>();
+    expect(stageRow).toBeTruthy();
+    expect(stageRow!.status).toBe('succeeded');
+    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+
+    const output = JSON.parse(stageRow!.output_json);
+    expect(output).toMatchObject({
+      stage: 'build_provisional_clusters',
+      keywordCount: 4,
+      clusterCount: 3,
+      singletonCount: 2,
+      edgeCount: 6,
+      forbiddenEdgeCount: 5,
+      blockedByCap: 0,
+      oversizedSplit: 0,
+      rulesetVersion: 'cluster-v1',
+    });
+    // dims=4 in this fixture, deliberately narrower than the ruleset's
+    // pinned 1024 -- proves the self-consistent-but-off-ruleset-width
+    // warning plumbing without throwing.
+    expect(output.warnings).toEqual(['unexpected_embedding_dimensions']);
+
+    expect(output.representativeQueries).toHaveLength(1);
+    const rq = output.representativeQueries[0];
+    expect(rq.serviceAreaId).toBe('a1');
+
+    const clusterRows = raw
+      .prepare(
+        `SELECT id, service_id, service_area_id, primary_keyword_id, confidence_score, confidence_label,
+                page_candidate, adjudication_json, ruleset_version, score_breakdown_json, decision_reason
+         FROM keyword_clusters WHERE run_id = ? ORDER BY id`
+      )
+      .all(runId) as Array<{
+      id: string;
+      service_id: string | null;
+      service_area_id: string | null;
+      primary_keyword_id: string;
+      confidence_score: number;
+      confidence_label: string;
+      page_candidate: string | null;
+      adjudication_json: string | null;
+      ruleset_version: string;
+      score_breakdown_json: string;
+      decision_reason: string;
+    }>;
+    expect(clusterRows).toHaveLength(3);
+    for (const row of clusterRows) {
+      expect(row.page_candidate).toBeNull();
+      expect(row.adjudication_json).toBeNull();
+      expect(row.ruleset_version).toBe('cluster-v1');
+      expect(['low', 'medium', 'high']).toContain(row.confidence_label);
+      expect(row.decision_reason).toContain('cluster-v1');
+      const breakdown = JSON.parse(row.score_breakdown_json);
+      expect(breakdown.rulesetVersion).toBe('cluster-v1');
+      expect(Array.isArray(breakdown.evidenceRefIds)).toBe(true);
+    }
+
+    const memberRows = raw
+      .prepare(`SELECT cluster_id, keyword_id, is_primary FROM cluster_keywords ORDER BY cluster_id, keyword_id`)
+      .all() as Array<{ cluster_id: string; keyword_id: string; is_primary: number }>;
+    expect(memberRows).toHaveLength(4); // one row per retained keyword, none dropped
+
+    const byCluster = new Map<string, typeof memberRows>();
+    for (const m of memberRows) {
+      const arr = byCluster.get(m.cluster_id) ?? [];
+      arr.push(m);
+      byCluster.set(m.cluster_id, arr);
+    }
+    for (const members of byCluster.values()) {
+      expect(members.filter((m) => m.is_primary === 1)).toHaveLength(1);
+    }
+
+    const groups = [...byCluster.values()];
+    const multiMember = groups.find((g) => g.length === 2);
+    expect(multiMember).toBeTruthy();
+    const multiClusterId = multiMember![0].cluster_id;
+    const multiRow = clusterRows.find((r) => r.id === multiClusterId)!;
+    // metricCoverage=0.5 (kw_a has volume, kw_b doesn't), intentCertainty=1.0
+    // (both transactional), serpAgreement=null (no SERP evidence) -> avg 0.75.
+    expect(multiRow.confidence_score).toBeCloseTo(0.75, 6);
+    expect(multiRow.confidence_label).toBe('medium');
+    const multiBreakdown = JSON.parse(multiRow.score_breakdown_json);
+    expect(multiBreakdown.evidenceRefIds).toContain(evidenceRefId);
+    expect(rq.clusterId).toBe(multiClusterId);
+    expect(rq.keywordId).toBe(multiRow.primary_keyword_id);
+
+    const singletonLabels = groups
+      .filter((g) => g.length === 1)
+      .map((g) => clusterRows.find((r) => r.id === g[0].cluster_id)!.confidence_label)
+      .sort();
+    // kw_c: metricCoverage=1 (has volume), intentCertainty=1 (singleton
+    // matches its own intent) -> avg 1.0 -> 'high'.
+    // kw_brand: metricCoverage=0 (no volume), intentCertainty=1 -> avg 0.5 -> 'low'.
+    expect(singletonLabels).toEqual(['high', 'low']);
+  });
+
+  it('is retry-safe: a second invocation resets and reapplies cleanly (no duplicate rows)', async () => {
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kw1', normalizedKeyword: 'drain cleaning austin' });
+    await insertKeywordRow(d1, runId, { id: 'kw2', normalizedKeyword: 'pipe repair dallas' });
+    await insertKeywordRow(d1, runId, { id: 'kw3', normalizedKeyword: 'water heater install miami' });
+
+    const r2 = fakeR2();
+    const vectors = [
+      { keywordId: 'kw1', normalizedKeyword: 'drain cleaning austin', contentHash: 'h1', vector: [1, 0, 0, 0] },
+      { keywordId: 'kw2', normalizedKeyword: 'pipe repair dallas', contentHash: 'h2', vector: [0, 1, 0, 0] },
+      { keywordId: 'kw3', normalizedKeyword: 'water heater install miami', contentHash: 'h3', vector: [0, 0, 1, 0] },
+    ];
+    const storageKey = `runs/${runId}/embeddings/0.json`;
+    await r2.put(storageKey, JSON.stringify({ model: 'fake-model', dimensions: 4, template: 'kw_v1', vectors }));
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 4,
+      vectorCount: 3,
+      batchCount: 1,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [{ artifactId: 'art1', storageKey, count: 3 }],
+      rulesetVersion: 'cluster-v1',
+    });
+
+    const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
+
+    await buildProvisionalClustersHandler(ctx);
+    const clusterCount1 = (raw.prepare(`SELECT COUNT(*) AS n FROM keyword_clusters WHERE run_id = ?`).get(runId) as { n: number }).n;
+    const memberCount1 = (raw.prepare(`SELECT COUNT(*) AS n FROM cluster_keywords`).get() as { n: number }).n;
+    expect(clusterCount1).toBe(3); // three mutually-orthogonal, unrelated vectors -> 3 singletons
+    expect(memberCount1).toBe(3);
+
+    await buildProvisionalClustersHandler(ctx);
+    const clusterCount2 = (raw.prepare(`SELECT COUNT(*) AS n FROM keyword_clusters WHERE run_id = ?`).get(runId) as { n: number }).n;
+    const memberCount2 = (raw.prepare(`SELECT COUNT(*) AS n FROM cluster_keywords`).get() as { n: number }).n;
+    expect(clusterCount2).toBe(clusterCount1);
+    expect(memberCount2).toBe(memberCount1);
+  });
+
+  it('a truncated keyword (no vector) still clusters via the SERP/intent path', async () => {
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kw1', normalizedKeyword: 'drain cleaning austin' });
+    await insertKeywordRow(d1, runId, { id: 'kw2', normalizedKeyword: 'drain cleaning services austin' });
+    await d1
+      .prepare(`UPDATE keywords SET main_intent = 'transactional' WHERE id IN ('kw1', 'kw2')`)
+      .run();
+
+    const r2 = fakeR2();
+    // Only kw1 gets a vector -- kw2 is "truncated" (no vector at all, same
+    // observable shape as embed_keyword_features's own truncatedCount>0
+    // path: a retained keyword absent from every batch).
+    const vectors = [{ keywordId: 'kw1', normalizedKeyword: 'drain cleaning austin', contentHash: 'h1', vector: [1, 0, 0, 0] }];
+    const storageKey = `runs/${runId}/embeddings/0.json`;
+    await r2.put(storageKey, JSON.stringify({ model: 'fake-model', dimensions: 4, template: 'kw_v1', vectors }));
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 4,
+      vectorCount: 1,
+      batchCount: 1,
+      inputHash: 'h',
+      truncatedCount: 1,
+      artifacts: [{ artifactId: 'art1', storageKey, count: 1 }],
+      rulesetVersion: 'cluster-v1',
+    });
+
+    await seedRankingUrlArtifact(d1, r2, {
+      runId,
+      storageKey: `runs/${runId}/dfs/ranked.json`,
+      items: [
+        { keyword: 'drain cleaning austin', url: 'https://example.com/page' },
+        { keyword: 'drain cleaning services austin', url: 'https://example.com/page' },
+      ],
+    });
+
+    const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
+    const result = await buildProvisionalClustersHandler(ctx);
+    expect(result.status).toBe('succeeded');
+    const output = result.output as { clusterCount: number; singletonCount: number; keywordCount: number };
+    expect(output.keywordCount).toBe(2);
+    expect(output.clusterCount).toBe(1);
+    expect(output.singletonCount).toBe(0);
+
+    const memberRows = raw.prepare(`SELECT keyword_id FROM cluster_keywords`).all() as Array<{ keyword_id: string }>;
+    expect(memberRows.map((r) => r.keyword_id).sort()).toEqual(['kw1', 'kw2']);
+  });
+
+  it('reports a truthful zero-cluster result (not a throw) when the keyword universe is legitimately empty', async () => {
+    // Mirrors process-run.test.ts's "Finding 1" scenario: collect_keyword_evidence
+    // (a REQUIRED stage) can degrade to 'partial' having persisted zero
+    // keywords, in which case embed_keyword_features runs for real over zero
+    // inputs and reports a real vectorCount:0 'succeeded' output -- that is
+    // not a signal that embeddings broke, it is a signal there was nothing to
+    // embed. build_provisional_clusters must not fail the whole run over it.
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 4,
+      vectorCount: 0,
+      batchCount: 0,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [],
+      rulesetVersion: 'cluster-v1',
+    });
+    const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
+    const result = await buildProvisionalClustersHandler(ctx);
+    expect(result.status).toBe('succeeded');
+    expect(result.output).toMatchObject({ keywordCount: 0, clusterCount: 0, singletonCount: 0 });
+    const clusterRows = raw.prepare(`SELECT COUNT(*) AS n FROM keyword_clusters WHERE run_id = ?`).get(runId) as { n: number };
+    expect(clusterRows.n).toBe(0);
+  });
+
+  it('throws provider_invalid_response when embed_keyword_features has no readable output', async () => {
+    const { d1, runId, projectId, briefVersionId } = await seedBaseRun();
+    const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
+    await expect(buildProvisionalClustersHandler(ctx)).rejects.toMatchObject({ code: 'provider_invalid_response' });
+  });
+
+  it('throws provider_invalid_response when embed_keyword_features reported zero vectors for a non-empty universe', async () => {
+    const { d1, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kw1', normalizedKeyword: 'drain cleaning austin' });
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 4,
+      vectorCount: 0,
+      batchCount: 0,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [],
+      rulesetVersion: 'cluster-v1',
+    });
+    const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
+    await expect(buildProvisionalClustersHandler(ctx)).rejects.toMatchObject({ code: 'provider_invalid_response' });
+  });
+
+  it('throws when stage-9 artifacts disagree on embedding dimensions (self-inconsistent)', async () => {
+    const { d1, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kw1', normalizedKeyword: 'drain cleaning austin' });
+    await insertKeywordRow(d1, runId, { id: 'kw2', normalizedKeyword: 'pipe repair austin' });
+
+    const r2 = fakeR2();
+    await r2.put(
+      `runs/${runId}/embeddings/0.json`,
+      JSON.stringify({
+        model: 'fake-model',
+        dimensions: 8,
+        template: 'kw_v1',
+        vectors: [{ keywordId: 'kw1', normalizedKeyword: 'drain cleaning austin', contentHash: 'h1', vector: [1, 0, 0, 0, 0, 0, 0, 0] }],
+      })
+    );
+    await r2.put(
+      `runs/${runId}/embeddings/1.json`,
+      JSON.stringify({
+        model: 'fake-model',
+        dimensions: 6,
+        template: 'kw_v1',
+        vectors: [{ keywordId: 'kw2', normalizedKeyword: 'pipe repair austin', contentHash: 'h2', vector: [1, 0, 0, 0, 0, 0] }],
+      })
+    );
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 8,
+      vectorCount: 2,
+      batchCount: 2,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [
+        { artifactId: 'a1', storageKey: `runs/${runId}/embeddings/0.json`, count: 1 },
+        { artifactId: 'a2', storageKey: `runs/${runId}/embeddings/1.json`, count: 1 },
+      ],
+      rulesetVersion: 'cluster-v1',
+    });
+
+    const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
+    await expect(buildProvisionalClustersHandler(ctx)).rejects.toThrow(/dimensions/);
+  });
+
+  it('records a warning (not a throw) when embeddings are self-consistent but narrower than the ruleset width', async () => {
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kw1', normalizedKeyword: 'drain cleaning austin' });
+    await insertKeywordRow(d1, runId, { id: 'kw2', normalizedKeyword: 'pipe repair dallas' });
+
+    const r2 = fakeR2();
+    const vectors = [
+      { keywordId: 'kw1', normalizedKeyword: 'drain cleaning austin', contentHash: 'h1', vector: pseudoVector('drain cleaning austin') },
+      { keywordId: 'kw2', normalizedKeyword: 'pipe repair dallas', contentHash: 'h2', vector: pseudoVector('pipe repair dallas') },
+    ];
+    const storageKey = `runs/${runId}/embeddings/0.json`;
+    await r2.put(storageKey, JSON.stringify({ model: 'fake-model', dimensions: 32, template: 'kw_v1', vectors }));
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 32,
+      vectorCount: 2,
+      batchCount: 1,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [{ artifactId: 'a1', storageKey, count: 2 }],
+      rulesetVersion: 'cluster-v1',
+    });
+
+    const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
+    const result = await buildProvisionalClustersHandler(ctx);
+    expect(result.status).toBe('succeeded');
+    const output = result.output as { warnings: string[] };
+    expect(output.warnings).toEqual(['unexpected_embedding_dimensions']);
+
+    const clusterRows = raw.prepare(`SELECT id FROM keyword_clusters WHERE run_id = ?`).all(runId) as Array<{ id: string }>;
+    expect(clusterRows.length).toBeGreaterThan(0);
   });
 });

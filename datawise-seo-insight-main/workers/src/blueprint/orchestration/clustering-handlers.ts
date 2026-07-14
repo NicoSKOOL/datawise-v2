@@ -1,6 +1,10 @@
 import type { StageContext, StageHandler } from './handlers';
+import { SEARCH_INTENTS } from '../contracts/enums';
 import type { SearchIntent } from '../contracts/enums';
-import { loadKeywordEnrichmentFromArtifacts } from '../providers/dataforseo/evidence-readback';
+import {
+  loadKeywordEnrichmentFromArtifacts,
+  loadCompetitorRankingUrls,
+} from '../providers/dataforseo/evidence-readback';
 import { planUniverseNormalization } from '../domain/clustering/universe';
 import type { KeywordRowLite } from '../domain/clustering/universe';
 import { CLUSTER_RULESET_V1 } from '../domain/clustering/ruleset';
@@ -8,6 +12,16 @@ import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
 import { buildEmbeddingText, embeddingContentHash } from '../domain/clustering/features';
 import type { EmbeddingInput } from '../domain/clustering/features';
 import { embedKeywordTexts } from '../providers/embeddings/workers-ai';
+import { assertEmbeddingSetCompatible, validateVectors } from '../domain/clustering/embeddings';
+import type { KeywordVector } from '../domain/clustering/embeddings';
+import { buildKeywordSimilarityGraph } from '../domain/clustering/graph';
+import type { KeywordNode } from '../domain/clustering/graph';
+import { buildDeterministicClusters } from '../domain/clustering/clusters';
+import type { ClusterDraft } from '../domain/clustering/clusters';
+import { BlueprintApiError } from '../domain/api-errors';
+import { safeErrorMessage } from '../providers/dataforseo/envelope';
+import { newId } from '../db/util';
+import { loadStageOutput } from './stage-io';
 
 // Home for Phase 4's clustering-track stage handlers (normalize_keyword_universe
 // onward), the same way orchestration/research-handlers.ts is the home for
@@ -293,4 +307,602 @@ export const embedKeywordFeaturesHandler: StageHandler = async (ctx: StageContex
   };
 
   return { output, status: result.truncatedCount > 0 ? ('partial' as const) : ('succeeded' as const) };
+};
+
+// ===== build_provisional_clusters (Phase 4 Task 10) =====
+//
+// Real handler, not a stub, and a REQUIRED stage (stages.ts): a throw here
+// fails the whole run rather than degrading it to partial. That is
+// deliberate -- a run with no provisional clusters has nothing for
+// refine_clusters/build_page_plan downstream to work with, so this stage
+// must never fabricate a clustering result out of missing or malformed
+// upstream data.
+
+function round6(x: number): number {
+  return Math.round(x * 1e6) / 1e6;
+}
+
+// Small, local, English-only stopword list. Locale-aware stopwords (or a
+// per-language list) are a later concern this task's brief explicitly
+// deferred -- every run in this codebase today is en-* (V1_LIMITS), so a
+// single hardcoded list is honest about what is actually supported rather
+// than pretending a real i18n stopword pipeline exists.
+const STOPWORDS: ReadonlySet<string> = new Set([
+  'a', 'an', 'the', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'with',
+  'near', 'by', 'from', 'into', 'is', 'are', 'be', 'my', 'our', 'your', 'you',
+  'how', 'what', 'where', 'when', 'why', 'who', 'which', 'this', 'that',
+  'these', 'those', 'best', 'top', 'good', 'great', 'vs',
+]);
+
+// Tokens used both for the graph's blocking buckets (graph.ts) and for
+// brand-token matching below. normalizedKeyword is already whitespace-
+// collapsed/lowercased by domain/keyword.ts's normalizeKeyword, so a plain
+// space split is safe here.
+function tokenizeKeyword(normalizedKeyword: string): string[] {
+  return normalizedKeyword
+    .split(' ')
+    .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+}
+
+// Registrable-domain label: the first dot-delimited segment, lowercased.
+// 'bluedogtraining.com.au' -> 'bluedogtraining', 'bluedogtraining.com' ->
+// 'bluedogtraining'. This is a heuristic, not a public-suffix-list lookup
+// (no such list is vendored in this codebase) -- good enough for brand-token
+// detection, which only needs "the distinctive part of the name", not a
+// legally precise registrable domain.
+function registrableDomainLabel(domain: string): string | null {
+  const trimmed = domain.trim().toLowerCase();
+  if (trimmed.length === 0) return null;
+  const firstDot = trimmed.indexOf('.');
+  const label = firstDot === -1 ? trimmed : trimmed.slice(0, firstDot);
+  return label.length >= 2 ? label : null;
+}
+
+// Brand tokens = the business's own name tokens (stopword-filtered, same as
+// every keyword's tokens) plus every SELECTED competitor's registrable
+// domain label. isBranded below is a purely lexical test (a keyword contains
+// one of these tokens as a full token); it is not intent-aware by itself --
+// the branded_navigational_x_generic constraint (constraints.ts) is what
+// combines isBranded with intent === 'navigational'.
+async function loadBrandTokens(d1: D1Database, runId: string, businessTokens: readonly string[]): Promise<Set<string>> {
+  const tokens = new Set<string>(businessTokens);
+  const rows = await d1
+    .prepare(`SELECT domain FROM competitors WHERE run_id = ? AND selected = 1 ORDER BY domain ASC`)
+    .bind(runId)
+    .all<{ domain: string }>();
+  for (const row of rows.results ?? []) {
+    const label = registrableDomainLabel(row.domain);
+    if (label) tokens.add(label);
+  }
+  return tokens;
+}
+
+function toValidatedIntent(raw: string | null): SearchIntent | null {
+  if (raw === null) return null;
+  return (SEARCH_INTENTS as readonly string[]).includes(raw) ? (raw as SearchIntent) : null;
+}
+
+interface ClusterableKeywordRow {
+  id: string;
+  display_keyword: string;
+  normalized_keyword: string;
+  core_keyword: string | null;
+  main_intent: string | null;
+  search_volume: number | null;
+  relevance_score: number | null;
+}
+
+// Same JOIN-through-keywords shape for both keyword_services and
+// keyword_service_areas: neither join table carries run_id of its own, so
+// every reader in this module (this one included) reaches the run's rows
+// through keywords.run_id. Restricted to excluded_reason IS NULL because
+// only retained keywords ever become graph nodes -- an excluded keyword's
+// join rows (if any survive from an earlier attempt) are irrelevant here.
+async function loadKeywordJoinMap(
+  d1: D1Database,
+  runId: string,
+  table: 'keyword_services' | 'keyword_service_areas',
+  otherColumn: string
+): Promise<Map<string, string[]>> {
+  const { results } = await d1
+    .prepare(
+      `SELECT ${table}.keyword_id AS keyword_id, ${table}.${otherColumn} AS other_id
+       FROM ${table}
+       JOIN keywords k ON k.id = ${table}.keyword_id
+       WHERE k.run_id = ? AND k.excluded_reason IS NULL
+       ORDER BY ${table}.keyword_id ASC, ${table}.${otherColumn} ASC`
+    )
+    .bind(runId)
+    .all<{ keyword_id: string; other_id: string }>();
+  const map = new Map<string, string[]>();
+  for (const row of results ?? []) {
+    const list = map.get(row.keyword_id) ?? [];
+    list.push(row.other_id);
+    map.set(row.keyword_id, list);
+  }
+  return map;
+}
+
+// evidenceRefIds per cluster (score_breakdown_json) is the union of every
+// member keyword's keyword_evidence_refs rows -- read once here for every
+// retained keyword rather than per cluster, since the same keyword can be a
+// member of only one cluster anyway but this avoids N+1 queries either way.
+async function loadKeywordEvidenceRefMap(d1: D1Database, runId: string): Promise<Map<string, string[]>> {
+  const { results } = await d1
+    .prepare(
+      `SELECT ker.keyword_id AS keyword_id, ker.evidence_ref_id AS evidence_ref_id
+       FROM keyword_evidence_refs ker
+       JOIN keywords k ON k.id = ker.keyword_id
+       WHERE k.run_id = ? AND k.excluded_reason IS NULL
+       ORDER BY ker.keyword_id ASC, ker.evidence_ref_id ASC`
+    )
+    .bind(runId)
+    .all<{ keyword_id: string; evidence_ref_id: string }>();
+  const map = new Map<string, string[]>();
+  for (const row of results ?? []) {
+    const list = map.get(row.keyword_id) ?? [];
+    list.push(row.evidence_ref_id);
+    map.set(row.keyword_id, list);
+  }
+  return map;
+}
+
+// The exact shape embed_keyword_features (workers-ai.ts) persists at each
+// artifact's storageKey. Re-declared here (not imported) because
+// workers-ai.ts's own StoredEmbeddingBatch type is module-private.
+interface StoredEmbeddingBatchLike {
+  model: string;
+  dimensions: number;
+  template: string;
+  vectors: KeywordVector[];
+}
+
+// Loads every vector this run's embed_keyword_features attempt wrote,
+// re-validates the set exactly the way workers-ai.ts validates a fresh
+// response (Task 8 review follow-up), and additionally asserts the merged
+// set's actual dimensions match stage9.dimensions (the value that stage
+// itself recorded) -- a mismatch there means the R2 objects and the stage's
+// own bookkeeping have drifted apart, which is a data-integrity throw, not
+// a soft warning.
+//
+// Design decision (pre-resolved by the brief, recorded here for anyone
+// reading this later): this does NOT assert dimensions === 1024
+// (CLUSTER_RULESET_V1.embedding.dimensions) as a hard throw. Production
+// bge-m3 output is 1024-wide, but every test in this codebase's suite runs
+// against a fake Workers AI binding that returns 32-wide vectors (see
+// test-support/env.ts's FAKE_AI_DIMENSIONS) -- asserting against the
+// ruleset's pinned width here would make every clustering test that
+// exercises a real embed_keyword_features attempt fail. So the self-
+// consistency check (vectors vs. the stage's own recorded width) throws,
+// but a self-consistent width that merely disagrees with the ruleset's
+// pinned width degrades to a warning surfaced on this stage's own
+// output_json (`warnings: ['unexpected_embedding_dimensions']`) instead.
+async function loadStageVectors(
+  r2: R2Bucket,
+  stage9: EmbedKeywordFeaturesOutput
+): Promise<{ vectorsById: Map<string, number[]>; dimensions: number; unexpectedDimensions: boolean }> {
+  const sortedArtifacts = stage9.artifacts
+    .slice()
+    .sort((a, b) => (a.storageKey < b.storageKey ? -1 : a.storageKey > b.storageKey ? 1 : 0));
+
+  const batchMetas: Array<{ model: string; dimensions: number }> = [];
+  const allVectors: KeywordVector[] = [];
+
+  for (const artifact of sortedArtifacts) {
+    let object: R2ObjectBody | null;
+    try {
+      object = await r2.get(artifact.storageKey);
+    } catch {
+      object = null;
+    }
+    if (!object) {
+      throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+    }
+    let parsed: StoredEmbeddingBatchLike;
+    try {
+      parsed = JSON.parse(await object.text());
+    } catch {
+      throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+    }
+    if (!Array.isArray(parsed.vectors)) {
+      throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+    }
+    batchMetas.push({ model: parsed.model, dimensions: parsed.dimensions });
+    allVectors.push(...parsed.vectors);
+  }
+
+  // Mixed model/dimensions across THIS run's own artifacts: a plain,
+  // unsanitized Error by design (see embeddings.ts) -- it runs under the
+  // same generic try/catch process-run.ts wraps every handler in, so it
+  // still surfaces as a classified internal_error, it just is not
+  // pre-sanitized at the throw site like a BlueprintApiError is.
+  assertEmbeddingSetCompatible({ model: stage9.model, dimensions: stage9.dimensions }, batchMetas);
+  const { dimensions } = validateVectors(allVectors);
+  if (dimensions !== stage9.dimensions) {
+    // Self-inconsistency: the stage's own recorded width does not match what
+    // is actually stored. Never fabricate clusters over data this broken.
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+
+  const vectorsById = new Map<string, number[]>();
+  for (const v of allVectors) vectorsById.set(v.keywordId, v.vector);
+
+  return {
+    vectorsById,
+    dimensions,
+    unexpectedDimensions: dimensions !== CLUSTER_RULESET_V1.embedding.dimensions,
+  };
+}
+
+interface ConfidenceResult {
+  score: number;
+  label: 'low' | 'medium' | 'high';
+  components: { metricCoverage: number; serpAgreement: number | null; intentCertainty: number | null };
+}
+
+// Confidence is computed here, not by the pure clustering engine (Task 9):
+// the engine only knows similarity/cohesion math, it has no notion of
+// "coverage" over external facts like search_volume. Equal-weight average
+// over whichever components are present -- same renormalize-over-present-
+// components idea graph.ts's scoreEdge already uses for edge weights, just
+// with all three components weighted equally instead of the ruleset's
+// semantic/serp/intent split (that split is specifically about similarity
+// signal strength, not about confidence in the resulting grouping).
+function computeClusterConfidence(cluster: ClusterDraft, members: readonly KeywordNode[]): ConfidenceResult {
+  const total = members.length;
+  const withVolume = members.filter((m) => m.volume !== null).length;
+  const metricCoverage = total === 0 ? 0 : withVolume / total;
+
+  const serpAgreement = cluster.serpOverlapCohesion;
+
+  let intentCertainty: number | null = null;
+  if (cluster.intent !== null) {
+    const matching = members.filter((m) => m.intent === cluster.intent).length;
+    intentCertainty = total === 0 ? 0 : matching / total;
+  }
+
+  const present = [metricCoverage, serpAgreement, intentCertainty].filter(
+    (v): v is number => v !== null
+  );
+  const avg = present.length === 0 ? 0 : present.reduce((s, v) => s + v, 0) / present.length;
+  const score = round6(avg);
+
+  const label: ConfidenceResult['label'] =
+    score >= CLUSTER_RULESET_V1.confidenceLabels.high
+      ? 'high'
+      : score >= CLUSTER_RULESET_V1.confidenceLabels.medium
+        ? 'medium'
+        : 'low';
+
+  return { score, label, components: { metricCoverage, serpAgreement, intentCertainty } };
+}
+
+// keyword_clusters has 17 columns this insert writes (page_candidate and
+// adjudication_json are always NULL here -- stage 15/refine own those); at
+// 17 params/row, D1's 100-bound-parameter ceiling allows at most 5 rows per
+// statement.
+const CLUSTER_PARAMS_PER_ROW = 17;
+const CLUSTER_ROWS_PER_STATEMENT = 5;
+assertRowBudget(CLUSTER_ROWS_PER_STATEMENT, CLUSTER_PARAMS_PER_ROW, 'keyword_clusters insert');
+
+// cluster_keywords: 4 params/row.
+const CLUSTER_KEYWORD_PARAMS_PER_ROW = 4;
+const CLUSTER_KEYWORD_ROWS_PER_STATEMENT = 20;
+assertRowBudget(CLUSTER_KEYWORD_ROWS_PER_STATEMENT, CLUSTER_KEYWORD_PARAMS_PER_ROW, 'cluster_keywords insert');
+
+interface ClusterInsertRow {
+  id: string;
+  label: string;
+  serviceId: string | null;
+  serviceAreaId: string | null;
+  intent: SearchIntent | null;
+  primaryKeywordId: string;
+  semanticCohesion: number | null;
+  serpOverlapCohesion: number | null;
+  confidenceScore: number;
+  confidenceLabel: 'low' | 'medium' | 'high';
+  decisionReason: string;
+  warningsJson: string;
+  scoreBreakdownJson: string;
+}
+
+interface ClusterMemberInsertRow {
+  clusterId: string;
+  keywordId: string;
+  membershipScore: number;
+  isPrimary: boolean;
+}
+
+// Reset-then-apply, mirroring research-handlers.ts's persistCompetitors:
+// every retry of this attempt (or a later attempt under the same input
+// hash) must fully REPLACE this run's prior clustering, never accumulate
+// duplicates alongside it. cluster_keywords is deleted first (it has no
+// ON DELETE CASCADE from keyword_clusters in schema.sql) via a subselect on
+// keyword_clusters.run_id, then keyword_clusters itself.
+async function persistClusters(
+  d1: D1Database,
+  runId: string,
+  clusterRows: ClusterInsertRow[],
+  memberRows: ClusterMemberInsertRow[]
+): Promise<void> {
+  await d1
+    .prepare(`DELETE FROM cluster_keywords WHERE cluster_id IN (SELECT id FROM keyword_clusters WHERE run_id = ?)`)
+    .bind(runId)
+    .run();
+  await d1.prepare(`DELETE FROM keyword_clusters WHERE run_id = ?`).bind(runId).run();
+
+  const clusterStatements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(clusterRows, CLUSTER_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
+    const args: unknown[] = [];
+    for (const r of rowsChunk) {
+      args.push(
+        r.id,
+        runId,
+        r.label,
+        r.serviceId,
+        r.serviceAreaId,
+        r.intent,
+        r.primaryKeywordId,
+        r.semanticCohesion,
+        r.serpOverlapCohesion,
+        r.confidenceScore,
+        r.confidenceLabel,
+        null, // page_candidate: stage 15 owns it
+        r.decisionReason,
+        r.warningsJson,
+        null, // adjudication_json: refine_clusters owns it
+        CLUSTER_RULESET_V1.version,
+        r.scoreBreakdownJson
+      );
+    }
+    clusterStatements.push(
+      d1
+        .prepare(
+          `INSERT INTO keyword_clusters
+            (id, run_id, label, service_id, service_area_id, intent, primary_keyword_id,
+             semantic_cohesion, serp_overlap_cohesion, confidence_score, confidence_label,
+             page_candidate, decision_reason, warnings_json, adjudication_json, ruleset_version,
+             score_breakdown_json)
+           VALUES ${placeholders}`
+        )
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, clusterStatements);
+
+  const memberStatements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(memberRows, CLUSTER_KEYWORD_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?,?,?,?)').join(',');
+    const args: unknown[] = [];
+    for (const r of rowsChunk) {
+      args.push(r.clusterId, r.keywordId, r.membershipScore, r.isPrimary ? 1 : 0);
+    }
+    memberStatements.push(
+      d1
+        .prepare(`INSERT INTO cluster_keywords (cluster_id, keyword_id, membership_score, is_primary) VALUES ${placeholders}`)
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, memberStatements);
+}
+
+export interface BuildProvisionalClustersOutput {
+  stage: 'build_provisional_clusters';
+  keywordCount: number;
+  clusterCount: number;
+  singletonCount: number;
+  edgeCount: number;
+  forbiddenEdgeCount: number;
+  blockedByCap: number;
+  oversizedSplit: number;
+  representativeQueries: Array<{
+    clusterId: string;
+    keywordId: string;
+    query: string;
+    serviceAreaId: string | null;
+  }>;
+  rulesetVersion: string;
+  // Populated with 'unexpected_embedding_dimensions' when this run's vectors
+  // are internally consistent but narrower/wider than CLUSTER_RULESET_V1's
+  // pinned width (see loadStageVectors's doc comment). Empty in the common
+  // case.
+  warnings: string[];
+}
+
+const DECISION_REASON = `Clustered by semantic + SERP similarity under ruleset ${CLUSTER_RULESET_V1.version}`;
+
+// Real build_provisional_clusters, not a stub (Phase 4 Task 10). REQUIRED
+// stage (stages.ts): every throw below fails the whole run rather than
+// degrading it to partial, because a run with no clusters has nothing for
+// every downstream clustering/page-planning stage to build on.
+export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageContext) => {
+  const stage9 = await loadStageOutput<EmbedKeywordFeaturesOutput>(ctx.d1, ctx.runId, 'embed_keyword_features');
+  if (!stage9) {
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+
+  const rows = await ctx.d1
+    .prepare(
+      `SELECT id, display_keyword, normalized_keyword, core_keyword, main_intent, search_volume, relevance_score
+       FROM keywords WHERE run_id = ? AND excluded_reason IS NULL ORDER BY normalized_keyword ASC`
+    )
+    .bind(ctx.runId)
+    .all<ClusterableKeywordRow>();
+  const retained = rows.results ?? [];
+
+  // A legitimately empty keyword universe (e.g. collect_keyword_evidence,
+  // itself a REQUIRED stage, degraded to 'partial' having persisted zero
+  // keywords) is not a data-integrity problem: embed_keyword_features runs
+  // over zero inputs and reports a real vectorCount:0 'succeeded' output in
+  // that case (embedKeywordTexts has no special-case for an empty input
+  // set), so there is nothing to distinguish it from a genuine embedding
+  // failure by vectorCount alone. Short-circuit here with a truthful
+  // zero-cluster result instead -- that is reporting reality, not
+  // fabricating clusters, so it does not violate this stage's "never
+  // fabricate" mandate. Still runs the reset-then-apply persist so a retry
+  // of this exact attempt (or a later attempt whose universe shrank to zero
+  // after an earlier one had rows) clears out any stale cluster rows.
+  if (retained.length === 0) {
+    await persistClusters(ctx.d1, ctx.runId, [], []);
+    const output: BuildProvisionalClustersOutput = {
+      stage: 'build_provisional_clusters',
+      keywordCount: 0,
+      clusterCount: 0,
+      singletonCount: 0,
+      edgeCount: 0,
+      forbiddenEdgeCount: 0,
+      blockedByCap: 0,
+      oversizedSplit: 0,
+      representativeQueries: [],
+      rulesetVersion: CLUSTER_RULESET_V1.version,
+      warnings: [],
+    };
+    return { output, status: 'succeeded' as const };
+  }
+
+  // From here on there IS a keyword universe to cluster, so a genuinely
+  // empty embedding set is exactly the "never fabricate" case this
+  // required stage must fail loudly on.
+  if (stage9.vectorCount === 0) {
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+
+  const { vectorsById, unexpectedDimensions } = await loadStageVectors(ctx.env.BLUEPRINT_ARTIFACTS, stage9);
+
+  const brief = ctx.normalizedBrief;
+  const locale = `${brief.languageCode}-${brief.countryIso}`;
+
+  const [serviceMap, areaMap, rankingUrls, brandTokens, evidenceRefMap] = await Promise.all([
+    loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_services', 'service_id'),
+    loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_service_areas', 'service_area_id'),
+    loadCompetitorRankingUrls(ctx.d1, ctx.env.BLUEPRINT_ARTIFACTS, ctx.env.KV, ctx.runId, locale),
+    loadBrandTokens(ctx.d1, ctx.runId, tokenizeKeyword(brief.normalizedBusinessName)),
+    loadKeywordEvidenceRefMap(ctx.d1, ctx.runId),
+  ]);
+
+  const displayKeywords = new Map<string, string>(retained.map((row) => [row.id, row.display_keyword]));
+
+  const nodes: KeywordNode[] = retained.map((row) => {
+    const tokens = tokenizeKeyword(row.normalized_keyword);
+    const isBranded = tokens.some((t) => brandTokens.has(t));
+    const serpUrlList = rankingUrls.data.get(row.normalized_keyword) ?? null;
+    return {
+      keywordId: row.id,
+      normalizedKeyword: row.normalized_keyword,
+      tokens,
+      coreKeyword: row.core_keyword,
+      vector: vectorsById.get(row.id) ?? null,
+      serpUrls: serpUrlList && serpUrlList.length > 0 ? new Set(serpUrlList) : null,
+      relevance: row.relevance_score,
+      volume: row.search_volume,
+      isBranded,
+      intent: toValidatedIntent(row.main_intent),
+      serviceIds: serviceMap.get(row.id) ?? [],
+      serviceAreaIds: areaMap.get(row.id) ?? [],
+    };
+  });
+
+  const nodeById = new Map(nodes.map((n) => [n.keywordId, n]));
+
+  const graph = buildKeywordSimilarityGraph({ nodes, ruleset: CLUSTER_RULESET_V1 });
+  const clusterResult = buildDeterministicClusters({
+    nodes,
+    edges: graph.edges,
+    displayKeywords,
+    ruleset: CLUSTER_RULESET_V1,
+  });
+
+  const clusterIds = new Map<string, string>();
+  for (const c of clusterResult.clusters) clusterIds.set(c.clusterKey, newId('kcl'));
+
+  const clusterRows: ClusterInsertRow[] = [];
+  const memberRows: ClusterMemberInsertRow[] = [];
+
+  for (const c of clusterResult.clusters) {
+    const id = clusterIds.get(c.clusterKey)!;
+    const memberNodes = c.memberIds.map((mid) => nodeById.get(mid)!);
+    const { score, label, components } = computeClusterConfidence(c, memberNodes);
+
+    const evidenceRefIds = Array.from(
+      new Set(c.memberIds.flatMap((mid) => evidenceRefMap.get(mid) ?? []))
+    )
+      .sort()
+      .slice(0, 50);
+
+    const scoreBreakdown = {
+      rulesetVersion: CLUSTER_RULESET_V1.version,
+      edgeWeights: CLUSTER_RULESET_V1.edgeWeights,
+      semanticCohesion: c.semanticCohesion,
+      serpOverlapCohesion: c.serpOverlapCohesion,
+      confidenceComponents: components,
+      evidenceRefIds,
+    };
+
+    clusterRows.push({
+      id,
+      label: c.label,
+      serviceId: c.serviceId,
+      serviceAreaId: c.serviceAreaId,
+      intent: c.intent,
+      primaryKeywordId: c.primaryKeywordId,
+      semanticCohesion: c.semanticCohesion,
+      serpOverlapCohesion: c.serpOverlapCohesion,
+      confidenceScore: score,
+      confidenceLabel: label,
+      decisionReason: DECISION_REASON,
+      warningsJson: JSON.stringify(c.warnings),
+      scoreBreakdownJson: JSON.stringify(scoreBreakdown),
+    });
+
+    for (const mid of c.memberIds) {
+      memberRows.push({
+        clusterId: id,
+        keywordId: mid,
+        membershipScore: c.membershipScores[mid],
+        isPrimary: mid === c.primaryKeywordId,
+      });
+    }
+  }
+
+  await persistClusters(ctx.d1, ctx.runId, clusterRows, memberRows);
+
+  // Representative queries: non-singleton clusters only, ordered by
+  // memberCount DESC then clusterKey ASC (deterministic), capped at 20.
+  const representativeQueries = clusterResult.clusters
+    .filter((c) => c.memberIds.length > 1)
+    .slice()
+    .sort((a, b) => {
+      if (b.memberIds.length !== a.memberIds.length) return b.memberIds.length - a.memberIds.length;
+      return a.clusterKey < b.clusterKey ? -1 : a.clusterKey > b.clusterKey ? 1 : 0;
+    })
+    .slice(0, 20)
+    .map((c) => ({
+      clusterId: clusterIds.get(c.clusterKey)!,
+      keywordId: c.primaryKeywordId,
+      query: displayKeywords.get(c.primaryKeywordId) ?? c.label,
+      serviceAreaId: c.serviceAreaId,
+    }));
+
+  const warnings: string[] = [];
+  if (unexpectedDimensions) warnings.push('unexpected_embedding_dimensions');
+
+  const output: BuildProvisionalClustersOutput = {
+    stage: 'build_provisional_clusters',
+    keywordCount: retained.length,
+    clusterCount: clusterResult.stats.clusterCount,
+    singletonCount: clusterResult.stats.singletonCount,
+    edgeCount: graph.stats.scoredEdges,
+    forbiddenEdgeCount: graph.stats.forbiddenEdges,
+    blockedByCap: graph.stats.blockedByCap,
+    oversizedSplit: clusterResult.stats.oversizedSplit,
+    representativeQueries,
+    rulesetVersion: CLUSTER_RULESET_V1.version,
+    warnings,
+  };
+
+  return {
+    output,
+    status: rankingUrls.artifactsMissing > 0 ? ('partial' as const) : ('succeeded' as const),
+  };
 };
