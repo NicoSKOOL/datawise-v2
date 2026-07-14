@@ -550,15 +550,19 @@ async function seedBaseRun(): Promise<{
 // Hand-built StageContext for direct handler unit tests (same pattern
 // research-handlers.test.ts's "throws provider_invalid_response when
 // resolve_market has no output" test uses for collectKeywordEvidenceHandler).
+// briefInput defaults to SAMPLE_BRIEF_INPUT; the brand-token overlap tests
+// below pass their own so they can control category/service vocabulary
+// independently of the business name.
 async function buildDirectCtx(
   d1: D1Database,
   r2: R2Bucket,
   kv: KVNamespace,
   runId: string,
   projectId: string,
-  briefVersionId: string
+  briefVersionId: string,
+  briefInput: unknown = SAMPLE_BRIEF_INPUT
 ): Promise<StageContext> {
-  const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+  const parsed = parseProjectBrief(briefInput);
   const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
   return {
     env: { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: { send: async () => undefined }, ...providerFields(r2, kv) } as any,
@@ -907,7 +911,56 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
     const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
     const result = await buildProvisionalClustersHandler(ctx);
     expect(result.status).toBe('succeeded');
-    expect(result.output).toMatchObject({ keywordCount: 0, clusterCount: 0, singletonCount: 0 });
+    // Finding 2: total === 0 (no keyword rows at all for this run, not just
+    // zero retained) is the genuinely-empty-universe branch -- 'succeeded',
+    // no warning.
+    expect(result.output).toMatchObject({
+      keywordCount: 0,
+      clusterCount: 0,
+      singletonCount: 0,
+      totalKeywords: 0,
+      retainedKeywords: 0,
+      warnings: [],
+    });
+    const clusterRows = raw.prepare(`SELECT COUNT(*) AS n FROM keyword_clusters WHERE run_id = ?`).get(runId) as { n: number };
+    expect(clusterRows.n).toBe(0);
+  });
+
+  it('Finding 2: reports partial with an all_keywords_excluded warning when the universe is non-empty but every keyword was excluded upstream', async () => {
+    // Distinguishes a genuinely empty universe (previous test: total === 0)
+    // from stage 8 (normalize_keyword_universe) having excluded every real
+    // keyword due to a bug -- both used to collapse to the same
+    // 'succeeded'/zero-cluster result, hiding the second case from anyone
+    // reading run status alone.
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kw1', normalizedKeyword: 'plumber jobs austin' });
+    await insertKeywordRow(d1, runId, { id: 'kw2', normalizedKeyword: 'plumber jobs dallas' });
+    await d1.prepare(`UPDATE keywords SET excluded_reason = 'excluded_topic' WHERE run_id = ?`).bind(runId).run();
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 4,
+      vectorCount: 0,
+      batchCount: 0,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [],
+      rulesetVersion: 'cluster-v1',
+    });
+
+    const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
+    const result = await buildProvisionalClustersHandler(ctx);
+    expect(result.status).toBe('partial');
+    expect(result.output).toMatchObject({
+      keywordCount: 0,
+      clusterCount: 0,
+      singletonCount: 0,
+      totalKeywords: 2,
+      retainedKeywords: 0,
+      warnings: ['all_keywords_excluded'],
+    });
+    // Still reset-then-applies (no stale cluster rows survive), same as the
+    // genuinely-empty branch.
     const clusterRows = raw.prepare(`SELECT COUNT(*) AS n FROM keyword_clusters WHERE run_id = ?`).get(runId) as { n: number };
     expect(clusterRows.n).toBe(0);
   });
@@ -1011,5 +1064,103 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
 
     const clusterRows = raw.prepare(`SELECT id FROM keyword_clusters WHERE run_id = ?`).all(runId) as Array<{ id: string }>;
     expect(clusterRows.length).toBeGreaterThan(0);
+  });
+
+  // Finding 1: a generic category/service word that happens to be a
+  // substring of the business name (the repo's own 'Aqua Plumbing' fixture)
+  // must not become a brand token -- otherwise every generic keyword
+  // containing that word looks branded, which (combined with a navigational
+  // intent) trips branded_navigational_x_generic and fragments clusters that
+  // should merge. A genuinely distinct brand token ('aqua') must still be
+  // detected and still trip that same constraint.
+  it("Finding 1: a business-name token shared with the brief's category/services is not a brand token, but a distinct one still is", async () => {
+    const BRAND_TOKEN_BRIEF_INPUT = {
+      businessName: 'Aqua Plumbing',
+      category: 'Plumbing', // shares the token 'plumbing' with the business name
+      websiteUrl: 'https://www.aquaplumbing.com',
+      countryIso: 'us',
+      languageCode: 'en',
+      services: [{ clientId: 's1', name: 'Installation' }],
+      serviceAreas: [{ clientId: 'a1', city: 'Austin', countryIso: 'us', isPrimary: true }],
+    };
+
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+
+    // Group A: 'plumbing' is the only business-name-overlapping token here.
+    // kwA1 is navigational -- before the fix, 'plumbing' being a (false
+    // positive) brand token would make this branded-navigational and force
+    // a forbidden edge against kwA2 (generic, non-branded). After the fix
+    // neither is branded, so the pair is free to merge.
+    await insertKeywordRow(d1, runId, { id: 'kwA1', normalizedKeyword: 'plumbing repair austin' });
+    await insertKeywordRow(d1, runId, { id: 'kwA2', normalizedKeyword: 'affordable plumbing repair austin' });
+    await d1
+      .prepare(`UPDATE keywords SET main_intent = 'navigational' WHERE id = 'kwA1'`)
+      .run();
+    await d1
+      .prepare(`UPDATE keywords SET main_intent = 'informational' WHERE id = 'kwA2'`)
+      .run();
+
+    // Group B: 'aqua' is a genuinely distinctive brand token (not shared
+    // with category/services), so kwB1 (navigational, contains 'aqua') must
+    // still be flagged branded and must still trip the constraint against
+    // kwB2 (generic, non-branded, same 'plumbing'/'install' vocabulary).
+    await insertKeywordRow(d1, runId, { id: 'kwB1', normalizedKeyword: 'aqua plumbing install dallas' });
+    await insertKeywordRow(d1, runId, { id: 'kwB2', normalizedKeyword: 'affordable plumbing install dallas' });
+    await d1
+      .prepare(`UPDATE keywords SET main_intent = 'navigational' WHERE id = 'kwB1'`)
+      .run();
+    await d1
+      .prepare(`UPDATE keywords SET main_intent = 'informational' WHERE id = 'kwB2'`)
+      .run();
+
+    const r2 = fakeR2();
+    // Group A shares one vector, group B shares a different (orthogonal)
+    // vector: within-group cosine similarity is an exact 1 (so the only
+    // thing that can stop a within-group pair from merging is a forbidden
+    // edge), cross-group cosine similarity is an exact 0 (so cross-group
+    // pairs never merge on similarity alone, keeping the two groups'
+    // outcomes independent of each other).
+    const vectors = [
+      { keywordId: 'kwA1', normalizedKeyword: 'plumbing repair austin', contentHash: 'ha1', vector: [1, 0, 0, 0] },
+      { keywordId: 'kwA2', normalizedKeyword: 'affordable plumbing repair austin', contentHash: 'ha2', vector: [1, 0, 0, 0] },
+      { keywordId: 'kwB1', normalizedKeyword: 'aqua plumbing install dallas', contentHash: 'hb1', vector: [0, 1, 0, 0] },
+      { keywordId: 'kwB2', normalizedKeyword: 'affordable plumbing install dallas', contentHash: 'hb2', vector: [0, 1, 0, 0] },
+    ];
+    const storageKey = `runs/${runId}/embeddings/0.json`;
+    await r2.put(storageKey, JSON.stringify({ model: 'fake-model', dimensions: 4, template: 'kw_v1', vectors }));
+    await seedStageOutput(d1, runId, 'embed_keyword_features', {
+      stage: 'embed_keyword_features',
+      model: 'fake-model',
+      dimensions: 4,
+      vectorCount: 4,
+      batchCount: 1,
+      inputHash: 'h',
+      truncatedCount: 0,
+      artifacts: [{ artifactId: 'art1', storageKey, count: 4 }],
+      rulesetVersion: 'cluster-v1',
+    });
+
+    const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId, BRAND_TOKEN_BRIEF_INPUT);
+    const result = await buildProvisionalClustersHandler(ctx);
+    expect(result.status).toBe('succeeded');
+
+    const memberRows = raw
+      .prepare(`SELECT cluster_id, keyword_id FROM cluster_keywords ORDER BY cluster_id, keyword_id`)
+      .all() as Array<{ cluster_id: string; keyword_id: string }>;
+    const clusterOf = new Map(memberRows.map((r) => [r.keyword_id, r.cluster_id]));
+
+    // Group A merged into one cluster: 'plumbing' (shared with the brief's
+    // own category) was correctly excluded from the brand-token set, so
+    // kwA1's navigational intent never triggers branded_navigational_x_generic.
+    expect(clusterOf.get('kwA1')).toBe(clusterOf.get('kwA2'));
+
+    // Group B did NOT merge: 'aqua' is a real brand token, so kwB1
+    // (navigational + branded) still trips the constraint against kwB2
+    // (generic, non-branded) despite otherwise-identical vocabulary/vector
+    // similarity to group A.
+    expect(clusterOf.get('kwB1')).not.toBe(clusterOf.get('kwB2'));
+
+    const output = result.output as { forbiddenEdgeCount: number };
+    expect(output.forbiddenEdgeCount).toBeGreaterThan(0);
   });
 });

@@ -1,6 +1,7 @@
 import type { StageContext, StageHandler } from './handlers';
 import { SEARCH_INTENTS } from '../contracts/enums';
 import type { SearchIntent } from '../contracts/enums';
+import type { NormalizedProjectBrief } from '../contracts/types';
 import {
   loadKeywordEnrichmentFromArtifacts,
   loadCompetitorRankingUrls,
@@ -8,6 +9,7 @@ import {
 import { planUniverseNormalization } from '../domain/clustering/universe';
 import type { KeywordRowLite } from '../domain/clustering/universe';
 import { CLUSTER_RULESET_V1 } from '../domain/clustering/ruleset';
+import { normalizeKeyword } from '../domain/keyword';
 import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
 import { buildEmbeddingText, embeddingContentHash } from '../domain/clustering/features';
 import type { EmbeddingInput } from '../domain/clustering/features';
@@ -358,14 +360,53 @@ function registrableDomainLabel(domain: string): string | null {
   return label.length >= 2 ? label : null;
 }
 
+// Generic-vocabulary tokens drawn straight from the brief: the business's own
+// category (e.g. 'Plumber') and every declared service's name/synonyms (e.g.
+// 'Drain Cleaning') are, by construction, ordinary industry vocabulary for
+// THIS business, never a distinguishing brand signal -- even when one of
+// those words also happens to be a substring of the business name itself
+// ('Aqua Plumbing' + category 'Plumbing' both containing 'plumbing' is
+// exactly this case). Tokenized through the same normalizeKeyword +
+// tokenizeKeyword pipeline every keyword and the business name itself go
+// through, so the set-subtraction in loadBrandTokens below is comparing like
+// with like rather than raw-cased/punctuated brief text against normalized
+// keyword tokens.
+function briefGenericTokens(brief: NormalizedProjectBrief, locale: string): Set<string> {
+  const tokens = new Set<string>();
+  const addAll = (raw: string) => {
+    for (const t of tokenizeKeyword(normalizeKeyword(raw, locale))) tokens.add(t);
+  };
+  addAll(brief.category);
+  for (const service of brief.services) {
+    addAll(service.normalizedName);
+    for (const synonym of service.synonyms) addAll(synonym);
+  }
+  return tokens;
+}
+
 // Brand tokens = the business's own name tokens (stopword-filtered, same as
-// every keyword's tokens) plus every SELECTED competitor's registrable
-// domain label. isBranded below is a purely lexical test (a keyword contains
-// one of these tokens as a full token); it is not intent-aware by itself --
-// the branded_navigational_x_generic constraint (constraints.ts) is what
+// every keyword's tokens, MINUS any token that is also generic industry
+// vocabulary per briefGenericTokens -- a generic category/service word that
+// happens to appear inside the business name is not what makes that name
+// distinctive, so it must never make an otherwise-generic keyword look
+// branded) plus every SELECTED competitor's registrable domain label
+// (unaffected by the generic-token subtraction: a competitor's domain label
+// is a different business's name, so brief-generic overlap there is
+// coincidental, not the business's own generic self-description). isBranded
+// below is a purely lexical test (a keyword contains one of these tokens as
+// a full token); it is not intent-aware by itself -- the
+// branded_navigational_x_generic constraint (constraints.ts) is what
 // combines isBranded with intent === 'navigational'.
-async function loadBrandTokens(d1: D1Database, runId: string, businessTokens: readonly string[]): Promise<Set<string>> {
-  const tokens = new Set<string>(businessTokens);
+async function loadBrandTokens(
+  d1: D1Database,
+  runId: string,
+  businessTokens: readonly string[],
+  genericTokens: ReadonlySet<string>
+): Promise<Set<string>> {
+  const tokens = new Set<string>();
+  for (const t of businessTokens) {
+    if (!genericTokens.has(t)) tokens.add(t);
+  }
   const rows = await d1
     .prepare(`SELECT domain FROM competitors WHERE run_id = ? AND selected = 1 ORDER BY domain ASC`)
     .bind(runId)
@@ -705,9 +746,18 @@ export interface BuildProvisionalClustersOutput {
   rulesetVersion: string;
   // Populated with 'unexpected_embedding_dimensions' when this run's vectors
   // are internally consistent but narrower/wider than CLUSTER_RULESET_V1's
-  // pinned width (see loadStageVectors's doc comment). Empty in the common
-  // case.
+  // pinned width (see loadStageVectors's doc comment), and/or
+  // 'all_keywords_excluded' when this run's keyword universe was non-empty
+  // but every keyword was excluded before clustering (see the zero-cluster
+  // short-circuit below). Empty in the common case.
   warnings: string[];
+  // Unfiltered per-run keyword count (regardless of excluded_reason) and the
+  // retained subset that actually reached clustering. Always populated so a
+  // reader can tell "genuinely empty universe" (total 0) apart from
+  // "something upstream excluded everything" (total > 0, retained 0) without
+  // cross-referencing normalize_keyword_universe's own stage output.
+  totalKeywords: number;
+  retainedKeywords: number;
 }
 
 const DECISION_REASON = `Clustered by semantic + SERP similarity under ruleset ${CLUSTER_RULESET_V1.version}`;
@@ -737,14 +787,32 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
   // over zero inputs and reports a real vectorCount:0 'succeeded' output in
   // that case (embedKeywordTexts has no special-case for an empty input
   // set), so there is nothing to distinguish it from a genuine embedding
-  // failure by vectorCount alone. Short-circuit here with a truthful
-  // zero-cluster result instead -- that is reporting reality, not
-  // fabricating clusters, so it does not violate this stage's "never
-  // fabricate" mandate. Still runs the reset-then-apply persist so a retry
-  // of this exact attempt (or a later attempt whose universe shrank to zero
-  // after an earlier one had rows) clears out any stale cluster rows.
+  // failure by vectorCount alone. But retained.length === 0 alone cannot
+  // distinguish THAT case from stage 8 (normalize_keyword_universe) having
+  // excluded every single keyword due to a bug (e.g. a bad excludedTopics
+  // match, or a language-mismatch false positive) -- both look identical
+  // from here. The unfiltered total tells them apart: total === 0 is a
+  // genuinely empty universe (nothing to report), total > 0 with zero
+  // retained means something upstream threw away a real universe.
+  const totalRow = await ctx.d1
+    .prepare(`SELECT COUNT(*) AS n FROM keywords WHERE run_id = ?`)
+    .bind(ctx.runId)
+    .first<{ n: number }>();
+  const totalKeywords = totalRow?.n ?? 0;
+
+  // Short-circuit with a truthful zero-cluster result in both cases -- that
+  // is reporting reality, not fabricating clusters, so it does not violate
+  // this stage's "never fabricate" mandate either way. Still runs the
+  // reset-then-apply persist so a retry of this exact attempt (or a later
+  // attempt whose universe shrank to zero after an earlier one had rows)
+  // clears out any stale cluster rows. What differs is the reported status:
+  // a genuinely empty universe is 'succeeded' (there was nothing to do), but
+  // an all-excluded non-empty universe is 'partial' with an explicit
+  // 'all_keywords_excluded' warning, so the gap surfaces on this run instead
+  // of silently reading as a normal, successful zero-keyword project.
   if (retained.length === 0) {
     await persistClusters(ctx.d1, ctx.runId, [], []);
+    const allExcluded = totalKeywords > 0;
     const output: BuildProvisionalClustersOutput = {
       stage: 'build_provisional_clusters',
       keywordCount: 0,
@@ -756,9 +824,11 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
       oversizedSplit: 0,
       representativeQueries: [],
       rulesetVersion: CLUSTER_RULESET_V1.version,
-      warnings: [],
+      warnings: allExcluded ? ['all_keywords_excluded'] : [],
+      totalKeywords,
+      retainedKeywords: 0,
     };
-    return { output, status: 'succeeded' as const };
+    return { output, status: allExcluded ? ('partial' as const) : ('succeeded' as const) };
   }
 
   // From here on there IS a keyword universe to cluster, so a genuinely
@@ -777,7 +847,7 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
     loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_services', 'service_id'),
     loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_service_areas', 'service_area_id'),
     loadCompetitorRankingUrls(ctx.d1, ctx.env.BLUEPRINT_ARTIFACTS, ctx.env.KV, ctx.runId, locale),
-    loadBrandTokens(ctx.d1, ctx.runId, tokenizeKeyword(brief.normalizedBusinessName)),
+    loadBrandTokens(ctx.d1, ctx.runId, tokenizeKeyword(brief.normalizedBusinessName), briefGenericTokens(brief, locale)),
     loadKeywordEvidenceRefMap(ctx.d1, ctx.runId),
   ]);
 
@@ -899,6 +969,8 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
     representativeQueries,
     rulesetVersion: CLUSTER_RULESET_V1.version,
     warnings,
+    totalKeywords,
+    retainedKeywords: retained.length,
   };
 
   return {
