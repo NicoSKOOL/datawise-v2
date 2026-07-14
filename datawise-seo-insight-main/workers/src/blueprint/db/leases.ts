@@ -136,7 +136,12 @@ export async function completeStage(
   lease: StageLease,
   outputJson: string,
   outputHash: string,
-  extra?: { status?: 'succeeded' | 'partial' | 'skipped'; costUsdMicro?: number; latencyMs?: number }
+  extra?: {
+    status?: 'succeeded' | 'partial' | 'skipped';
+    costUsdMicro?: number;
+    latencyMs?: number;
+    rulesetVersion?: string;
+  }
 ): Promise<void> {
   const status = extra?.status ?? 'succeeded';
   const claim = await d1
@@ -144,6 +149,7 @@ export async function completeStage(
       `UPDATE research_stage_runs
        SET status = ?, output_json = ?, output_hash = ?, finished_at = ?,
            cost_usd_micro = COALESCE(?, cost_usd_micro), latency_ms = COALESCE(?, latency_ms),
+           ruleset_version = COALESCE(?, ruleset_version),
            lease_owner = NULL, lease_expires_at = NULL
        WHERE id = ? AND lease_owner = ? AND lease_epoch = ?`
     )
@@ -154,6 +160,7 @@ export async function completeStage(
       nowIso(),
       extra?.costUsdMicro ?? null,
       extra?.latencyMs ?? null,
+      extra?.rulesetVersion ?? null,
       lease.stageRunId,
       lease.workerId,
       lease.leaseEpoch

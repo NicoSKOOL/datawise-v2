@@ -3,6 +3,7 @@ import { BlueprintApiError, NotFoundError } from '../domain/api-errors';
 import { BlueprintValidationError } from '../domain/errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { buildStageInputHash, hashNormalizedInput } from '../domain/hash';
+import { rulesetVersionForStage } from '../domain/ruleset';
 import type { NormalizedProjectBrief } from '../contracts/types';
 import { nowIso } from '../db/util';
 import { acquireStageLease, completeStage, failStage } from '../db/leases';
@@ -223,11 +224,17 @@ export async function processResearchRun(
   if (!briefRow) throw new NotFoundError(`Brief version not found: ${run.brief_version_id}`);
   const normalizedBrief: NormalizedProjectBrief = JSON.parse(briefRow.normalized_json);
 
+  // Which frozen ruleset (if any) governs this stage: clustering/page-plan
+  // stages get their real versioned ruleset, everything else still gets the
+  // legacy stub (see domain/ruleset.ts). Re-keys those stages' input hashes
+  // whenever CLUSTER_RULESET_V1/PAGE_PLAN_RULESET_V1 bump their version.
+  const rulesetVersion = rulesetVersionForStage(stage);
+
   const stageInputHash = await buildStageInputHash({
     runId,
     stage,
     normalizedInputHash: briefRow.input_hash,
-    rulesetVersion: 'phase2-stub',
+    rulesetVersion,
   });
 
   const lease = await acquireStageLease(d1, {
@@ -280,6 +287,7 @@ export async function processResearchRun(
       await completeStage(d1, lease.lease, outputJson, outputHash, {
         status: result.status ?? 'succeeded',
         costUsdMicro: stageCostUsdMicro,
+        rulesetVersion,
       });
     } catch (err) {
       // Operator-only diagnostics: the persisted stage row is sanitized by

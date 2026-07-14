@@ -37,7 +37,7 @@ async function getStageRow(d1: D1Database, runId: string) {
   return d1
     .prepare(
       `SELECT id, status, lease_owner, lease_epoch, attempt_count, output_json, output_hash,
-              next_retry_at, safe_error_code, safe_error_message, finished_at
+              next_retry_at, safe_error_code, safe_error_message, finished_at, ruleset_version
        FROM research_stage_runs WHERE run_id = ? AND stage_name = ? AND stage_input_hash = ?`
     )
     .bind(runId, STAGE, HASH)
@@ -53,6 +53,7 @@ async function getStageRow(d1: D1Database, runId: string) {
       safe_error_code: string | null;
       safe_error_message: string | null;
       finished_at: string | null;
+      ruleset_version: string | null;
     }>();
 }
 
@@ -214,6 +215,65 @@ describe('renewStageLease', () => {
     const row = await getStageRow(d1, runId);
     expect(row?.status).toBe('succeeded');
     expect(row?.output_json).toBe('{"x":2}');
+  });
+});
+
+describe('completeStage ruleset_version', () => {
+  it('persists the passed rulesetVersion onto the stage row', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+
+    const acquired = await acquireStageLease(d1, {
+      runId,
+      stage: STAGE,
+      stageInputHash: HASH,
+      workerId: 'w1',
+      leaseMs: 60_000,
+      required: true,
+    });
+    if (acquired.kind !== 'acquired') throw new Error('expected acquired');
+
+    await completeStage(d1, acquired.lease, '{"ok":true}', 'outhash1', { rulesetVersion: 'cluster-v1' });
+
+    const row = await getStageRow(d1, runId);
+    expect(row?.ruleset_version).toBe('cluster-v1');
+  });
+
+  it('omitting rulesetVersion leaves the existing column value untouched (COALESCE, same pattern as costUsdMicro)', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+
+    const first = await acquireStageLease(d1, {
+      runId,
+      stage: STAGE,
+      stageInputHash: HASH,
+      workerId: 'w1',
+      leaseMs: 60_000,
+      required: true,
+    });
+    if (first.kind !== 'acquired') throw new Error('expected acquired');
+    await completeStage(d1, first.lease, '{"ok":true}', 'outhash1', { rulesetVersion: 'cluster-v1' });
+
+    // Re-acquire and re-complete under the same input hash without passing
+    // rulesetVersion this time (mirrors a caller that has no ruleset for a
+    // legacy stage): the previously persisted value must survive.
+    await d1
+      .prepare(`UPDATE research_stage_runs SET status = 'pending' WHERE run_id = ? AND stage_name = ?`)
+      .bind(runId, STAGE)
+      .run();
+    const second = await acquireStageLease(d1, {
+      runId,
+      stage: STAGE,
+      stageInputHash: HASH,
+      workerId: 'w2',
+      leaseMs: 60_000,
+      required: true,
+    });
+    if (second.kind !== 'acquired') throw new Error('expected acquired');
+    await completeStage(d1, second.lease, '{"ok":true}', 'outhash2');
+
+    const row = await getStageRow(d1, runId);
+    expect(row?.ruleset_version).toBe('cluster-v1');
   });
 });
 

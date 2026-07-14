@@ -4,6 +4,7 @@ import { newId, nowIso } from '../db/util';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { V1_LIMITS } from '../contracts/limits';
 import { buildStageInputHash } from '../domain/hash';
+import { LEGACY_RULESET_VERSION } from '../domain/ruleset';
 import { acquireStageLease } from '../db/leases';
 import type { BlueprintStage } from '../contracts/enums';
 import { processResearchRun } from './process-run';
@@ -50,6 +51,7 @@ interface StageRow {
   attempt_count: number;
   safe_error_code: string | null;
   safe_error_message: string | null;
+  ruleset_version: string | null;
 }
 
 interface BlueprintVersionRow {
@@ -241,6 +243,17 @@ describe('processResearchRun', () => {
     const fanoutRow = finalStageRows.find((r) => r.stage_name === 'collect_us_fanout');
     expect(fanoutRow?.status).toBe('skipped');
 
+    // Part E plumbing: rulesetVersionForStage(stage) is stamped onto every
+    // completed stage row via completeStage's ruleset_version column, not
+    // just baked into the input hash. Clustering/page-plan stages get their
+    // real versioned ruleset; every other stage still gets the legacy stub.
+    const clusterStageRow = finalStageRows.find((r) => r.stage_name === 'build_provisional_clusters');
+    expect(clusterStageRow?.ruleset_version).toBe('cluster-v1');
+    const pagePlanStageRow = finalStageRows.find((r) => r.stage_name === 'build_page_plan');
+    expect(pagePlanStageRow?.ruleset_version).toBe('pp-v1');
+    const legacyStageRow = finalStageRows.find((r) => r.stage_name === 'validate_intake');
+    expect(legacyStageRow?.ruleset_version).toBe(LEGACY_RULESET_VERSION);
+
     const versions = await d1
       .prepare(`SELECT * FROM blueprint_versions WHERE project_id = ?`)
       .bind(projectId)
@@ -304,7 +317,7 @@ describe('processResearchRun', () => {
       runId,
       stage: 'plan_research',
       normalizedInputHash: briefRow!.input_hash,
-      rulesetVersion: 'phase2-stub',
+      rulesetVersion: LEGACY_RULESET_VERSION,
     });
     await d1
       .prepare(
@@ -348,13 +361,13 @@ describe('processResearchRun', () => {
       runId: runA,
       stage: 'validate_intake',
       normalizedInputHash: inputHash,
-      rulesetVersion: 'phase2-stub',
+      rulesetVersion: LEGACY_RULESET_VERSION,
     });
     const hashB = await buildStageInputHash({
       runId: runB,
       stage: 'validate_intake',
       normalizedInputHash: inputHash,
-      rulesetVersion: 'phase2-stub',
+      rulesetVersion: LEGACY_RULESET_VERSION,
     });
     // Different runId -> different stage hash: nothing is reused across runs.
     expect(hashA).not.toBe(hashB);
