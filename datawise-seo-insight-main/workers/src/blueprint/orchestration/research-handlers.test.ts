@@ -441,7 +441,7 @@ describe('discoverCompetitorsHandler', () => {
     const { restore, capturedBodies } = stubDiscoveryFetch([
       { domain: 'yelp.com', intersections: 999 }, // excluded directory domain
       { domain: 'aquaplumbing.com', intersections: 500 }, // own domain
-      { domain: 'd90.com', intersections: 90 },
+      { domain: 'd90.com', intersections: 90, full_domain_metrics: { organic: { etv: 777.7 } } },
       { domain: 'd70.com', intersections: 70 },
       { domain: 'd30.com', intersections: 30 },
       { domain: 'd10.com', intersections: 10 },
@@ -473,16 +473,28 @@ describe('discoverCompetitorsHandler', () => {
     expect(parsedOutput.stageCostUsdMicro).toBe(50_000);
 
     const competitorRows = raw
-      .prepare(`SELECT domain, selected, source, visibility_score FROM competitors WHERE run_id = ?`)
-      .all(runId) as Array<{ domain: string; selected: number; source: string; visibility_score: number | null }>;
+      .prepare(`SELECT domain, selected, source, visibility_score, estimated_traffic FROM competitors WHERE run_id = ?`)
+      .all(runId) as Array<{
+        domain: string;
+        selected: number;
+        source: string;
+        visibility_score: number | null;
+        estimated_traffic: number | null;
+      }>;
     expect(competitorRows).toHaveLength(6);
     const dnull = competitorRows.find((r) => r.domain === 'dnull.com');
     expect(dnull?.selected).toBe(0);
     expect(dnull?.visibility_score).toBeNull();
+    expect(dnull?.estimated_traffic).toBeNull();
     for (const domain of ['d90.com', 'd70.com', 'd30.com', 'd10.com', 'd5.com']) {
       expect(competitorRows.find((r) => r.domain === domain)?.selected).toBe(1);
     }
     for (const row of competitorRows) expect(row.source).toBe('competitors_domain');
+    // d90.com carried a real etv on this run; it must persist to estimated_traffic.
+    expect(competitorRows.find((r) => r.domain === 'd90.com')?.estimated_traffic).toBe(777.7);
+    // Every other candidate's fixture omitted full_domain_metrics/metrics
+    // entirely, so estimated_traffic stays null, never coerced to 0.
+    expect(competitorRows.find((r) => r.domain === 'd70.com')?.estimated_traffic).toBeNull();
 
     const evidenceRows = raw
       .prepare(`SELECT ce.evidence_ref_id FROM competitor_evidence_refs ce
@@ -666,6 +678,43 @@ describe('discoverCompetitorsHandler', () => {
     expect(rows.filter((r) => r.selected === 1)).toHaveLength(5);
 
     restore();
+  });
+
+  it('a retry upsert with a null estimated_traffic never clobbers a real value persisted by a prior attempt', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    // Attempt 1: rival.com carries a real etv, persisted to estimated_traffic.
+    const attempt1 = stubDiscoveryFetch([
+      { domain: 'rival.com', intersections: 50, full_domain_metrics: { organic: { etv: 900.1 } } },
+    ]);
+    restoreFetch = attempt1.restore;
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+    await discoverCompetitorsHandler(ctx);
+    attempt1.restore();
+
+    const afterAttempt1 = raw
+      .prepare(`SELECT estimated_traffic FROM competitors WHERE run_id = ? AND domain = 'rival.com'`)
+      .get(runId) as { estimated_traffic: number | null } | undefined;
+    expect(afterAttempt1?.estimated_traffic).toBe(900.1);
+
+    // Attempt 2: same domain resurfaces without an etv this time (provider
+    // omitted full_domain_metrics) -- the retry must NOT overwrite the real
+    // value from attempt 1 with null.
+    const attempt2 = stubDiscoveryFetch([{ domain: 'rival.com', intersections: 55 }]);
+    restoreFetch = attempt2.restore;
+    await discoverCompetitorsHandler({ ...ctx, attempt: 2 });
+    attempt2.restore();
+
+    const afterAttempt2 = raw
+      .prepare(`SELECT estimated_traffic FROM competitors WHERE run_id = ? AND domain = 'rival.com'`)
+      .get(runId) as { estimated_traffic: number | null } | undefined;
+    expect(afterAttempt2?.estimated_traffic).toBe(900.1);
   });
 
   it('keeps ALL user-supplied known competitors selected even when there are more than 5 of them', async () => {

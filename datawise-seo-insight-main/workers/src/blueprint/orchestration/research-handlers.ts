@@ -404,21 +404,31 @@ async function upsertCompetitorRow(
   runId: string,
   domain: string,
   source: string,
-  visibilityMetric: number | null
+  visibilityMetric: number | null,
+  estimatedTraffic: number | null
 ): Promise<string> {
   const existing = await d1
     .prepare(`SELECT id FROM competitors WHERE run_id = ? AND domain = ?`)
     .bind(runId, domain)
     .first<{ id: string }>();
-  if (existing) return existing.id;
+  if (existing) {
+    // COALESCE(estimated_traffic, ?): a retry attempt whose provider
+    // response happens to omit etv this time must never overwrite a real
+    // value this domain already persisted on a prior attempt with null.
+    await d1
+      .prepare(`UPDATE competitors SET estimated_traffic = COALESCE(estimated_traffic, ?) WHERE id = ?`)
+      .bind(estimatedTraffic, existing.id)
+      .run();
+    return existing.id;
+  }
 
   const id = newId('comp');
   await d1
     .prepare(
-      `INSERT INTO competitors (id, run_id, domain, source, selected, visibility_score)
-       VALUES (?, ?, ?, ?, 0, ?)`
+      `INSERT INTO competitors (id, run_id, domain, source, selected, visibility_score, estimated_traffic)
+       VALUES (?, ?, ?, ?, 0, ?, ?)`
     )
-    .bind(id, runId, domain, source, visibilityMetric)
+    .bind(id, runId, domain, source, visibilityMetric, estimatedTraffic)
     .run();
   return id;
 }
@@ -464,7 +474,14 @@ async function persistCompetitors(
   keptKnownDomains: string[]
 ): Promise<{ selectedDomains: string[] }> {
   for (const candidate of filtered) {
-    const id = await upsertCompetitorRow(d1, runId, candidate.domain, candidate.source, candidate.visibilityMetric);
+    const id = await upsertCompetitorRow(
+      d1,
+      runId,
+      candidate.domain,
+      candidate.source,
+      candidate.visibilityMetric,
+      candidate.estimatedTraffic
+    );
     await d1
       .prepare(`INSERT OR IGNORE INTO competitor_evidence_refs (competitor_id, evidence_ref_id) VALUES (?, ?)`)
       .bind(id, candidate.evidenceRefId)
@@ -475,7 +492,7 @@ async function persistCompetitors(
   for (const domain of knownSet) {
     // Already persisted above if the DFS candidate pool also surfaced this
     // domain; upsertCompetitorRow is idempotent either way.
-    await upsertCompetitorRow(d1, runId, domain, 'user_seed', null);
+    await upsertCompetitorRow(d1, runId, domain, 'user_seed', null, null);
   }
 
   // Stable sort (desc by visibilityMetric, nulls last) over ONLY the
