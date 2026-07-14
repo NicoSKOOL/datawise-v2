@@ -524,32 +524,23 @@ describe('Phase 3 orchestration acceptance', () => {
     expect(runRow!.dataforseo_reserved_usd_micro).toBe(0);
 
     // Assertion 7: every one of the six real stages recorded a
-    // research_stage_runs.cost_usd_micro. Four of them (collect_keyword_
+    // research_stage_runs.cost_usd_micro. Five of them (collect_keyword_
     // evidence, discover_competitors, collect_competitor_evidence,
-    // validate_serps_and_questions... see the documented exception below)
-    // pay real DataForSEO cost and must show > 0. resolve_market and
-    // plan_research make ONLY documented-free catalog GETs / no DFS calls
-    // at all (see providers/dataforseo/catalogs.ts's estimateUsdMicro: 0 on
-    // every catalog fetch) -- their stage row cost is legitimately 0, not a
-    // bug, so this only asserts >= 0 for them.
+    // validate_serps_and_questions) pay real DataForSEO cost and must show
+    // > 0. resolve_market and plan_research make ONLY documented-free
+    // catalog GETs / no DFS calls at all (see providers/dataforseo/
+    // catalogs.ts's estimateUsdMicro: 0 on every catalog fetch) -- their
+    // stage row cost is legitimately 0, not a bug, so this only asserts >= 0
+    // for them.
     //
-    // DOCUMENTED EXCEPTION (see this task's brief + task-14-report.md):
-    // validateSerpsAndQuestionsHandler's own output object is
-    // `{ snapshots, failed }` -- it has no `stageCostUsdMicro` field, unlike
-    // collect_keyword_evidence's (inline-accumulated) or discover_
-    // competitors' (provider_usage SUM) pattern. process-run.ts only
-    // forwards a stage's real cost into completeStage when the handler's
-    // OWN output carries a numeric stageCostUsdMicro; failStage's retry_wait
-    // path (which is how this stage's real spend -- the task_post call on
-    // attempt 1 -- actually happens) never touches cost_usd_micro either. So
-    // this stage's research_stage_runs row is 0 even though its real
-    // DataForSEO spend genuinely happened and is fully reflected in
-    // dataforseo_actual_usd_micro (assertion 6) and in this stage's own
-    // evidence_refs/provider_usage rows. This is reality, not a test bug:
-    // asserting > 0 here would fail against the handler Task 13 actually
-    // shipped. Fixing it (adding stageCostUsdMicro to that handler's output)
-    // is out of this task's scope (registration + e2e only) and is called
-    // out as a follow-up in the report.
+    // Task 4 fixed the prior "documented exception" here: cost_usd_micro is
+    // now the SUM of the stage's own provider_usage rows (process-run.ts),
+    // not a value forwarded from the handler's own output. That fixed
+    // validateSerpsAndQuestionsHandler specifically, since its output object
+    // is `{ snapshots, failed }` (no stageCostUsdMicro field) and its real
+    // spend (the task_post call) lands on an earlier attempt than the one
+    // that finally completes -- exactly the two failure modes Task 4's brief
+    // called out. It now shows real cost > 0 like every other paying stage.
     const stageCostRows = await env.BLUEPRINT_DB
       .prepare(`SELECT stage_name, cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name IN (${sixRealStages.map(() => '?').join(',')})`)
       .bind(run1.data.id, ...sixRealStages)
@@ -559,10 +550,14 @@ describe('Phase 3 orchestration acceptance', () => {
     for (const stage of sixRealStages) {
       expect(costByStage.get(stage)).toBeGreaterThanOrEqual(0);
     }
-    for (const payingStage of ['collect_keyword_evidence', 'discover_competitors', 'collect_competitor_evidence']) {
+    for (const payingStage of [
+      'collect_keyword_evidence',
+      'discover_competitors',
+      'collect_competitor_evidence',
+      'validate_serps_and_questions',
+    ]) {
       expect(costByStage.get(payingStage)).toBeGreaterThan(0);
     }
-    expect(costByStage.get('validate_serps_and_questions')).toBe(0);
 
     // Assertion 8: a second identical run on the SAME env (same KV, same
     // fetch stub) reports strictly lower dataforseo_actual_usd_micro. Every

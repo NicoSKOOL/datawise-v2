@@ -70,6 +70,24 @@ async function loadStageRows(d1: D1Database, runId: string): Promise<StageRowLit
   return result.results;
 }
 
+// Ground truth for a stage's real provider spend (Task 4). Every paid
+// DataForSEO call writes a provider_usage row tagged with the run and stage
+// (providers/dataforseo/call.ts), across every attempt, so summing here is
+// correct however many attempts a stage took and whatever a handler's own
+// output does or does not report. This replaces trusting a handler-reported
+// stageCostUsdMicro output field, which was wrong in two ways: some handlers
+// (validate_serps_and_questions) never had that field at all, and for a
+// multi-attempt stage the paid call can land on an earlier attempt than the
+// one that finally completes or terminally fails, so even a correct field
+// on the completing attempt's own output would miss earlier spend.
+async function sumStageProviderCost(d1: D1Database, runId: string, stage: BlueprintStage): Promise<number> {
+  const row = await d1
+    .prepare(`SELECT COALESCE(SUM(cost_usd_micro), 0) AS total FROM provider_usage WHERE run_id = ? AND stage = ?`)
+    .bind(runId, stage)
+    .first<{ total: number }>();
+  return row?.total ?? 0;
+}
+
 // Re-reads the run's real status after a fenced write reported zero
 // matched rows, so callers report what's actually true in the DB (e.g. a
 // concurrently-landed 'cancel_requested'/'cancelled') rather than the stale
@@ -271,19 +289,12 @@ export async function processResearchRun(
       const result = await handler(ctx);
       const outputJson = JSON.stringify(result.output);
       const outputHash = await hashNormalizedInput(result.output);
-      // A handler that tracked its own real provider spend (so far only
-      // collect_keyword_evidence, Task 10) reports it as a numeric
-      // stageCostUsdMicro field on its output; forward that into the stage
-      // row's cost_usd_micro rather than leaving it at completeStage's
-      // default of 0. Every other (stub/free) handler's output has no such
-      // field, so costUsdMicro stays undefined and completeStage's own
-      // COALESCE(?, cost_usd_micro) leaves the column untouched.
-      const stageCostUsdMicro =
-        result.output != null &&
-        typeof result.output === 'object' &&
-        typeof (result.output as Record<string, unknown>).stageCostUsdMicro === 'number'
-          ? (result.output as Record<string, number>).stageCostUsdMicro
-          : undefined;
+      // Stage cost is the SUM of this run+stage's provider_usage rows (Task
+      // 4), not a value forwarded from the handler's own output. Handlers
+      // still may report their own stageCostUsdMicro on their output (kept
+      // as informational only, e.g. for debugging a single attempt), but it
+      // is never what gets persisted here.
+      const stageCostUsdMicro = await sumStageProviderCost(d1, runId, stage);
       await completeStage(d1, lease.lease, outputJson, outputHash, {
         status: result.status ?? 'succeeded',
         costUsdMicro: stageCostUsdMicro,
@@ -304,8 +315,15 @@ export async function processResearchRun(
         // burning MAX_ATTEMPTS retry cycles and then masking the real reason
         // behind a generic internal_error. The message is our own validation
         // text (never raw provider output), so it is safe to persist.
+        // This is a terminal outcome (failed or skipped), so it also carries
+        // the real SUM of whatever this stage's earlier attempts already
+        // spent (Task 4): the stage will never reach completeStage, so this
+        // is the only chance to record its true cost.
         const decision = meta.required ? ({ kind: 'failed' } as const) : ({ kind: 'skipped' } as const);
-        await failStage(d1, lease.lease, { code: 'invalid_input', message: err.message }, decision);
+        const terminalCostUsdMicro = await sumStageProviderCost(d1, runId, stage);
+        await failStage(d1, lease.lease, { code: 'invalid_input', message: err.message }, decision, {
+          costUsdMicro: terminalCostUsdMicro,
+        });
       } else {
         // Only a BlueprintApiError has already been through a sanitizer (e.g.
         // mapDfsFailure) and carries a code/message safe to persist verbatim.
@@ -331,11 +349,24 @@ export async function processResearchRun(
         const retryBackoffMs = meta.retryBackoffMs ?? RETRY_BACKOFF_MS;
         if (lease.attemptCount < maxAttempts) {
           const nextRetryAt = new Date(Date.now() + retryBackoffMs).toISOString();
+          // Not terminal: a future attempt on this same stage row will run
+          // through either the success path or this same catch block again,
+          // and either one re-sums the full provider_usage total at that
+          // point, so there is nothing to record here yet.
           await failStage(d1, lease.lease, { code, message }, { kind: 'retry_wait', nextRetryAt });
         } else if (meta.required) {
-          await failStage(d1, lease.lease, { code, message }, { kind: 'failed' });
+          // Terminal (required stage permanently fails the run): record the
+          // real SUM of every attempt's provider_usage spend for this stage,
+          // same reasoning as the BlueprintValidationError terminal branch
+          // above (Task 4).
+          const terminalCostUsdMicro = await sumStageProviderCost(d1, runId, stage);
+          await failStage(d1, lease.lease, { code, message }, { kind: 'failed' }, { costUsdMicro: terminalCostUsdMicro });
         } else {
-          await failStage(d1, lease.lease, { code, message }, { kind: 'skipped' });
+          // Terminal (optional stage gives up and degrades the run to
+          // partial): same reasoning, this stage will never reach
+          // completeStage either.
+          const terminalCostUsdMicro = await sumStageProviderCost(d1, runId, stage);
+          await failStage(d1, lease.lease, { code, message }, { kind: 'skipped' }, { costUsdMicro: terminalCostUsdMicro });
         }
       }
     }

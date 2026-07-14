@@ -181,6 +181,35 @@ async function forceRetryNow(d1: D1Database, runId: string, stage: string): Prom
     .run();
 }
 
+// Task 4: writes one provider_usage row for a run+stage, the same shape a
+// real paid DataForSEO call writes (providers/dataforseo/call.ts), so tests
+// can assert that the stage row's cost_usd_micro is the SUM of these rather
+// than anything the handler's own output reports.
+async function insertProviderUsage(
+  d1: D1Database,
+  runId: string,
+  stage: string,
+  costUsdMicro: number
+): Promise<void> {
+  await d1
+    .prepare(
+      `INSERT INTO provider_usage
+        (id, run_id, stage, provider, operation, endpoint_or_model, cache_status, request_count, cost_usd_micro, latency_ms, created_at)
+       VALUES (?, ?, ?, 'dataforseo', 'keyword_ideas', 'keywords_data/keyword_ideas', 'miss', 1, ?, 100, ?)`
+    )
+    .bind(newId('pu'), runId, stage, costUsdMicro, nowIso())
+    .run();
+}
+
+async function getStageCost(d1: D1Database, runId: string, stage: string): Promise<{ status: string; cost_usd_micro: number }> {
+  const row = await d1
+    .prepare(`SELECT status, cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+    .bind(runId, stage)
+    .first<{ status: string; cost_usd_micro: number }>();
+  if (!row) throw new Error(`stage row not found: ${stage}`);
+  return row;
+}
+
 describe('processResearchRun', () => {
   // resolve_market (Task 8) makes real DataForSEO catalog GETs; every test in
   // this file drives runs through it without overriding it (a handful of
@@ -755,48 +784,116 @@ describe('processResearchRun', () => {
     expect(run.status).toBe('cancelled');
   });
 
-  // Task 10: collect_keyword_evidence is the first real handler that tracks
-  // its own provider spend and reports it back as a numeric
-  // stageCostUsdMicro field on its output (see research-handlers.ts). This
-  // proves the processor's forwarding in isolation, with a stub handler
-  // standing in for any future handler that reports the same field --
-  // completeStage itself already accepted a costUsdMicro extra (db/leases.ts,
-  // pre-existing), the only new wiring here is process-run.ts reading it off
-  // the handler's own output.
-  it('Task 10: forwards a handler-reported stageCostUsdMicro onto the stage row as cost_usd_micro', async () => {
+  // Task 4: stage cost now comes from SUM(provider_usage), not from a
+  // handler-reported stageCostUsdMicro output field (that field is kept,
+  // but purely informational -- see research-handlers.ts). This test used
+  // to assert the opposite (Task 10's original forwarding behavior); it is
+  // rewritten here to prove the new source of truth, deliberately using a
+  // DIFFERENT amount on the output field than on the provider_usage row so
+  // a regression back to output-forwarding would be caught immediately.
+  it('Task 4: cost_usd_micro comes from SUM(provider_usage), not the handler-reported stageCostUsdMicro output field', async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { queue } = makeQueue();
     const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
-      resolve_market: async () => ({
-        output: { stage: 'resolve_market' as const, stub: true, stageCostUsdMicro: 123_456 },
-      }),
+      resolve_market: async () => {
+        await insertProviderUsage(d1, runId, 'resolve_market', 99_000);
+        return { output: { stage: 'resolve_market' as const, stub: true, stageCostUsdMicro: 123_456 } };
+      },
     };
 
     await processResearchRun(env, runId, 'w1', overrides); // validate_intake
-    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, reports cost)
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, writes a usage row)
 
-    const stageRow = await d1
-      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
-      .bind(runId, 'resolve_market')
-      .first<{ cost_usd_micro: number }>();
-    expect(stageRow?.cost_usd_micro).toBe(123_456);
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.cost_usd_micro).toBe(99_000);
   });
 
-  it("Task 10: a handler output with no stageCostUsdMicro field leaves cost_usd_micro at completeStage's default (0)", async () => {
+  it("Task 4: a stage with no provider_usage rows at all leaves cost_usd_micro at 0 (the SUM's default)", async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { queue } = makeQueue();
     const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
-    await processResearchRun(env, runId, 'w1'); // validate_intake: real handler, no stageCostUsdMicro field
+    await processResearchRun(env, runId, 'w1'); // validate_intake: real handler, no provider_usage rows
 
-    const stageRow = await d1
-      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
-      .bind(runId, 'validate_intake')
-      .first<{ cost_usd_micro: number }>();
-    expect(stageRow?.cost_usd_micro).toBe(0);
+    const stageRow = await getStageCost(d1, runId, 'validate_intake');
+    expect(stageRow.cost_usd_micro).toBe(0);
+  });
+
+  it('Task 4: a handler output with NO stageCostUsdMicro field (the validate_serps shape) still gets cost_usd_micro = SUM(provider_usage)', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        await insertProviderUsage(d1, runId, 'resolve_market', 75_000);
+        // No stageCostUsdMicro field on this output at all.
+        return { output: { stage: 'resolve_market' as const, stub: true } };
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, writes a usage row)
+
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.cost_usd_micro).toBe(75_000);
+  });
+
+  it('Task 4: sums provider_usage across TWO attempts (first throws after writing a row, retry completes and writes another) into the completed stage row', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async (ctx) => {
+        if (ctx.attempt === 1) {
+          await insertProviderUsage(d1, runId, 'resolve_market', 40_000);
+          throw new Error('boom-transient');
+        }
+        await insertProviderUsage(d1, runId, 'resolve_market', 60_000);
+        return { output: { stage: 'resolve_market' as const, stub: true } };
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market attempt 1: writes a row, throws -> retry_wait
+    await forceRetryNow(d1, runId, 'resolve_market');
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market attempt 2: writes another row, succeeds
+
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.status).toBe('succeeded');
+    expect(stageRow.cost_usd_micro).toBe(100_000);
+  });
+
+  it('Task 4: a REQUIRED stage that fails permanently after writing provider_usage rows on earlier attempts carries their SUM on the failed stage row', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        await insertProviderUsage(d1, runId, 'resolve_market', 20_000);
+        throw new Error('boom-required');
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+      if (attempt < 3) await forceRetryNow(d1, runId, 'resolve_market');
+    }
+
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.status).toBe('failed');
+    // Three attempts, each writing a 20_000 provider_usage row before
+    // throwing: the failed row must carry the SUM of all three, proving the
+    // terminal-failure path (failStage) sums cost the same way the
+    // success path (completeStage) does.
+    expect(stageRow.cost_usd_micro).toBe(60_000);
   });
 
   // Finding 1 (final whole-branch review): collect_keyword_evidence is a

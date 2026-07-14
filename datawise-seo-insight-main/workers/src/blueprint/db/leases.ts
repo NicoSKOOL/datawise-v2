@@ -177,11 +177,20 @@ export async function completeStage(
 // future acquire once next_retry_at passes; failed/skipped are terminal.
 // All three branches release the lease so the row is immediately claimable
 // again (subject to the retry_wait gate in acquireStageLease).
+//
+// The optional `extra.costUsdMicro` mirrors Task 2's rulesetVersion
+// COALESCE pattern: when the caller has already summed a stage's real
+// provider_usage spend (Task 4, only meaningful on a terminal 'failed' or
+// 'skipped' decision, since a retry_wait row will get its cost re-summed
+// when it eventually completes or terminally fails), it is written through
+// COALESCE(?, cost_usd_micro) so an omitted value leaves the column
+// untouched rather than resetting it to 0.
 export async function failStage(
   d1: D1Database,
   lease: StageLease,
   error: { code: BlueprintErrorCode; message: string },
-  decision: { kind: 'retry_wait'; nextRetryAt: string } | { kind: 'failed' } | { kind: 'skipped' }
+  decision: { kind: 'retry_wait'; nextRetryAt: string } | { kind: 'failed' } | { kind: 'skipped' },
+  extra?: { costUsdMicro?: number }
 ): Promise<void> {
   let claim: { meta: { changes: number } };
   if (decision.kind === 'retry_wait') {
@@ -189,10 +198,19 @@ export async function failStage(
       .prepare(
         `UPDATE research_stage_runs
          SET status = 'retry_wait', next_retry_at = ?, safe_error_code = ?, safe_error_message = ?,
+             cost_usd_micro = COALESCE(?, cost_usd_micro),
              lease_owner = NULL, lease_expires_at = NULL
          WHERE id = ? AND lease_owner = ? AND lease_epoch = ?`
       )
-      .bind(decision.nextRetryAt, error.code, error.message, lease.stageRunId, lease.workerId, lease.leaseEpoch)
+      .bind(
+        decision.nextRetryAt,
+        error.code,
+        error.message,
+        extra?.costUsdMicro ?? null,
+        lease.stageRunId,
+        lease.workerId,
+        lease.leaseEpoch
+      )
       .run();
   } else {
     const status = decision.kind === 'failed' ? 'failed' : 'skipped';
@@ -200,10 +218,20 @@ export async function failStage(
       .prepare(
         `UPDATE research_stage_runs
          SET status = ?, safe_error_code = ?, safe_error_message = ?, finished_at = ?,
+             cost_usd_micro = COALESCE(?, cost_usd_micro),
              lease_owner = NULL, lease_expires_at = NULL
          WHERE id = ? AND lease_owner = ? AND lease_epoch = ?`
       )
-      .bind(status, error.code, error.message, nowIso(), lease.stageRunId, lease.workerId, lease.leaseEpoch)
+      .bind(
+        status,
+        error.code,
+        error.message,
+        nowIso(),
+        extra?.costUsdMicro ?? null,
+        lease.stageRunId,
+        lease.workerId,
+        lease.leaseEpoch
+      )
       .run();
   }
   if (claim.meta.changes === 0) {
