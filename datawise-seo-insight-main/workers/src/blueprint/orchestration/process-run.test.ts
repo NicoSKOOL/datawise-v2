@@ -97,19 +97,42 @@ const stubValidateSerps: StageHandler = async () => ({
 });
 
 // Stub provider bindings/credentials this file's tests never actually
-// exercise (no handler override here reads ctx.env), but processResearchRun
-// now requires a BlueprintProviderEnv, so every constructed env needs these
-// fields to satisfy the type.
+// exercise directly (no handler override here reads ctx.env itself), but
+// processResearchRun now requires a BlueprintProviderEnv, so every
+// constructed env needs these fields to satisfy the type. Real in-memory
+// Map-backed KV/R2 (not pure no-op get-always-null stubs): Phase 4 Task 7
+// registers normalize_keyword_universe as the first REAL reader of the R2
+// artifacts/KV cache entries collect_keyword_evidence/discover_competitors/
+// collect_competitor_evidence write earlier in this same full-drive path
+// (providers/dataforseo/evidence-readback.ts). A no-op `get` that always
+// returns null makes every one of those real writes look "missing" the
+// moment something finally reads them back, which would incorrectly degrade
+// normalize_keyword_universe to 'partial' on every run through this test,
+// even though nothing was actually lost. A real round-trip (put really
+// stores, get really returns it) is what production R2/KV actually do, so
+// this is a fixture-fidelity fix, not a behavior change to what's being
+// tested here.
 function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+  const kvStore = new Map<string, string>();
+  const r2Store = new Map<string, string>();
   return {
     KV: {
-      get: async () => null,
-      put: async () => undefined,
-      delete: async () => undefined,
+      get: async (key: string) => kvStore.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        kvStore.set(key, value);
+      },
+      delete: async (key: string) => {
+        kvStore.delete(key);
+      },
     } as unknown as KVNamespace,
     BLUEPRINT_ARTIFACTS: {
-      put: async () => undefined,
-      get: async () => null,
+      put: async (key: string, value: string) => {
+        r2Store.set(key, value);
+      },
+      get: async (key: string) => {
+        const body = r2Store.get(key);
+        return body === undefined ? null : { text: async () => body };
+      },
     } as unknown as R2Bucket,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
