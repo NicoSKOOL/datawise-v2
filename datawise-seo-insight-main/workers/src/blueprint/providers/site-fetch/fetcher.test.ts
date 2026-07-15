@@ -106,6 +106,13 @@ describe('fetchTextResource redirects', () => {
     await expect(fetchTextResource('http://example.com/a')).rejects.toMatchObject({ reason: 'ssrf' });
   });
 
+  it('rejects a redirect to a decimal-encoded private IP', async () => {
+    stubFetchByUrl({
+      'http://example.com/a': { status: 301, headers: { location: 'http://2130706433/' } }, // 127.0.0.1
+    });
+    await expect(fetchTextResource('http://example.com/a')).rejects.toMatchObject({ reason: 'ssrf' });
+  });
+
   it('caps redirects', async () => {
     stubFetchByUrl({
       'http://example.com/0': { status: 301, headers: { location: 'http://example.com/1' } },

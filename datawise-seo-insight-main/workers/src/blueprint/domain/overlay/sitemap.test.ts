@@ -88,6 +88,16 @@ describe('parseSitemapXml', () => {
     expect(out.truncated).toBe(true);
   });
 
+  it('caps childSitemaps at 50 and sets truncated', () => {
+    const children = Array.from(
+      { length: 60 },
+      (_, i) => `<sitemap><loc>https://example.com/s${String(i).padStart(3, '0')}.xml</loc></sitemap>`
+    ).join('');
+    const out = parseSitemapXml(`<sitemapindex>${children}</sitemapindex>`, 500);
+    expect(out.childSitemaps).toHaveLength(50);
+    expect(out.truncated).toBe(true);
+  });
+
   it('falls back to urls for a wrapperless malformed body with no sitemapindex root', () => {
     const xml = '<loc>https://example.com/x</loc>';
     const out = parseSitemapXml(xml, 500);

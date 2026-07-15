@@ -23,6 +23,13 @@ import type { PlannedPage } from '../page-plan/types';
 // sitemaps.
 const ROBOTS_SITEMAP_CAP = 10;
 
+// Upper bound on child sitemaps a single sitemapindex may yield. A sitemapindex
+// can legally list up to 50,000 child sitemaps; the overlay only follows a small
+// budget of them (Task 18 owns that budget), so we cap the parsed list here so a
+// giant index cannot balloon the result. Page URLs have their own cap
+// (overlay.maxSitemapUrls); this bounds the recursion frontier.
+const MAX_CHILD_SITEMAPS = 50;
+
 const XML_ENTITIES: Record<string, string> = {
   '&amp;': '&',
   '&lt;': '<',
@@ -88,9 +95,11 @@ export function parseRobotsTxt(body: string): string[] {
 export interface ParsedSitemap {
   // Page URLs (from <urlset>). Deduped, sorted, capped at maxUrls.
   urls: string[];
-  // Child sitemap URLs (from <sitemapindex>). Deduped, sorted.
+  // Child sitemap URLs (from <sitemapindex>). Deduped, sorted, capped at
+  // MAX_CHILD_SITEMAPS.
   childSitemaps: string[];
-  // True when `urls` was cut to maxUrls.
+  // True when EITHER list was capped (page URLs to maxUrls, or child sitemaps to
+  // MAX_CHILD_SITEMAPS): a signal to Task 18 that the inventory is partial.
   truncated: boolean;
 }
 
@@ -138,11 +147,15 @@ export function parseSitemapXml(body: string, maxUrls: number): ParsedSitemap {
     }
   }
 
-  const childSitemaps = dedupeSorted(rawChildren);
+  const allChildren = dedupeSorted(rawChildren);
+  const childrenTruncated = allChildren.length > MAX_CHILD_SITEMAPS;
+  const childSitemaps = childrenTruncated ? allChildren.slice(0, MAX_CHILD_SITEMAPS) : allChildren;
+
   const allUrls = dedupeSorted(rawUrls);
-  const truncated = allUrls.length > maxUrls;
-  const urls = truncated ? allUrls.slice(0, maxUrls) : allUrls;
-  return { urls, childSitemaps, truncated };
+  const urlsTruncated = allUrls.length > maxUrls;
+  const urls = urlsTruncated ? allUrls.slice(0, maxUrls) : allUrls;
+
+  return { urls, childSitemaps, truncated: urlsTruncated || childrenTruncated };
 }
 
 // ---------------------------------------------------------------------------
