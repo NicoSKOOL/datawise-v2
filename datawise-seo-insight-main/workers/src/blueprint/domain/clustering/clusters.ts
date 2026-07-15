@@ -170,6 +170,94 @@ function meanPairwise(
   return valued === 0 ? null : round6(sum / valued);
 }
 
+// Semantic + SERP-overlap cohesion of a member set, using the exact sampling
+// convention (COHESION_PAIR_CAP, member-id-sorted iteration, round6) the
+// cluster assembly below relies on. Exported so refine_clusters (Task 12) can
+// recompute cohesion for merged/split clusters without duplicating this math.
+export function computeClusterCohesion(
+  members: readonly KeywordNode[],
+): { semanticCohesion: number | null; serpOverlapCohesion: number | null } {
+  const semanticCohesion = meanPairwise(
+    members,
+    (n) => n.vector !== null,
+    (a, b) => cosineSimilarity(a.vector, b.vector),
+  );
+  const serpOverlapCohesion = meanPairwise(
+    members,
+    (n) => n.serpUrls !== null && n.serpUrls.size > 0,
+    (a, b) => jaccardSerpOverlap(a.serpUrls, b.serpUrls),
+  );
+  return { semanticCohesion, serpOverlapCohesion };
+}
+
+// Assembles one ClusterDraft from a member set, the node lookup, and the
+// clean strong-edge list that governs membership scores. This is the exact
+// per-cluster body buildDeterministicClusters used to inline; extracted (Task
+// 12) so refine_clusters can reassemble a merged/split cluster with identical
+// primary-selection, intent, service/area, cohesion, and membership-score
+// semantics rather than re-deriving them. memberIds may arrive in any order;
+// the returned draft's memberIds are id-sorted, so clusterKey (memberIds[0])
+// is always the lexicographically smallest member id.
+export function assembleClusterDraft(input: {
+  memberIds: readonly string[];
+  byId: ReadonlyMap<string, KeywordNode>;
+  strongEdges: readonly GraphEdge[];
+  displayKeywords: ReadonlyMap<string, string>;
+  warn?: boolean;
+}): ClusterDraft {
+  const memberIds = input.memberIds.slice().sort(cmpStr);
+  const memberNodes = memberIds.map((id) => input.byId.get(id)!);
+
+  // Primary: relevance DESC nulls last, volume DESC nulls last, normalizedKeyword ASC.
+  const primary = memberNodes.slice().sort((a, b) =>
+    cmpDescNullsLast(a.relevance, b.relevance) ||
+    cmpDescNullsLast(a.volume, b.volume) ||
+    cmpStr(a.normalizedKeyword, b.normalizedKeyword),
+  )[0];
+
+  const serviceId = mostFrequentId(memberNodes.map((n) => n.serviceIds));
+  const serviceAreaId = mostFrequentId(memberNodes.map((n) => n.serviceAreaIds));
+  const intent = majorityIntent(memberNodes, primary);
+
+  const { semanticCohesion, serpOverlapCohesion } = computeClusterCohesion(memberNodes);
+
+  // Membership score: mean of a member's incident strong-edge scores that stay
+  // inside this cluster. Members with no in-cluster edge (singletons, or nodes
+  // isolated by a recut) score 1.0.
+  const memberSet = new Set(memberIds);
+  const incident = new Map<string, number[]>();
+  for (const id of memberIds) incident.set(id, []);
+  for (const e of input.strongEdges) {
+    if (memberSet.has(e.a) && memberSet.has(e.b)) {
+      incident.get(e.a)!.push(e.score);
+      incident.get(e.b)!.push(e.score);
+    }
+  }
+  const membershipScores: Record<string, number> = {};
+  for (const id of memberIds) {
+    const scores = incident.get(id)!;
+    membershipScores[id] = scores.length === 0
+      ? 1
+      : round6(scores.reduce((s, v) => s + v, 0) / scores.length);
+  }
+
+  const warnings = input.warn ? ['weak_serp_distinction'] : [];
+
+  return {
+    clusterKey: memberIds[0],
+    memberIds,
+    primaryKeywordId: primary.keywordId,
+    label: input.displayKeywords.get(primary.keywordId) ?? primary.normalizedKeyword,
+    serviceId,
+    serviceAreaId,
+    intent,
+    semanticCohesion,
+    serpOverlapCohesion,
+    membershipScores,
+    warnings,
+  };
+}
+
 export function buildDeterministicClusters(input: {
   nodes: readonly KeywordNode[];
   edges: readonly GraphEdge[];
@@ -205,68 +293,9 @@ export function buildDeterministicClusters(input: {
     finalClusters.push(...recut(comp, 0, strongEdges, ruleset));
   }
 
-  const drafts: ClusterDraft[] = finalClusters.map(({ members, warn }) => {
-    const memberIds = members.slice().sort(cmpStr);
-    const memberNodes = memberIds.map((id) => byId.get(id)!);
-
-    // Primary: relevance DESC nulls last, volume DESC nulls last, normalizedKeyword ASC.
-    const primary = memberNodes.slice().sort((a, b) =>
-      cmpDescNullsLast(a.relevance, b.relevance) ||
-      cmpDescNullsLast(a.volume, b.volume) ||
-      cmpStr(a.normalizedKeyword, b.normalizedKeyword),
-    )[0];
-
-    const serviceId = mostFrequentId(memberNodes.map((n) => n.serviceIds));
-    const serviceAreaId = mostFrequentId(memberNodes.map((n) => n.serviceAreaIds));
-    const intent = majorityIntent(memberNodes, primary);
-
-    const semanticCohesion = meanPairwise(
-      memberNodes,
-      (n) => n.vector !== null,
-      (a, b) => cosineSimilarity(a.vector, b.vector),
-    );
-    const serpOverlapCohesion = meanPairwise(
-      memberNodes,
-      (n) => n.serpUrls !== null && n.serpUrls.size > 0,
-      (a, b) => jaccardSerpOverlap(a.serpUrls, b.serpUrls),
-    );
-
-    // Membership score: mean of a member's incident strong-edge scores that stay
-    // inside this cluster. Members with no in-cluster edge (singletons, or nodes
-    // isolated by a recut) score 1.0.
-    const memberSet = new Set(memberIds);
-    const incident = new Map<string, number[]>();
-    for (const id of memberIds) incident.set(id, []);
-    for (const e of strongEdges) {
-      if (memberSet.has(e.a) && memberSet.has(e.b)) {
-        incident.get(e.a)!.push(e.score);
-        incident.get(e.b)!.push(e.score);
-      }
-    }
-    const membershipScores: Record<string, number> = {};
-    for (const id of memberIds) {
-      const scores = incident.get(id)!;
-      membershipScores[id] = scores.length === 0
-        ? 1
-        : round6(scores.reduce((s, v) => s + v, 0) / scores.length);
-    }
-
-    const warnings = warn ? ['weak_serp_distinction'] : [];
-
-    return {
-      clusterKey: memberIds[0],
-      memberIds,
-      primaryKeywordId: primary.keywordId,
-      label: displayKeywords.get(primary.keywordId) ?? primary.normalizedKeyword,
-      serviceId,
-      serviceAreaId,
-      intent,
-      semanticCohesion,
-      serpOverlapCohesion,
-      membershipScores,
-      warnings,
-    };
-  });
+  const drafts: ClusterDraft[] = finalClusters.map(({ members, warn }) =>
+    assembleClusterDraft({ memberIds: members, byId, strongEdges, displayKeywords, warn }),
+  );
 
   drafts.sort((x, y) => cmpStr(x.clusterKey, y.clusterKey));
 

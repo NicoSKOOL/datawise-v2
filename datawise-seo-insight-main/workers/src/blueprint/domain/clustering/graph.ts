@@ -40,7 +40,7 @@ function round6(x: number): number {
   return Math.round(x * 1e6) / 1e6;
 }
 
-interface ScoreResult {
+export interface ScoreResult {
   score: number;
   weightsUsed: { semantic: number; serpOverlap: number; intent: number };
 }
@@ -48,8 +48,10 @@ interface ScoreResult {
 // Renormalizes the base edge weights over the present (non-null) components and
 // returns the weighted score. Returns null when every component is missing (no
 // edge). Score and weights are rounded to 6dp so hash comparisons are stable
-// across float noise.
-function scoreEdge(
+// across float noise. Exported so refine_clusters (Task 12) scores its
+// cluster-boundary edges with the exact same weighting/renormalization/rounding
+// stage 10 uses for keyword-pair edges.
+export function scoreEdge(
   semantic: number | null,
   serpJaccard: number | null,
   intent: number | null,

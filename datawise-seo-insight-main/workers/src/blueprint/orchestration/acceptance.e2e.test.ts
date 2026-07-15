@@ -258,7 +258,12 @@ describe('Phase 2 orchestration acceptance', () => {
       .prepare(`SELECT partial_reasons_json FROM research_runs WHERE id = ?`)
       .bind(run.data.id)
       .first<{ partial_reasons_json: string }>();
-    expect(JSON.parse(runRow!.partial_reasons_json)).toEqual(['collect_us_fanout']);
+    // Two gaps: collect_us_fanout's clean optional skip, plus refine_clusters
+    // (Task 12) completing 'partial' with no_live_serp_evidence because this
+    // drive stubs validate_serps_and_questions and so persists no live SERP
+    // snapshots for the clusters to refine against. Sorted before comparison:
+    // loadGapStageNames has no total ORDER BY, so gap-list order is not fixed.
+    expect(JSON.parse(runRow!.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'refine_clusters']);
 
     const stageRows = await env.BLUEPRINT_DB
       .prepare(`SELECT stage_name, status, attempt_count FROM research_stage_runs WHERE run_id = ?`)
@@ -277,7 +282,7 @@ describe('Phase 2 orchestration acceptance', () => {
       .bind(run.data.id)
       .first<{ completeness: string; partial_reasons_json: string }>();
     expect(versionRow?.completeness).toBe('partial');
-    expect(JSON.parse(versionRow!.partial_reasons_json)).toEqual(['collect_us_fanout']);
+    expect(JSON.parse(versionRow!.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'refine_clusters']);
   });
 
   it('acceptance: cancellation mid-drain ends the run cancelled with no blueprint_versions row published', async () => {

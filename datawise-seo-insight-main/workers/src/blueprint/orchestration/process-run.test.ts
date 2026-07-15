@@ -296,8 +296,13 @@ describe('processResearchRun', () => {
     expect(finalRun.finished_at).toBeTruthy();
     // Task 8 Fix 2: partial_reasons is derived from stage rows, not
     // incrementally appended, so it must already list collect_us_fanout's
-    // clean skip by the time the run finishes.
-    expect(JSON.parse(finalRun.partial_reasons_json)).toEqual(['collect_us_fanout']);
+    // clean skip by the time the run finishes. refine_clusters (Task 12) is a
+    // second gap here: this drive stubs validate_serps_and_questions so no live
+    // SERP snapshots exist, and refine_clusters over clusters with zero live
+    // coverage completes 'partial' with a no_live_serp_evidence warning by
+    // design. Sorted before comparison because loadGapStageNames has no total
+    // ORDER BY (TEXT-PK scan order), so the gap list order is not guaranteed.
+    expect(JSON.parse(finalRun.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'refine_clusters']);
 
     const finalStageRows = await getStageRows(d1, runId);
     expect(finalStageRows.length).toBe(19);
@@ -331,7 +336,7 @@ describe('processResearchRun', () => {
     // would. Status ('partial'), run.partial_reasons_json, and version
     // completeness must all agree.
     expect(versions.results[0].completeness).toBe('partial');
-    expect(JSON.parse(versions.results[0].partial_reasons_json)).toEqual(['collect_us_fanout']);
+    expect(JSON.parse(versions.results[0].partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'refine_clusters']);
     expect(versions.results[0].latest_revision_id).toBeTruthy();
 
     const revisions = await d1

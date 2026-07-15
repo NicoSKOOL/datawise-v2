@@ -20,9 +20,12 @@ import { buildKeywordSimilarityGraph } from '../domain/clustering/graph';
 import type { KeywordNode } from '../domain/clustering/graph';
 import { buildDeterministicClusters } from '../domain/clustering/clusters';
 import type { ClusterDraft } from '../domain/clustering/clusters';
+import { refineClusters } from '../domain/clustering/refine';
+import type { RefineClusterInput, LiveSerpEvidence, AdjudicationCase } from '../domain/clustering/refine';
+import { rulesetVersionForStage } from '../domain/ruleset';
 import { BlueprintApiError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
-import { newId } from '../db/util';
+import { newId, nowIso } from '../db/util';
 import { loadStageOutput } from './stage-io';
 
 // Home for Phase 4's clustering-track stage handlers (normalize_keyword_universe
@@ -762,6 +765,65 @@ export interface BuildProvisionalClustersOutput {
 
 const DECISION_REASON = `Clustered by semantic + SERP similarity under ruleset ${CLUSTER_RULESET_V1.version}`;
 
+interface ClusteringNodeSet {
+  nodes: KeywordNode[];
+  byId: Map<string, KeywordNode>;
+  displayKeywords: Map<string, string>;
+  unexpectedDimensions: boolean;
+  rankingArtifactsMissing: number;
+}
+
+// Builds the KeywordNode graph inputs (vectors + SERP URLs + brand flags +
+// service/area links + intent) for a run's retained keywords. Extracted (Task
+// 12) from build_provisional_clusters so refine_clusters reconstructs the
+// EXACT same nodes it clustered over rather than duplicating the load. Takes
+// the already-loaded retained rows + stage-9 output (both callers load those
+// themselves for their own short-circuits), so this is purely the node
+// assembly. evidence-ref loading stays with build_provisional_clusters (only
+// that stage writes score_breakdown evidence refs).
+async function buildClusteringNodes(
+  ctx: StageContext,
+  retained: ClusterableKeywordRow[],
+  stage9: EmbedKeywordFeaturesOutput
+): Promise<ClusteringNodeSet> {
+  const { vectorsById, unexpectedDimensions } = await loadStageVectors(ctx.env.BLUEPRINT_ARTIFACTS, stage9);
+
+  const brief = ctx.normalizedBrief;
+  const locale = `${brief.languageCode}-${brief.countryIso}`;
+
+  const [serviceMap, areaMap, rankingUrls, brandTokens] = await Promise.all([
+    loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_services', 'service_id'),
+    loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_service_areas', 'service_area_id'),
+    loadCompetitorRankingUrls(ctx.d1, ctx.env.BLUEPRINT_ARTIFACTS, ctx.env.KV, ctx.runId, locale),
+    loadBrandTokens(ctx.d1, ctx.runId, tokenizeKeyword(brief.normalizedBusinessName), briefGenericTokens(brief, locale)),
+  ]);
+
+  const displayKeywords = new Map<string, string>(retained.map((row) => [row.id, row.display_keyword]));
+
+  const nodes: KeywordNode[] = retained.map((row) => {
+    const tokens = tokenizeKeyword(row.normalized_keyword);
+    const isBranded = tokens.some((t) => brandTokens.has(t));
+    const serpUrlList = rankingUrls.data.get(row.normalized_keyword) ?? null;
+    return {
+      keywordId: row.id,
+      normalizedKeyword: row.normalized_keyword,
+      tokens,
+      coreKeyword: row.core_keyword,
+      vector: vectorsById.get(row.id) ?? null,
+      serpUrls: serpUrlList && serpUrlList.length > 0 ? new Set(serpUrlList) : null,
+      relevance: row.relevance_score,
+      volume: row.search_volume,
+      isBranded,
+      intent: toValidatedIntent(row.main_intent),
+      serviceIds: serviceMap.get(row.id) ?? [],
+      serviceAreaIds: areaMap.get(row.id) ?? [],
+    };
+  });
+
+  const byId = new Map(nodes.map((n) => [n.keywordId, n]));
+  return { nodes, byId, displayKeywords, unexpectedDimensions, rankingArtifactsMissing: rankingUrls.artifactsMissing };
+}
+
 // Real build_provisional_clusters, not a stub (Phase 4 Task 10). REQUIRED
 // stage (stages.ts): every throw below fails the whole run rather than
 // degrading it to partial, because a run with no clusters has nothing for
@@ -838,42 +900,9 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
     throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
   }
 
-  const { vectorsById, unexpectedDimensions } = await loadStageVectors(ctx.env.BLUEPRINT_ARTIFACTS, stage9);
-
-  const brief = ctx.normalizedBrief;
-  const locale = `${brief.languageCode}-${brief.countryIso}`;
-
-  const [serviceMap, areaMap, rankingUrls, brandTokens, evidenceRefMap] = await Promise.all([
-    loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_services', 'service_id'),
-    loadKeywordJoinMap(ctx.d1, ctx.runId, 'keyword_service_areas', 'service_area_id'),
-    loadCompetitorRankingUrls(ctx.d1, ctx.env.BLUEPRINT_ARTIFACTS, ctx.env.KV, ctx.runId, locale),
-    loadBrandTokens(ctx.d1, ctx.runId, tokenizeKeyword(brief.normalizedBusinessName), briefGenericTokens(brief, locale)),
-    loadKeywordEvidenceRefMap(ctx.d1, ctx.runId),
-  ]);
-
-  const displayKeywords = new Map<string, string>(retained.map((row) => [row.id, row.display_keyword]));
-
-  const nodes: KeywordNode[] = retained.map((row) => {
-    const tokens = tokenizeKeyword(row.normalized_keyword);
-    const isBranded = tokens.some((t) => brandTokens.has(t));
-    const serpUrlList = rankingUrls.data.get(row.normalized_keyword) ?? null;
-    return {
-      keywordId: row.id,
-      normalizedKeyword: row.normalized_keyword,
-      tokens,
-      coreKeyword: row.core_keyword,
-      vector: vectorsById.get(row.id) ?? null,
-      serpUrls: serpUrlList && serpUrlList.length > 0 ? new Set(serpUrlList) : null,
-      relevance: row.relevance_score,
-      volume: row.search_volume,
-      isBranded,
-      intent: toValidatedIntent(row.main_intent),
-      serviceIds: serviceMap.get(row.id) ?? [],
-      serviceAreaIds: areaMap.get(row.id) ?? [],
-    };
-  });
-
-  const nodeById = new Map(nodes.map((n) => [n.keywordId, n]));
+  const { nodes, byId: nodeById, displayKeywords, unexpectedDimensions, rankingArtifactsMissing } =
+    await buildClusteringNodes(ctx, retained, stage9);
+  const evidenceRefMap = await loadKeywordEvidenceRefMap(ctx.d1, ctx.runId);
 
   const graph = buildKeywordSimilarityGraph({ nodes, ruleset: CLUSTER_RULESET_V1 });
   const clusterResult = buildDeterministicClusters({
@@ -975,6 +1004,417 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
 
   return {
     output,
-    status: rankingUrls.artifactsMissing > 0 ? ('partial' as const) : ('succeeded' as const),
+    status: rankingArtifactsMissing > 0 ? ('partial' as const) : ('succeeded' as const),
   };
+};
+
+// ===== refine_clusters (Phase 4 Task 12) =====
+//
+// Deterministic, live-SERP-driven refinement of build_provisional_clusters'
+// output. OPTIONAL stage (stages.ts): it never fails the run. NO AI calls, NO
+// provider calls -- it reads the live SERP snapshots validate_serps_and_questions
+// already fetched for cluster representative queries (serp_snapshots +
+// faq_evidence) and applies only unambiguous, constraint-clean merges/splits.
+// Every low-confidence boundary is persisted to cluster_adjudications as
+// 'pending' (live evidence exists) or 'insufficient_evidence' (it does not) for
+// the Phase 5 adjudicator, never guessed here.
+
+const REFINE_DECISION_REASON = `Refined by live SERP evidence under ruleset ${CLUSTER_RULESET_V1.version}`;
+
+// cluster_adjudications: (id, run_id, case_type, cluster_ids_json,
+// keyword_ids_json, decision, score_context_json, ruleset_version, created_at)
+// = 9 bound params/row; resolved_at is a NULL literal. floor(100/9) = 11; back
+// off to 10 (90 params) for headroom.
+const ADJ_PARAMS_PER_ROW = 9;
+const ADJ_ROWS_PER_STATEMENT = 10;
+assertRowBudget(ADJ_ROWS_PER_STATEMENT, ADJ_PARAMS_PER_ROW, 'cluster_adjudications insert');
+
+// DELETE ... WHERE col IN (...): 1 bound param per id, well under the 100 cap
+// when chunked at 90.
+const DELETE_IDS_PER_STATEMENT = 90;
+
+export interface RefineClustersOutput {
+  stage: 'refine_clusters';
+  // Present (and true) only on the zero-cluster short-circuit.
+  skipped?: boolean;
+  reason?: string;
+  clustersIn: number;
+  clustersOut: number;
+  autoMerges: number;
+  autoSplits: number;
+  adjudicationsPending: number;
+  adjudicationsInsufficient: number;
+  liveSnapshotCoverage: number;
+  rulesetVersion: string;
+  // 'no_live_serp_evidence' when no cluster representative query had a live
+  // snapshot (liveSnapshotCoverage === 0): the stage completes as 'partial',
+  // persists adjudications as insufficient_evidence, and makes no auto-changes.
+  warnings: string[];
+}
+
+interface RefineClusterRow {
+  id: string;
+  primary_keyword_id: string;
+  intent: string | null;
+}
+
+interface RefineSnapshotRow {
+  nk: string;
+  organic_json: string | null;
+  related_searches_json: string | null;
+}
+
+// Loads the run's live SERP snapshots (organic URLs + related searches) and PAA
+// questions, keyed by the snapshot keyword's normalized_keyword -- the same key
+// a cluster's representative query normalizes to. Multiple snapshots for one
+// normalized query (different SERP locations) are merged (union of URLs /
+// related searches / questions). Related searches and PAA questions are
+// normalized here so refine.ts's cross-appearance test compares like with like.
+async function loadLiveSerpEvidence(
+  d1: D1Database,
+  runId: string,
+  locale: string
+): Promise<Map<string, LiveSerpEvidence>> {
+  const snapRows = await d1
+    .prepare(
+      `SELECT k.normalized_keyword AS nk, s.organic_json AS organic_json, s.related_searches_json AS related_searches_json
+       FROM serp_snapshots s JOIN keywords k ON k.id = s.keyword_id
+       WHERE s.run_id = ? ORDER BY s.id ASC`
+    )
+    .bind(runId)
+    .all<RefineSnapshotRow>();
+  const paaRows = await d1
+    .prepare(
+      `SELECT k.normalized_keyword AS nk, f.question AS question
+       FROM faq_evidence f
+       JOIN serp_snapshots s ON s.id = f.serp_snapshot_id
+       JOIN keywords k ON k.id = s.keyword_id
+       WHERE f.run_id = ? ORDER BY f.id ASC`
+    )
+    .bind(runId)
+    .all<{ nk: string; question: string }>();
+
+  const accum = new Map<string, { organic: Set<string>; related: Set<string>; paa: Set<string> }>();
+  const ensure = (nk: string) => {
+    let e = accum.get(nk);
+    if (!e) {
+      e = { organic: new Set(), related: new Set(), paa: new Set() };
+      accum.set(nk, e);
+    }
+    return e;
+  };
+
+  for (const row of snapRows.results ?? []) {
+    // A snapshot with empty organic and no related searches still marks its
+    // query as "has live evidence" (presence in the map) -- the entry is
+    // created here regardless.
+    const e = ensure(row.nk);
+    const organic = parseJsonColumn<Array<{ url?: string | null }>>(row.organic_json) ?? [];
+    for (const item of organic) if (typeof item?.url === 'string') e.organic.add(item.url);
+    const related = parseJsonColumn<string[]>(row.related_searches_json) ?? [];
+    for (const r of related) {
+      const n = normalizeKeyword(r, locale);
+      if (n) e.related.add(n);
+    }
+  }
+  for (const row of paaRows.results ?? []) {
+    const e = ensure(row.nk);
+    const n = normalizeKeyword(row.question, locale);
+    if (n) e.paa.add(n);
+  }
+
+  const out = new Map<string, LiveSerpEvidence>();
+  for (const [nk, e] of accum) {
+    out.set(nk, {
+      organicUrls: [...e.organic].sort(),
+      relatedSearches: [...e.related].sort(),
+      paaQuestions: [...e.paa].sort(),
+    });
+  }
+  return out;
+}
+
+// Changed-only reset-then-apply: only the input clusters consumed by a merge or
+// split (their ids in consumedInputIds) are deleted; unchanged clusters' rows
+// are left completely untouched. New (merged/split) clusters are inserted with
+// the same 17-column shape build_provisional_clusters uses.
+async function persistRefinedClusters(
+  d1: D1Database,
+  runId: string,
+  consumedInputIds: string[],
+  clusterRows: ClusterInsertRow[],
+  memberRows: ClusterMemberInsertRow[]
+): Promise<void> {
+  for (const idsChunk of chunk(consumedInputIds, DELETE_IDS_PER_STATEMENT)) {
+    const placeholders = idsChunk.map(() => '?').join(',');
+    await d1
+      .prepare(`DELETE FROM cluster_keywords WHERE cluster_id IN (${placeholders})`)
+      .bind(...idsChunk)
+      .run();
+    await d1
+      .prepare(`DELETE FROM keyword_clusters WHERE id IN (${placeholders})`)
+      .bind(...idsChunk)
+      .run();
+  }
+
+  const clusterStatements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(clusterRows, CLUSTER_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
+    const args: unknown[] = [];
+    for (const r of rowsChunk) {
+      args.push(
+        r.id,
+        runId,
+        r.label,
+        r.serviceId,
+        r.serviceAreaId,
+        r.intent,
+        r.primaryKeywordId,
+        r.semanticCohesion,
+        r.serpOverlapCohesion,
+        r.confidenceScore,
+        r.confidenceLabel,
+        null, // page_candidate: stage 15 owns it
+        r.decisionReason,
+        r.warningsJson,
+        null, // adjudication_json: the cluster_adjudications table owns refine adjudications
+        CLUSTER_RULESET_V1.version,
+        r.scoreBreakdownJson
+      );
+    }
+    clusterStatements.push(
+      d1
+        .prepare(
+          `INSERT INTO keyword_clusters
+            (id, run_id, label, service_id, service_area_id, intent, primary_keyword_id,
+             semantic_cohesion, serp_overlap_cohesion, confidence_score, confidence_label,
+             page_candidate, decision_reason, warnings_json, adjudication_json, ruleset_version,
+             score_breakdown_json)
+           VALUES ${placeholders}`
+        )
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, clusterStatements);
+
+  const memberStatements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(memberRows, CLUSTER_KEYWORD_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?,?,?,?)').join(',');
+    const args: unknown[] = [];
+    for (const r of rowsChunk) {
+      args.push(r.clusterId, r.keywordId, r.membershipScore, r.isPrimary ? 1 : 0);
+    }
+    memberStatements.push(
+      d1
+        .prepare(`INSERT INTO cluster_keywords (cluster_id, keyword_id, membership_score, is_primary) VALUES ${placeholders}`)
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, memberStatements);
+}
+
+// Rerun-safe: every attempt fully replaces this run's cluster_adjudications
+// (delete-then-insert), so a retry never accumulates duplicate rows alongside a
+// prior attempt's.
+async function persistAdjudications(
+  d1: D1Database,
+  runId: string,
+  cases: AdjudicationCase[],
+  createdAt: string
+): Promise<void> {
+  await d1.prepare(`DELETE FROM cluster_adjudications WHERE run_id = ?`).bind(runId).run();
+  if (cases.length === 0) return;
+
+  const rulesetVersion = rulesetVersionForStage('refine_clusters');
+  const statements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(cases, ADJ_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?,?,?,?,?,?,?,?,?,NULL)').join(',');
+    const args: unknown[] = [];
+    for (const c of rowsChunk) {
+      args.push(
+        newId('cadj'),
+        runId,
+        c.caseType,
+        JSON.stringify(c.clusterIds),
+        JSON.stringify(c.keywordIds),
+        c.decision,
+        JSON.stringify(c.scoreContext),
+        rulesetVersion,
+        createdAt
+      );
+    }
+    statements.push(
+      d1
+        .prepare(
+          `INSERT INTO cluster_adjudications
+            (id, run_id, case_type, cluster_ids_json, keyword_ids_json, decision, score_context_json,
+             ruleset_version, created_at, resolved_at)
+           VALUES ${placeholders}`
+        )
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, statements);
+}
+
+export const refineClustersHandler: StageHandler = async (ctx: StageContext) => {
+  const clusterRows = await ctx.d1
+    .prepare(`SELECT id, primary_keyword_id, intent FROM keyword_clusters WHERE run_id = ? ORDER BY id ASC`)
+    .bind(ctx.runId)
+    .all<RefineClusterRow>();
+  const clusters = clusterRows.results ?? [];
+
+  // Zero clusters (stage 10 short-circuited on an empty/all-excluded universe):
+  // nothing to refine. Reset any stale adjudications from a prior attempt, then
+  // report a truthful skip -- succeeded, not a failure.
+  if (clusters.length === 0) {
+    await persistAdjudications(ctx.d1, ctx.runId, [], nowIso());
+    const output: RefineClustersOutput = {
+      stage: 'refine_clusters',
+      skipped: true,
+      reason: 'no_clusters',
+      clustersIn: 0,
+      clustersOut: 0,
+      autoMerges: 0,
+      autoSplits: 0,
+      adjudicationsPending: 0,
+      adjudicationsInsufficient: 0,
+      liveSnapshotCoverage: 0,
+      rulesetVersion: CLUSTER_RULESET_V1.version,
+      warnings: [],
+    };
+    return { output, status: 'succeeded' as const };
+  }
+
+  const stage9 = await loadStageOutput<EmbedKeywordFeaturesOutput>(ctx.d1, ctx.runId, 'embed_keyword_features');
+  if (!stage9) {
+    // Clusters exist but embed_keyword_features left no readable output: the run
+    // is broken. Optional stage, so this degrades the run to partial rather than
+    // failing it.
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+
+  const retainedRows = await ctx.d1
+    .prepare(
+      `SELECT id, display_keyword, normalized_keyword, core_keyword, main_intent, search_volume, relevance_score
+       FROM keywords WHERE run_id = ? AND excluded_reason IS NULL ORDER BY normalized_keyword ASC`
+    )
+    .bind(ctx.runId)
+    .all<ClusterableKeywordRow>();
+  const retained = retainedRows.results ?? [];
+
+  const { nodes, byId, displayKeywords, unexpectedDimensions } = await buildClusteringNodes(ctx, retained, stage9);
+  const evidenceRefMap = await loadKeywordEvidenceRefMap(ctx.d1, ctx.runId);
+
+  const memberRows = await ctx.d1
+    .prepare(
+      `SELECT ck.cluster_id AS cluster_id, ck.keyword_id AS keyword_id
+       FROM cluster_keywords ck
+       JOIN keyword_clusters kc ON kc.id = ck.cluster_id
+       WHERE kc.run_id = ? ORDER BY ck.cluster_id ASC, ck.keyword_id ASC`
+    )
+    .bind(ctx.runId)
+    .all<{ cluster_id: string; keyword_id: string }>();
+  const membersByCluster = new Map<string, string[]>();
+  for (const row of memberRows.results ?? []) {
+    const list = membersByCluster.get(row.cluster_id) ?? [];
+    list.push(row.keyword_id);
+    membersByCluster.set(row.cluster_id, list);
+  }
+
+  const locale = `${ctx.normalizedBrief.languageCode}-${ctx.normalizedBrief.countryIso}`;
+  const liveByQuery = await loadLiveSerpEvidence(ctx.d1, ctx.runId, locale);
+
+  const refineInputs: RefineClusterInput[] = clusters.map((c) => ({
+    clusterId: c.id,
+    memberIds: membersByCluster.get(c.id) ?? [],
+    primaryKeywordId: c.primary_keyword_id,
+    intent: toValidatedIntent(c.intent),
+  }));
+
+  const result = refineClusters({
+    clusters: refineInputs,
+    nodes,
+    displayKeywords,
+    liveByQuery,
+    ruleset: CLUSTER_RULESET_V1,
+  });
+
+  // Consumed = every input cluster whose id is NOT preserved by an unchanged
+  // output cluster (i.e. it was merged away or split apart).
+  const preservedIds = new Set<string>();
+  for (const c of result.clusters) if (c.preservedClusterId) preservedIds.add(c.preservedClusterId);
+  const consumedInputIds = clusters.map((c) => c.id).filter((id) => !preservedIds.has(id));
+
+  const newClusterRows: ClusterInsertRow[] = [];
+  const newMemberRows: ClusterMemberInsertRow[] = [];
+  for (const c of result.clusters) {
+    if (!c.changed) continue;
+    const id = newId('kcl');
+    const memberNodes = c.draft.memberIds.map((mid) => byId.get(mid)!).filter((n): n is KeywordNode => !!n);
+    const { score, label, components } = computeClusterConfidence(c.draft, memberNodes);
+
+    const evidenceRefIds = Array.from(
+      new Set(c.draft.memberIds.flatMap((mid) => evidenceRefMap.get(mid) ?? []))
+    )
+      .sort()
+      .slice(0, 50);
+
+    const scoreBreakdown = {
+      rulesetVersion: CLUSTER_RULESET_V1.version,
+      refine: c.liveBreakdown,
+      semanticCohesion: c.draft.semanticCohesion,
+      serpOverlapCohesion: c.draft.serpOverlapCohesion,
+      confidenceComponents: components,
+      evidenceRefIds,
+    };
+
+    newClusterRows.push({
+      id,
+      label: c.draft.label,
+      serviceId: c.draft.serviceId,
+      serviceAreaId: c.draft.serviceAreaId,
+      intent: c.draft.intent,
+      primaryKeywordId: c.draft.primaryKeywordId,
+      semanticCohesion: c.draft.semanticCohesion,
+      serpOverlapCohesion: c.draft.serpOverlapCohesion,
+      confidenceScore: score,
+      confidenceLabel: label,
+      decisionReason: REFINE_DECISION_REASON,
+      warningsJson: JSON.stringify(c.draft.warnings),
+      scoreBreakdownJson: JSON.stringify(scoreBreakdown),
+    });
+
+    for (const mid of c.draft.memberIds) {
+      newMemberRows.push({
+        clusterId: id,
+        keywordId: mid,
+        membershipScore: c.draft.membershipScores[mid],
+        isPrimary: mid === c.draft.primaryKeywordId,
+      });
+    }
+  }
+
+  await persistRefinedClusters(ctx.d1, ctx.runId, consumedInputIds, newClusterRows, newMemberRows);
+  await persistAdjudications(ctx.d1, ctx.runId, result.adjudications, nowIso());
+
+  const zeroCoverage = result.stats.liveSnapshotCoverage === 0;
+  const warnings: string[] = [];
+  if (zeroCoverage) warnings.push('no_live_serp_evidence');
+  if (unexpectedDimensions) warnings.push('unexpected_embedding_dimensions');
+
+  const output: RefineClustersOutput = {
+    stage: 'refine_clusters',
+    clustersIn: result.stats.clustersIn,
+    clustersOut: result.stats.clustersOut,
+    autoMerges: result.stats.autoMerges,
+    autoSplits: result.stats.autoSplits,
+    adjudicationsPending: result.stats.adjudicationsPending,
+    adjudicationsInsufficient: result.stats.adjudicationsInsufficient,
+    liveSnapshotCoverage: result.stats.liveSnapshotCoverage,
+    rulesetVersion: CLUSTER_RULESET_V1.version,
+    warnings,
+  };
+
+  return { output, status: zeroCoverage ? ('partial' as const) : ('succeeded' as const) };
 };

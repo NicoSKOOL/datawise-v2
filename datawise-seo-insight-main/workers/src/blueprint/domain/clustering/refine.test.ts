@@ -1,0 +1,279 @@
+import { describe, it, expect } from 'vitest';
+import { refineClusters } from './refine';
+import type { RefineClusterInput, LiveSerpEvidence } from './refine';
+import type { KeywordNode } from './graph';
+import { CLUSTER_RULESET_V1 } from './ruleset';
+import { canonicalize } from '../hash';
+import type { SearchIntent } from '../../contracts/enums';
+
+// Pure-engine tests for refine_clusters. The engine takes caller-supplied
+// nodes/clusters/live-SERP evidence and never touches IO, so these fixtures are
+// hand-built graph nodes with exact vectors (cosine 1 for identical, 0 for
+// orthogonal), which keeps every merge/split decision deterministic.
+
+function node(partial: Partial<KeywordNode> & { keywordId: string; normalizedKeyword: string }): KeywordNode {
+  return {
+    tokens: partial.normalizedKeyword.split(' '),
+    coreKeyword: null,
+    vector: null,
+    serpUrls: null,
+    relevance: null,
+    volume: null,
+    isBranded: false,
+    intent: null,
+    serviceIds: [],
+    serviceAreaIds: [],
+    ...partial,
+  };
+}
+
+function cluster(
+  clusterId: string,
+  memberIds: string[],
+  primaryKeywordId: string,
+  intent: SearchIntent | null = null
+): RefineClusterInput {
+  return { clusterId, memberIds, primaryKeywordId, intent };
+}
+
+function live(organicUrls: string[], relatedSearches: string[] = [], paaQuestions: string[] = []): LiveSerpEvidence {
+  return { organicUrls, relatedSearches, paaQuestions };
+}
+
+function displayMap(nodes: KeywordNode[]): Map<string, string> {
+  return new Map(nodes.map((n) => [n.keywordId, n.normalizedKeyword]));
+}
+
+describe('refineClusters', () => {
+  it('auto-merges two clusters with live evidence, a clean boundary, and score >= edgeThreshold', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'], serviceAreaIds: ['a1'], relevance: 0.9, volume: 500 }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning services austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'], serviceAreaIds: ['a1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([
+      ['drain cleaning austin', live(['u1', 'u2'])],
+      ['drain cleaning services austin', live(['u1', 'u2'])],
+    ]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoMerges).toBe(1);
+    expect(result.stats.liveSnapshotCoverage).toBe(2);
+    expect(result.clusters).toHaveLength(1);
+    const merged = result.clusters[0];
+    expect(merged.changed).toBe(true);
+    expect(merged.preservedClusterId).toBeNull();
+    expect(merged.origin).toBe('merge');
+    expect(merged.draft.memberIds).toEqual(['kwA', 'kwB']);
+    expect(result.adjudications).toHaveLength(0);
+  });
+
+  it('emits a pending merge adjudication for an ambiguous-band boundary (with live evidence)', () => {
+    // kwB has no vector, so the semantic component drops out and the score comes
+    // from serpOverlap (0.6) + intent (0.5): (0.35*0.6 + 0.10*0.5)/0.45 = 0.577,
+    // inside the ambiguous band [0.52, 0.62).
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'commercial', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'water heater repair austin', vector: null, intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'commercial'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([
+      ['drain cleaning austin', live(['u1', 'u2', 'u3'])],
+      ['water heater repair austin', live(['u1', 'u2', 'u3', 'u4', 'u5'])],
+    ]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.clusters).toHaveLength(2);
+    expect(result.adjudications).toHaveLength(1);
+    const adj = result.adjudications[0];
+    expect(adj.caseType).toBe('merge');
+    expect(adj.decision).toBe('pending');
+    expect(adj.scoreContext.reason).toBe('ambiguous_band');
+    expect(adj.clusterIds).toEqual(['c_a', 'c_b']);
+    expect(adj.scoreContext.score).toBeGreaterThanOrEqual(0.52);
+    expect(adj.scoreContext.score).toBeLessThan(0.62);
+    expect(result.stats.adjudicationsPending).toBe(1);
+  });
+
+  it('emits an insufficient_evidence merge adjudication when there is no live SERP evidence', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning services austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    // No entries -> no cluster has a live snapshot.
+    const liveByQuery = new Map<string, LiveSerpEvidence>();
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.stats.liveSnapshotCoverage).toBe(0);
+    expect(result.clusters).toHaveLength(2);
+    expect(result.adjudications).toHaveLength(1);
+    expect(result.adjudications[0].caseType).toBe('merge');
+    expect(result.adjudications[0].decision).toBe('insufficient_evidence');
+    expect(result.adjudications[0].scoreContext.reason).toBe('no_live_evidence');
+    expect(result.stats.adjudicationsInsufficient).toBe(1);
+  });
+
+  it('never merges across a hard constraint even at a high score, and emits no adjudication for it', () => {
+    // kwA is branded-navigational, kwB is generic non-branded: a hard
+    // branded_navigational_x_generic block. Identical vectors + full organic
+    // overlap would otherwise score ~1.
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'bluedog plumbing austin', tokens: ['bluedog', 'plumbing', 'austin'], vector: [1, 0, 0, 0], intent: 'navigational', isBranded: true }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'affordable plumbing austin', tokens: ['affordable', 'plumbing', 'austin'], vector: [1, 0, 0, 0], intent: 'transactional', isBranded: false }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'navigational'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([
+      ['bluedog plumbing austin', live(['u1', 'u2'])],
+      ['affordable plumbing austin', live(['u1', 'u2'])],
+    ]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.clusters).toHaveLength(2);
+    expect(result.clusters.every((c) => !c.changed)).toBe(true);
+    expect(result.adjudications).toHaveLength(0);
+  });
+
+  it('emits an intent_exception adjudication when only an incompatible intent blocks a similar pair', () => {
+    // Transactional vs informational: incompatible_intent (not a hard block).
+    // High similarity, so the intent conflict is the deciding factor.
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'emergency plumber austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'how plumbing works austin', vector: [1, 0, 0, 0], intent: 'informational', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'informational'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([
+      ['emergency plumber austin', live(['u1', 'u2'])],
+      ['how plumbing works austin', live(['u1', 'u2'])],
+    ]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.adjudications).toHaveLength(1);
+    expect(result.adjudications[0].caseType).toBe('intent_exception');
+    expect(result.adjudications[0].decision).toBe('pending');
+    expect(result.adjudications[0].scoreContext.violations).toContain('incompatible_intent');
+  });
+
+  it('auto-splits a low-cohesion cluster with a clean 2-cut and live evidence', () => {
+    const nodes = [
+      node({ keywordId: 'm1', normalizedKeyword: 'drain repair austin', vector: [1, 0, 0, 0], relevance: 0.9 }),
+      node({ keywordId: 'm2', normalizedKeyword: 'drain repair services austin', vector: [1, 0, 0, 0] }),
+      node({ keywordId: 'm3', normalizedKeyword: 'water heater install austin', vector: [0, 1, 0, 0] }),
+      node({ keywordId: 'm4', normalizedKeyword: 'water heater install cost austin', vector: [0, 1, 0, 0] }),
+    ];
+    const clusters = [cluster('c_low', ['m1', 'm2', 'm3', 'm4'], 'm1')];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([['drain repair austin', live(['u1', 'u2'])]]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoSplits).toBe(1);
+    expect(result.clusters).toHaveLength(2);
+    expect(result.clusters.every((c) => c.changed && c.origin === 'split')).toBe(true);
+    const memberSets = result.clusters.map((c) => c.draft.memberIds.join(',')).sort();
+    expect(memberSets).toEqual(['m1,m2', 'm3,m4']);
+    expect(result.adjudications).toHaveLength(0);
+  });
+
+  it('emits a split adjudication for a low-cohesion cluster with no clean 2-cut', () => {
+    // m2 bridges m1 and m3 (both edges >= 0.62), so the intra-cluster graph is
+    // one connected component: no clean 2-cut, but mean cohesion (0.65+0.65+0)/3
+    // = 0.433 < 0.45, so it is a split candidate.
+    const nodes = [
+      node({ keywordId: 'm1', normalizedKeyword: 'plumbing austin one', vector: [1, 0, 0] }),
+      node({ keywordId: 'm2', normalizedKeyword: 'plumbing austin two', vector: [0.65, 0.65, 0.3937] }),
+      node({ keywordId: 'm3', normalizedKeyword: 'plumbing austin three', vector: [0, 1, 0] }),
+    ];
+    const clusters = [cluster('c_low', ['m1', 'm2', 'm3'], 'm1')];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([['plumbing austin one', live(['u1'])]]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoSplits).toBe(0);
+    expect(result.clusters).toHaveLength(1);
+    expect(result.clusters[0].changed).toBe(false);
+    expect(result.clusters[0].preservedClusterId).toBe('c_low');
+    expect(result.adjudications).toHaveLength(1);
+    expect(result.adjudications[0].caseType).toBe('split');
+    expect(result.adjudications[0].decision).toBe('pending');
+    expect(result.adjudications[0].scoreContext.reason).toBe('low_cohesion_no_clean_cut');
+  });
+
+  it('preserves the id and marks unchanged a cluster untouched by refinement', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional' }),
+      node({ keywordId: 'kwZ', normalizedKeyword: 'sewer inspection dallas', vector: [0, 0, 0, 1], intent: 'transactional' }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_z', ['kwZ'], 'kwZ', 'transactional'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([['drain cleaning austin', live(['u1'])]]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.clusters).toHaveLength(2);
+    for (const c of result.clusters) {
+      expect(c.changed).toBe(false);
+      expect(c.preservedClusterId).not.toBeNull();
+      expect(c.liveBreakdown).toBeNull();
+    }
+    expect(result.clusters.map((c) => c.preservedClusterId).sort()).toEqual(['c_a', 'c_z']);
+  });
+
+  it('is deterministic: identical output regardless of input cluster order (double-run hash)', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning services austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwC', normalizedKeyword: 'plumber reviews austin', vector: [0, 1, 0, 0], intent: 'informational', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwD', normalizedKeyword: 'water heater install dallas', vector: [0, 0, 1, 0], intent: 'transactional', serviceIds: ['s2'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+      cluster('c_c', ['kwC'], 'kwC', 'informational'),
+      cluster('c_d', ['kwD'], 'kwD', 'transactional'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([
+      ['drain cleaning austin', live(['u1', 'u2'], ['plumbing help'])],
+      ['drain cleaning services austin', live(['u1', 'u2'], ['plumbing help'])],
+      ['plumber reviews austin', live(['u9'])],
+      ['water heater install dallas', live(['u7'])],
+    ]);
+    const displayKeywords = displayMap(nodes);
+
+    const run = (cs: RefineClusterInput[]) =>
+      refineClusters({ clusters: cs, nodes, displayKeywords, liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    const forward = run(clusters);
+    const reversed = run([...clusters].reverse());
+    expect(canonicalize(forward)).toBe(canonicalize(reversed));
+    // And stable across two identical runs.
+    expect(canonicalize(run(clusters))).toBe(canonicalize(run(clusters)));
+    // Non-trivial: c_a and c_b auto-merge (identical vectors, full overlap).
+    expect(forward.stats.autoMerges).toBe(1);
+  });
+});

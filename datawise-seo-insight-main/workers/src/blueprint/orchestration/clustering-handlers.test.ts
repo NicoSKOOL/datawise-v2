@@ -8,7 +8,7 @@ import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler, StageContext } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
-import { buildProvisionalClustersHandler } from './clustering-handlers';
+import { buildProvisionalClustersHandler, refineClustersHandler } from './clustering-handlers';
 
 // Same STAGE_HANDLERS-driven approach research-handlers.test.ts uses: drive
 // the real registry through processResearchRun so completeStage really
@@ -1162,5 +1162,289 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
 
     const output = result.output as { forbiddenEdgeCount: number };
     expect(output.forbiddenEdgeCount).toBeGreaterThan(0);
+  });
+});
+
+// ===== refineClustersHandler =====
+
+// Seeds a keyword_clusters row + its cluster_keywords members. decisionReason
+// defaults to a recognizable marker so identity-preservation tests can prove an
+// unchanged cluster's row was left untouched.
+async function seedClusterRow(
+  d1: D1Database,
+  runId: string,
+  spec: {
+    id: string;
+    label: string;
+    primaryKeywordId: string;
+    memberIds: string[];
+    intent?: string | null;
+    decisionReason?: string;
+  }
+): Promise<void> {
+  await d1
+    .prepare(
+      `INSERT INTO keyword_clusters
+        (id, run_id, label, service_id, service_area_id, intent, primary_keyword_id,
+         semantic_cohesion, serp_overlap_cohesion, confidence_score, confidence_label,
+         page_candidate, decision_reason, warnings_json, adjudication_json, ruleset_version, score_breakdown_json)
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, 0.5, 'medium', NULL, ?, '[]', NULL, 'cluster-v1', '{}')`
+    )
+    .bind(spec.id, runId, spec.label, spec.intent ?? null, spec.primaryKeywordId, spec.decisionReason ?? 'ORIGINAL')
+    .run();
+  for (const kid of spec.memberIds) {
+    await d1
+      .prepare(`INSERT INTO cluster_keywords (cluster_id, keyword_id, membership_score, is_primary) VALUES (?, ?, 1, ?)`)
+      .bind(spec.id, kid, kid === spec.primaryKeywordId ? 1 : 0)
+      .run();
+  }
+}
+
+// Seeds a serp_snapshots row (organic URLs + related searches) plus optional
+// PAA faq_evidence rows, keyed to a keyword id.
+async function seedSerpSnapshot(
+  d1: D1Database,
+  runId: string,
+  spec: { keywordId: string; organicUrls: string[]; related?: string[]; paa?: string[] }
+): Promise<void> {
+  const snapshotId = newId('serpsnap');
+  await d1
+    .prepare(
+      `INSERT INTO serp_snapshots
+        (id, run_id, keyword_id, service_area_id, location_code, language_code, checked_at,
+         organic_json, related_searches_json, local_pack_present, featured_snippet_present, ai_overview_status)
+       VALUES (?, ?, ?, NULL, 2840, 'en', ?, ?, ?, 0, 0, 'unchecked')`
+    )
+    .bind(
+      snapshotId,
+      runId,
+      spec.keywordId,
+      nowIso(),
+      JSON.stringify(spec.organicUrls.map((url) => ({ rank: 1, url, title: null, domain: null }))),
+      JSON.stringify(spec.related ?? [])
+    )
+    .run();
+  for (const question of spec.paa ?? []) {
+    await d1
+      .prepare(
+        `INSERT INTO faq_evidence (id, run_id, serp_snapshot_id, question, answer_text, source_title, source_url, parent_question_id, paa_depth)
+         VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, 1)`
+      )
+      .bind(newId('faq'), runId, snapshotId, question)
+      .run();
+  }
+}
+
+// Seeds an embed_keyword_features stage output + its R2 vector artifact so
+// buildClusteringNodes (shared with build_provisional_clusters) can rebuild the
+// same nodes refine_clusters clustered over.
+async function seedEmbeddings(
+  d1: D1Database,
+  r2: R2Bucket,
+  runId: string,
+  vectors: Array<{ keywordId: string; normalizedKeyword: string; vector: number[] }>
+): Promise<void> {
+  const dimensions = vectors[0]?.vector.length ?? 4;
+  const storageKey = `runs/${runId}/embeddings/0.json`;
+  await r2.put(
+    storageKey,
+    JSON.stringify({
+      model: 'fake-model',
+      dimensions,
+      template: 'kw_v1',
+      vectors: vectors.map((v) => ({ ...v, contentHash: 'h' })),
+    })
+  );
+  await seedStageOutput(d1, runId, 'embed_keyword_features', {
+    stage: 'embed_keyword_features',
+    model: 'fake-model',
+    dimensions,
+    vectorCount: vectors.length,
+    batchCount: 1,
+    inputHash: 'h',
+    truncatedCount: 0,
+    artifacts: [{ artifactId: 'art1', storageKey, count: vectors.length }],
+    rulesetVersion: 'cluster-v1',
+  });
+}
+
+async function buildRefineCtx(
+  d1: D1Database,
+  r2: R2Bucket,
+  kv: KVNamespace,
+  runId: string,
+  projectId: string,
+  briefVersionId: string
+): Promise<StageContext> {
+  const base = await buildDirectCtx(d1, r2, kv, runId, projectId, briefVersionId);
+  return { ...base, stage: 'refine_clusters' as BlueprintStage };
+}
+
+describe('refineClustersHandler', () => {
+  it('skips (succeeded) with no_clusters when the run has zero clusters', async () => {
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    const ctx = await buildRefineCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
+    const result = await refineClustersHandler(ctx);
+    expect(result.status).toBe('succeeded');
+    expect(result.output).toMatchObject({ stage: 'refine_clusters', skipped: true, reason: 'no_clusters', clustersIn: 0 });
+    const adj = raw.prepare(`SELECT COUNT(*) AS n FROM cluster_adjudications WHERE run_id = ?`).get(runId) as { n: number };
+    expect(adj.n).toBe(0);
+  });
+
+  it('auto-merges two clusters with overlapping live SERPs and persists the merge changed-only', async () => {
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kwA', normalizedKeyword: 'drain cleaning austin', searchVolume: 500 });
+    await insertKeywordRow(d1, runId, { id: 'kwB', normalizedKeyword: 'drain cleaning services austin' });
+    await d1.prepare(`UPDATE keywords SET main_intent = 'transactional' WHERE id IN ('kwA','kwB')`).run();
+
+    const r2 = fakeR2();
+    await seedEmbeddings(d1, r2, runId, [
+      { keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0] },
+      { keywordId: 'kwB', normalizedKeyword: 'drain cleaning services austin', vector: [1, 0, 0, 0] },
+    ]);
+    await seedClusterRow(d1, runId, { id: 'c_a', label: 'Drain cleaning', primaryKeywordId: 'kwA', memberIds: ['kwA'], intent: 'transactional' });
+    await seedClusterRow(d1, runId, { id: 'c_b', label: 'Drain cleaning services', primaryKeywordId: 'kwB', memberIds: ['kwB'], intent: 'transactional' });
+    await seedSerpSnapshot(d1, runId, { keywordId: 'kwA', organicUrls: ['u1', 'u2'] });
+    await seedSerpSnapshot(d1, runId, { keywordId: 'kwB', organicUrls: ['u1', 'u2'] });
+
+    const ctx = await buildRefineCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
+    const result = await refineClustersHandler(ctx);
+
+    expect(result.status).toBe('succeeded');
+    expect(result.output).toMatchObject({ autoMerges: 1, clustersIn: 2, clustersOut: 1, liveSnapshotCoverage: 2 });
+
+    const clusterRows = raw
+      .prepare(`SELECT id, ruleset_version, decision_reason FROM keyword_clusters WHERE run_id = ? ORDER BY id`)
+      .all(runId) as Array<{ id: string; ruleset_version: string; decision_reason: string }>;
+    expect(clusterRows).toHaveLength(1);
+    expect(clusterRows[0].id.startsWith('kcl_')).toBe(true); // new merged identity, not c_a/c_b
+    expect(clusterRows[0].ruleset_version).toBe('cluster-v1');
+    expect(clusterRows[0].decision_reason).toContain('Refined by live SERP evidence');
+
+    const members = raw
+      .prepare(`SELECT keyword_id FROM cluster_keywords ORDER BY keyword_id`)
+      .all() as Array<{ keyword_id: string }>;
+    expect(members.map((m) => m.keyword_id)).toEqual(['kwA', 'kwB']);
+  });
+
+  it('completes partial with no_live_serp_evidence, persists insufficient_evidence adjudications, and is rerun-idempotent', async () => {
+    const { d1, raw, runId, projectId, briefVersionId } = await seedBaseRun();
+    await insertKeywordRow(d1, runId, { id: 'kwA', normalizedKeyword: 'drain cleaning austin' });
+    await insertKeywordRow(d1, runId, { id: 'kwB', normalizedKeyword: 'drain cleaning services austin' });
+    await d1.prepare(`UPDATE keywords SET main_intent = 'transactional' WHERE id IN ('kwA','kwB')`).run();
+
+    const r2 = fakeR2();
+    await seedEmbeddings(d1, r2, runId, [
+      { keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0] },
+      { keywordId: 'kwB', normalizedKeyword: 'drain cleaning services austin', vector: [1, 0, 0, 0] },
+    ]);
+    // Two identical-vector clusters, but NO serp_snapshots at all -> zero coverage.
+    await seedClusterRow(d1, runId, { id: 'c_a', label: 'Drain cleaning', primaryKeywordId: 'kwA', memberIds: ['kwA'], intent: 'transactional', decisionReason: 'ORIGINAL_A' });
+    await seedClusterRow(d1, runId, { id: 'c_b', label: 'Drain cleaning services', primaryKeywordId: 'kwB', memberIds: ['kwB'], intent: 'transactional', decisionReason: 'ORIGINAL_B' });
+
+    const ctx = await buildRefineCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
+    const result = await refineClustersHandler(ctx);
+
+    expect(result.status).toBe('partial');
+    expect((result.output as { warnings: string[] }).warnings).toContain('no_live_serp_evidence');
+    expect(result.output).toMatchObject({ autoMerges: 0, adjudicationsInsufficient: 1, adjudicationsPending: 0, liveSnapshotCoverage: 0 });
+
+    // No auto-changes: both original clusters untouched (rows still carry their
+    // seeded decision_reason markers).
+    const clustersAfter = raw
+      .prepare(`SELECT id, decision_reason FROM keyword_clusters WHERE run_id = ? ORDER BY id`)
+      .all(runId) as Array<{ id: string; decision_reason: string }>;
+    expect(clustersAfter.map((c) => c.id)).toEqual(['c_a', 'c_b']);
+    expect(clustersAfter.map((c) => c.decision_reason)).toEqual(['ORIGINAL_A', 'ORIGINAL_B']);
+
+    const adjRows = raw
+      .prepare(`SELECT case_type, decision FROM cluster_adjudications WHERE run_id = ?`)
+      .all(runId) as Array<{ case_type: string; decision: string }>;
+    expect(adjRows).toHaveLength(1);
+    expect(adjRows[0]).toMatchObject({ case_type: 'merge', decision: 'insufficient_evidence' });
+
+    // Rerun: adjudications reset (no duplicate rows), clusters still untouched.
+    await refineClustersHandler(ctx);
+    const adjAfterRerun = raw.prepare(`SELECT COUNT(*) AS n FROM cluster_adjudications WHERE run_id = ?`).get(runId) as { n: number };
+    expect(adjAfterRerun.n).toBe(1);
+    const clustersAfterRerun = raw.prepare(`SELECT COUNT(*) AS n FROM keyword_clusters WHERE run_id = ?`).get(runId) as { n: number };
+    expect(clustersAfterRerun.n).toBe(2);
+  });
+
+  it('runs end-to-end through processResearchRun and stamps ruleset_version cluster-v1', async () => {
+    const { d1, runId, projectId, briefVersionId } = await seedBaseRun();
+    void projectId;
+    void briefVersionId;
+
+    const r2 = fakeR2();
+    const kv = fakeKv();
+    const sent: unknown[] = [];
+    const env: BlueprintProviderEnv = {
+      BLUEPRINT_DB: d1,
+      BLUEPRINT_QUEUE: { send: async (body: unknown) => void sent.push(body) },
+      ...providerFields(r2, kv),
+    };
+
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      ...baseOverrides(),
+      collect_keyword_evidence: async (ctx: StageContext) => {
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_a', normalizedKeyword: 'drain cleaning austin', searchVolume: 500 });
+        await insertKeywordRow(ctx.d1, ctx.runId, { id: 'kw_b', normalizedKeyword: 'drain cleaning services austin' });
+        await ctx.d1.prepare(`UPDATE keywords SET main_intent = 'transactional' WHERE run_id = ?`).bind(ctx.runId).run();
+        return { output: { stub: true }, status: 'succeeded' as const };
+      },
+      embed_keyword_features: async (ctx: StageContext) => {
+        const rows = await ctx.d1
+          .prepare(`SELECT id, normalized_keyword FROM keywords WHERE run_id = ? AND excluded_reason IS NULL ORDER BY normalized_keyword ASC`)
+          .bind(ctx.runId)
+          .all<{ id: string; normalized_keyword: string }>();
+        const vectors = (rows.results ?? []).map((row) => ({
+          keywordId: row.id,
+          normalizedKeyword: row.normalized_keyword,
+          contentHash: 'h',
+          vector: [1, 0, 0, 0],
+        }));
+        const storageKey = `runs/${ctx.runId}/embeddings/0.json`;
+        await r2.put(storageKey, JSON.stringify({ model: 'fake-model', dimensions: 4, template: 'kw_v1', vectors }));
+        return {
+          output: {
+            stage: 'embed_keyword_features',
+            model: 'fake-model',
+            dimensions: 4,
+            vectorCount: vectors.length,
+            batchCount: 1,
+            inputHash: 'h',
+            truncatedCount: 0,
+            artifacts: [{ artifactId: 'art1', storageKey, count: vectors.length }],
+            rulesetVersion: 'cluster-v1',
+          },
+          status: 'succeeded' as const,
+        };
+      },
+      // validate_serps_and_questions runs between build_provisional_clusters and
+      // refine_clusters; override it to persist a live SERP snapshot for the
+      // merged cluster's representative query so refine has evidence to read.
+      validate_serps_and_questions: async (ctx: StageContext) => {
+        const kw = await ctx.d1
+          .prepare(`SELECT id FROM keywords WHERE run_id = ? AND normalized_keyword = ?`)
+          .bind(ctx.runId, 'drain cleaning austin')
+          .first<{ id: string }>();
+        if (kw) await seedSerpSnapshot(ctx.d1, ctx.runId, { keywordId: kw.id, organicUrls: ['u1', 'u2'] });
+        return { output: { stub: true }, status: 'succeeded' as const };
+      },
+    };
+
+    await driveToNormalizeUniverse(env, runId, sent, overrides);
+
+    const stageRow = await d1
+      .prepare(`SELECT status, output_json, ruleset_version FROM research_stage_runs WHERE run_id = ? AND stage_name = 'refine_clusters'`)
+      .bind(runId)
+      .first<{ status: string; output_json: string; ruleset_version: string }>();
+    expect(stageRow).toBeTruthy();
+    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+    expect(['succeeded', 'partial']).toContain(stageRow!.status);
+    const output = JSON.parse(stageRow!.output_json);
+    expect(output.stage).toBe('refine_clusters');
+    expect(output.rulesetVersion).toBe('cluster-v1');
   });
 });

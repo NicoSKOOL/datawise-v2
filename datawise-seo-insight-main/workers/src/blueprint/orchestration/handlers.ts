@@ -21,6 +21,7 @@ import {
   normalizeKeywordUniverseHandler,
   embedKeywordFeaturesHandler,
   buildProvisionalClustersHandler,
+  refineClustersHandler,
 } from './clustering-handlers';
 
 export interface StageContext {
@@ -263,5 +264,6 @@ STAGE_HANDLERS.validate_serps_and_questions = validateSerpsAndQuestionsHandler;
 STAGE_HANDLERS.normalize_keyword_universe = normalizeKeywordUniverseHandler;
 STAGE_HANDLERS.embed_keyword_features = embedKeywordFeaturesHandler;
 STAGE_HANDLERS.build_provisional_clusters = buildProvisionalClustersHandler;
+STAGE_HANDLERS.refine_clusters = refineClustersHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
 STAGE_HANDLERS.publish_blueprint = publishBlueprintHandler;
