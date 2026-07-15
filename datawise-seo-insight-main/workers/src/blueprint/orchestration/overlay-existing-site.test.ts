@@ -63,6 +63,12 @@ function rankedEnvelope(urls: Array<{ url: string; rank?: number }>): any {
 function taskFailedEnvelope(): any {
   return { status_code: 40000, tasks: [{ id: 't1', status_code: 40501, status_message: 'Invalid Field.', cost: 0, result: null }] };
 }
+// A failed task whose message maps (via mapDfsFailure) to an account-wide code
+// (provider_rate_limited). Distinct from taskFailedEnvelope, which is a per-call
+// provider_invalid_response.
+function rateLimitedEnvelope(): any {
+  return { status_code: 40000, tasks: [{ id: 't1', status_code: 40202, status_message: 'Rate limit exceeded (40202).', cost: 0, result: null }] };
+}
 
 // ---------- sitemap / robots bodies ----------
 
@@ -426,6 +432,23 @@ describe('overlayExistingSiteHandler', () => {
     const { output, status } = (await overlayExistingSiteHandler(ctx)) as { output: OverlayExistingSiteOutput; status: string };
     expect(status).toBe('partial');
     expect(output.warnings).toContain('inventory_limited');
+    expect(await existingRows(d1, runId)).toHaveLength(0);
+  });
+
+  it('rethrows an account-wide labs error (rate limited) instead of swallowing it into partial', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const runId = await seedRun(d1, projectId);
+    await seedResolvedMarket(d1, runId);
+    const { ctx, artifacts } = buildCtx(d1, projectId, runId, brief());
+    await seedPagePlanArtifact(artifacts, runId, [plannedPage('lp1', 'drain-cleaning', 'Drain Cleaning', 'drain cleaning')]);
+
+    // robots/sitemap both unmapped -> zero free inventory -> labs fallback fires,
+    // and the labs call hits a rate-limit wall: it must PROPAGATE (retry_wait/
+    // fail with the true code), not be swallowed into a misleading partial.
+    installRouter({ dfs: rateLimitedEnvelope(), sites: {} });
+    await expect(overlayExistingSiteHandler(ctx)).rejects.toMatchObject({ code: 'provider_rate_limited' });
+    // No existing_pages persisted, since the handler threw before persistence.
     expect(await existingRows(d1, runId)).toHaveLength(0);
   });
 

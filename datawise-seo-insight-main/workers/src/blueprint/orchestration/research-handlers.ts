@@ -1,6 +1,6 @@
 import type { StageContext, StageHandler } from './handlers';
 import type { KeywordCandidate, KeywordUniverse, MergedKeyword } from '../contracts/types';
-import { BlueprintApiError } from '../domain/api-errors';
+import { BlueprintApiError, isAccountWideProviderError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { loadStageOutput } from './stage-io';
 import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
@@ -616,25 +616,13 @@ export interface CollectCompetitorEvidenceOutput {
 // actually reads.
 const MAX_TOP_PAGES = 100;
 
-// Account-wide DataForSEO conditions that no per-competitor isolation can
-// route around: whichever competitor's call hits one of these first, every
-// OTHER competitor's remaining calls this attempt would burn are guaranteed
-// to hit the exact same wall. Mirrors collectSerpTasks's own account-wide
-// classification (providers/dataforseo/serp.ts) with 'budget_exceeded' added
-// -- a per-run DataForSEO budget ceiling is exactly as account-wide as a
-// provider quota/rate-limit wall, and reserveProviderBudget/
-// assertRunWithinBudget throw it as a BlueprintApiError the same way. Any
-// other error (including provider_timeout and a genuine per-task DFS
-// failure) stays isolated to that one competitor/field, per this handler's
-// existing per-competitor try/catch design below.
-function isAccountWideProviderError(err: unknown): boolean {
-  return (
-    err instanceof BlueprintApiError &&
-    (err.code === 'provider_quota_exhausted' ||
-      err.code === 'provider_rate_limited' ||
-      err.code === 'budget_exceeded')
-  );
-}
+// isAccountWideProviderError (shared, in domain/api-errors.ts): whichever
+// competitor's call hits provider_quota_exhausted / provider_rate_limited /
+// budget_exceeded first, every OTHER competitor's remaining calls this attempt
+// are guaranteed to hit the exact same wall, so it is rethrown instead of
+// isolated to that one competitor/field. Any other error (including
+// provider_timeout and a genuine per-task DFS failure) stays isolated, per this
+// handler's existing per-competitor try/catch design below.
 
 // Real collect_competitor_evidence, not a stub. Optional stage (stages.ts):
 // even so, this handler does NOT rely on the processor's optional-stage

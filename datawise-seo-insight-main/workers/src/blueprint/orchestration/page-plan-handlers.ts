@@ -13,7 +13,7 @@ import type { CollectCompetitorEvidenceOutput } from './research-handlers';
 import { buildPagePlan } from '../domain/page-plan/engine';
 import type { PagePlanResult } from '../domain/page-plan/engine';
 import { loadPagePlanFacts } from './page-plan-facts';
-import { BlueprintApiError } from '../domain/api-errors';
+import { BlueprintApiError, isAccountWideProviderError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import type { PlannedPage } from '../domain/page-plan/types';
 import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
@@ -1055,13 +1055,21 @@ export const overlayExistingSiteHandler: StageHandler = async (ctx: StageContext
 
   // 4: paid labs fallback, ONLY when the free crawl yielded zero URLs. A
   // successful crawl never spends the DFS call (the plan line is a ceiling). A
-  // provider throw here is CAUGHT into inventory_limited, not propagated: this
-  // is an optional-stage last-resort fallback, and the stage's own semantics
-  // already treat "the fallback learned nothing" as a partial result, so
-  // catching yields a cleaner, still-truthful outcome than letting the throw
-  // degrade the run with no structured output. We NEVER report "the site has no
-  // pages" as a finding: zero inventory from all sources is a warning, and every
-  // planned page simply stays `create`.
+  // per-call provider throw here (network, timeout, invalid response) is CAUGHT
+  // into inventory_limited, not propagated: this is an optional-stage last-resort
+  // fallback, and the stage's own semantics already treat "the fallback learned
+  // nothing" as a partial result, so catching yields a cleaner, still-truthful
+  // outcome than letting the throw degrade the run with no structured output. We
+  // NEVER report "the site has no pages" as a finding: zero inventory from all
+  // sources is a warning, and every planned page simply stays `create`.
+  //
+  // The ONE class of error that is NOT swallowed is an account-wide provider
+  // wall (isAccountWideProviderError: budget_exceeded, provider_quota_exhausted,
+  // provider_rate_limited). Those are not "the fallback learned nothing" -- they
+  // are a run/account-level condition that the retry_wait path exists to handle,
+  // and swallowing one would misattribute a budget/rate wall as a content gap
+  // and foreclose the retry. It is rethrown so the stage lands in retry_wait/
+  // fail with the true code (same rule collect_competitor_evidence follows).
   if (inventory.size === 0) {
     warnings.push('inventory_limited');
     const market = await loadStageOutput<ResolvedMarket>(ctx.d1, ctx.runId, 'resolve_market');
@@ -1073,9 +1081,10 @@ export const overlayExistingSiteHandler: StageHandler = async (ctx: StageContext
           if (!urlOnDomain(o.url, domain)) continue;
           if (!inventory.has(o.url)) inventory.set(o.url, 'labs');
         }
-      } catch {
-        // Fallback errored; inventory stays empty -> the stage degrades to
-        // partial below. The error is intentionally swallowed (see above).
+      } catch (err) {
+        if (isAccountWideProviderError(err)) throw err;
+        // Per-call fallback error; inventory stays empty -> the stage degrades
+        // to partial below. Only per-call errors are swallowed (see above).
       }
     }
   }
