@@ -11,17 +11,24 @@ import { newId, nowIso } from '../db/util';
 import { loadStageOutput } from './stage-io';
 import type { CollectCompetitorEvidenceOutput } from './research-handlers';
 import { buildPagePlan } from '../domain/page-plan/engine';
-import type { PagePlanResult } from '../domain/page-plan/engine';
+import type { PagePlanResult, PagePlanStats } from '../domain/page-plan/engine';
 import { loadPagePlanFacts } from './page-plan-facts';
+import { loadGapStageNames } from './run-status';
 import { BlueprintApiError, isAccountWideProviderError } from '../domain/api-errors';
+import { BlueprintValidationError } from '../domain/errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
-import type { PlannedPage } from '../domain/page-plan/types';
+import type { PlannedPage, PagePlanCluster, PagePlanBriefFacts } from '../domain/page-plan/types';
+import type { BlueprintWarning, KeywordClusterSummary, NormalizedProjectBrief } from '../contracts/types';
 import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
 import { fetchTextResource, fetchPageTitle, SiteFetchError } from '../providers/site-fetch/fetcher';
 import { parseRobotsTxt, parseSitemapXml, selectTitleFetchCandidates } from '../domain/overlay/sitemap';
 import { assignMatches } from '../domain/overlay/match';
 import type { ExistingPageInput } from '../domain/overlay/match';
 import { fetchOwnRankedUrls } from '../providers/dataforseo/site-pages';
+import { composeBlueprint } from '../domain/validate/compose';
+import type { OverlayResult } from '../domain/validate/compose';
+import { validateComposed } from '../domain/validate/rules';
+import type { ValidationIssue, ServiceLocationCheck } from '../domain/validate/rules';
 
 // Home for Phase 4's page-planning-track stage handlers (parse_competitor_pages
 // onward), the same way orchestration/clustering-handlers.ts is the home for
@@ -1184,4 +1191,207 @@ export const overlayExistingSiteHandler: StageHandler = async (ctx: StageContext
   // returned nothing, leaving zero inventory rows.
   const status = inventory.size === 0 ? ('partial' as const) : ('succeeded' as const);
   return { output, status };
+};
+
+// =====================================================================
+// Stage 18: validate_blueprint (Task 19) -- REQUIRED
+// =====================================================================
+//
+// The last gate before publish. Composes stage 15's page plan with stage 16's
+// overlay into the final blueprint, runs validateBlueprintGraph + the manual
+// deterministic validators (handoff Manual §Stage 16 `validate_blueprint`), and
+// either throws BlueprintValidationError (blocking issues found -> the run fails
+// PERMANENTLY, and because publish_blueprint runs strictly after this REQUIRED
+// stage, an invalid blueprint NEVER publishes) or succeeds with the non-blocking
+// warnings persisted on the stage output for publish/summary to surface.
+//
+// No paid provider calls (pure composition + rules over already-collected
+// artifacts + facts). BlueprintValidationError maps to a permanent, non-retryable
+// failure in process-run.ts (retrying an invalid blueprint can never make it
+// valid; only a new run over a changed brief can), the same terminal path
+// resolve_market's unsupported-language throw already uses.
+
+interface FullPagePlan {
+  pages: PlannedPage[];
+  warnings: BlueprintWarning[];
+  stats: PagePlanStats;
+}
+
+// Loads stage 15's full page-plan.json from R2 (pages + engine warnings +
+// stats). build_page_plan is REQUIRED and runs before this stage, so a missing
+// object is a broken pipeline precondition surfaced as internal_error (which, as
+// a non-BlueprintValidationError throw, takes the generic retry/fail path).
+async function loadFullPagePlan(ctx: StageContext): Promise<FullPagePlan> {
+  const storageKey = `runs/${ctx.runId}/page-plan.json`;
+  const obj = await ctx.env.BLUEPRINT_ARTIFACTS.get(storageKey);
+  if (!obj) {
+    throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+  }
+  const parsed = JSON.parse(await obj.text()) as {
+    pages?: PlannedPage[];
+    warnings?: BlueprintWarning[];
+    stats?: PagePlanStats;
+  };
+  return {
+    pages: parsed.pages ?? [],
+    warnings: parsed.warnings ?? [],
+    // pageBudget/totalAddressableVolume live in stats; a plan without stats is a
+    // malformed artifact, but default defensively so validation never crashes on
+    // a read (the page-budget rule then compares against the real value).
+    stats:
+      parsed.stats ??
+      ({
+        pageCount: parsed.pages?.length ?? 0,
+        skeletonPageCount: 0,
+        dedicatedPageCount: 0,
+        sectionCount: 0,
+        faqCount: 0,
+        clustersPlaced: 0,
+        demotedPageCount: 0,
+        cannibalizedCount: 0,
+        serviceLocationBlockedCount: 0,
+        totalAddressableVolume: null,
+        pageBudget: parsed.pages?.length ?? 0,
+      } satisfies PagePlanStats),
+  };
+}
+
+// Loads stage 16's overlay.json from R2, or null when absent. Overlay is
+// OPTIONAL: greenfield briefs and overlay-skipped runs have no object, and
+// validate composes with a null overlay (every planned page defaults to create).
+async function loadOverlayArtifact(ctx: StageContext): Promise<OverlayResult | null> {
+  const storageKey = `runs/${ctx.runId}/overlay.json`;
+  const obj = await ctx.env.BLUEPRINT_ARTIFACTS.get(storageKey);
+  if (!obj) return null;
+  return JSON.parse(await obj.text()) as OverlayResult;
+}
+
+// doorway.ts's Service/ServiceArea/KeywordClusterSummary from the page-plan
+// facts projection, filling the fields the doorway evaluators never read with
+// safe defaults. Same adapters build_page_plan uses at mint time, so the
+// re-check sees identical inputs (determinism).
+function serviceForDoorway(svc: PagePlanBriefFacts['services'][number]): NormalizedProjectBrief['services'][number] {
+  return { id: svc.id, name: svc.name, normalizedName: svc.normalizedName, description: null, synonyms: [], priority: svc.priority };
+}
+function areaForDoorway(
+  area: PagePlanBriefFacts['serviceAreas'][number],
+  countryIso: string,
+): NormalizedProjectBrief['serviceAreas'][number] {
+  return { id: area.id, city: area.city, region: area.region, countryIso, radiusKm: null, isPrimary: area.isPrimary, uniqueProof: area.uniqueProof };
+}
+function clusterSummaryFor(cluster: PagePlanCluster): KeywordClusterSummary {
+  return {
+    id: cluster.clusterId,
+    label: cluster.label,
+    keywordCount: 1,
+    totalSearchVolume: cluster.addressableVolume,
+    hasLocalizedEvidence: cluster.hasLocalizedEvidence,
+  };
+}
+
+// Resolves each composed service_location page back to the service/area/cluster
+// build_page_plan minted it from (via its owner cluster), so the doorway re-check
+// runs on the exact same inputs. A page whose owner cluster / service / area does
+// not resolve is omitted (never guessed), so an unresolvable page cannot false-
+// block: only a positively-detected guardrail breach on a resolved page blocks.
+function buildServiceLocationChecks(
+  pages: ReturnType<typeof composeBlueprint>['pages'],
+  facts: { brief: PagePlanBriefFacts; clusters: PagePlanCluster[] },
+): ServiceLocationCheck[] {
+  const clusterById = new Map(facts.clusters.map((c) => [c.clusterId, c]));
+  const serviceById = new Map(facts.brief.services.map((s) => [s.id, s]));
+  const areaById = new Map(facts.brief.serviceAreas.map((a) => [a.id, a]));
+
+  const checks: ServiceLocationCheck[] = [];
+  for (const page of pages) {
+    if (page.pageType !== 'service_location') continue;
+    if (page.ownerClusterId === null) continue;
+    const cluster = clusterById.get(page.ownerClusterId);
+    if (!cluster || cluster.serviceId === null || cluster.serviceAreaId === null) continue;
+    const svc = serviceById.get(cluster.serviceId);
+    const area = areaById.get(cluster.serviceAreaId);
+    if (!svc || !area) continue;
+    checks.push({
+      logicalId: page.logicalId,
+      service: serviceForDoorway(svc),
+      area: areaForDoorway(area, facts.brief.countryIso),
+      cluster: clusterSummaryFor(cluster),
+    });
+  }
+  return checks;
+}
+
+export interface ValidateBlueprintOutput {
+  stage: 'validate_blueprint';
+  pageCount: number;
+  // Always 0 on a succeeded run (a non-empty blocking set throws instead).
+  blockingCount: 0;
+  warnings: ValidationIssue[];
+  warningCount: number;
+  byRecommendation: { keep: number; update: number; create: number; consolidate: number };
+  addressableDemandTotal: number | null;
+  rulesetVersion: string;
+}
+
+// Real validate_blueprint (Phase 4 Task 19). REQUIRED stage.
+export const validateBlueprintHandler: StageHandler = async (ctx: StageContext) => {
+  const rulesetVersion = rulesetVersionForStage('validate_blueprint');
+
+  const plan = await loadFullPagePlan(ctx);
+  const overlay = await loadOverlayArtifact(ctx);
+  const composed = composeBlueprint(plan.pages, overlay);
+
+  // Doorway re-check inputs: reload the same facts build_page_plan planned over
+  // (deterministic from D1), map service_location pages back to their owner
+  // cluster's service/area.
+  const facts = await loadPagePlanFacts(ctx.d1, ctx.runId, ctx.normalizedBrief);
+  const serviceLocationChecks = buildServiceLocationChecks(composed.pages, facts);
+
+  // Upstream skipped/partial stages, disclosed as warnings. validate_blueprint's
+  // own in-flight row is never a gap (loadGapStageNames only counts terminal
+  // skipped/partial/optional-failed rows), but filter it out defensively and
+  // sort for a deterministic warning order.
+  const gapStages = (await loadGapStageNames(ctx.d1, ctx.runId))
+    .filter((s) => s !== 'validate_blueprint')
+    .sort();
+
+  const { blocking, warnings } = validateComposed(composed, PAGE_PLAN_RULESET_V1, {
+    pageBudget: plan.stats.pageBudget,
+    engineWarnings: plan.warnings,
+    gapStages,
+    overlayPresent: overlay !== null,
+    mode: ctx.normalizedBrief.mode,
+    serviceLocationChecks,
+  });
+
+  // Blocking issues -> permanent failure: the invalid blueprint must never
+  // publish. BlueprintValidationError carries the blocking issues as fieldErrors
+  // (path = subject, message = "[code] message"); process-run.ts persists the
+  // first as the stage's safe_error_message (our own validation text, safe) and
+  // fails this REQUIRED stage immediately with no retry cycles.
+  if (blocking.length > 0) {
+    throw new BlueprintValidationError(
+      'invalid_input',
+      blocking.map((i) => ({ path: i.subject, message: `[${i.code}] ${i.message}` })),
+    );
+  }
+
+  const byRecommendation = { keep: 0, update: 0, create: 0, consolidate: 0 };
+  for (const p of composed.pages) byRecommendation[p.recommendation]++;
+  // Consolidations are existing-URL proposals (never a planned-page recommendation
+  // in V1); count them at the URL level.
+  byRecommendation.consolidate = composed.consolidations.length;
+
+  const output: ValidateBlueprintOutput = {
+    stage: 'validate_blueprint',
+    pageCount: composed.pages.length,
+    blockingCount: 0,
+    warnings,
+    warningCount: warnings.length,
+    byRecommendation,
+    addressableDemandTotal: plan.stats.totalAddressableVolume ?? null,
+    rulesetVersion,
+  };
+
+  return { output, status: 'succeeded' as const };
 };

@@ -290,6 +290,66 @@ describe('Phase 2 orchestration acceptance', () => {
     expect(JSON.parse(versionRow!.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
   });
 
+  it('acceptance: a blocking validation failure fails the run permanently and publishes nothing', async () => {
+    const env = fakeEnv();
+    const { json: project } = await createProject(env);
+    const estimate = await createEstimate(env, project.data.id);
+    const { json: run } = await startRun(env, project.data.id, estimate.estimateId, newId('idem'));
+    const runId = run.data.id;
+
+    // Override build_page_plan to emit a STRUCTURALLY INVALID page-plan.json
+    // (two active pages sharing a slug -> validateBlueprintGraph duplicate_slug).
+    // The real overlay + validate_blueprint stages then run over it: validate
+    // composes, finds the blocking issue, and throws BlueprintValidationError.
+    const badPlan: StageHandler = async (ctx) => {
+      const page = (logicalId: string, slug: string, parentLogicalId: string | null, primaryKeyword: string | null, pageType = 'service') => ({
+        logicalId, pageType, slug, title: logicalId, h1: logicalId, parentLogicalId,
+        primaryKeywordId: null, primaryKeyword, clusterIds: [], sections: [], metaDescription: null,
+        recommendation: 'create', consolidateTargetLogicalId: null,
+        scores: { addressableVolume: null, confidence: null, scoreBreakdown: null, evidenceRefs: [] }, warnings: [],
+      });
+      const artifact = {
+        rulesetVersion: 'pp-v1',
+        pages: [page('home', 'dup', null, null, 'home'), page('svc', 'dup', 'home', 'svc kw')],
+        placements: [],
+        warnings: [],
+        stats: {
+          pageCount: 2, skeletonPageCount: 1, dedicatedPageCount: 1, sectionCount: 0, faqCount: 0,
+          clustersPlaced: 0, demotedPageCount: 0, cannibalizedCount: 0, serviceLocationBlockedCount: 0,
+          totalAddressableVolume: null, pageBudget: 30,
+        },
+      };
+      await ctx.env.BLUEPRINT_ARTIFACTS.put(`runs/${ctx.runId}/page-plan.json`, JSON.stringify(artifact));
+      return { output: { stage: 'build_page_plan' as const, pageCount: 2 }, status: 'succeeded' as const };
+    };
+
+    await drainQueue(env, env.BLUEPRINT_QUEUE.sent, 'w1', {
+      build_page_plan: badPlan,
+      validate_serps_and_questions: stubValidateSerps,
+    });
+
+    // The run failed permanently: validate_blueprint is REQUIRED and its
+    // BlueprintValidationError is a permanent (non-retryable) failure, so it
+    // fails on the first attempt.
+    expect(await getRunStatus(env.BLUEPRINT_DB, runId)).toBe('failed');
+    const validateRow = await env.BLUEPRINT_DB
+      .prepare(`SELECT status, attempt_count, safe_error_code FROM research_stage_runs WHERE run_id = ? AND stage_name = 'validate_blueprint'`)
+      .bind(runId)
+      .first<{ status: string; attempt_count: number; safe_error_code: string }>();
+    expect(validateRow?.status).toBe('failed');
+    expect(validateRow?.attempt_count).toBe(1);
+    expect(validateRow?.safe_error_code).toBe('invalid_input');
+
+    // Nothing downstream ran: publish_blueprint never executed, no version row.
+    const publishRow = await getStageRow(env.BLUEPRINT_DB, runId, 'publish_blueprint');
+    expect(publishRow).toBeNull();
+    const versionRow = await env.BLUEPRINT_DB
+      .prepare(`SELECT id FROM blueprint_versions WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ id: string }>();
+    expect(versionRow).toBeNull();
+  });
+
   it('acceptance: cancellation mid-drain ends the run cancelled with no blueprint_versions row published', async () => {
     const env = fakeEnv();
     const { json: project } = await createProject(env);
