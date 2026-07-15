@@ -407,7 +407,7 @@ describe('POST /api/blueprint/v1/projects/:id/research-estimates', () => {
       Number(body.data.totals.dataForSeoMinUsd)
     );
     expect(body.data.limitations).toEqual([
-      'US fan-out, content parsing, and clustering land in later phases; costs shown cover keyword, competitor, and SERP research.',
+      'US fan-out and clustering land in later phases; costs shown cover keyword, competitor, SERP, and content-parsing research.',
     ]);
     expect(body.data.fanoutAvailability).toBe('disabled');
     expect(body.data.estimateId).toBeTruthy();

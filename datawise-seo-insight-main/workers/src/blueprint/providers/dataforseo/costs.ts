@@ -2,6 +2,7 @@ import type { NormalizedProjectBrief } from '../../contracts/types';
 import type { BlueprintStage } from '../../contracts/enums';
 import { buildSeedQueries } from '../../domain/seeds';
 import { V1_LIMITS } from '../../contracts/limits';
+import { PAGE_PLAN_RULESET_V1 } from '../../domain/page-plan/ruleset';
 
 // Deliberate overestimates (real per-task cost is typically well under these):
 // operators can lower either via the KV override below once real DataForSEO
@@ -11,11 +12,13 @@ import { V1_LIMITS } from '../../contracts/limits';
 export interface DfsCostEstimates {
   labsTaskUsdMicro: number;
   serpTaskUsdMicro: number;
+  contentParsingTaskUsdMicro: number;
 }
 
 export const DEFAULT_DFS_COST_ESTIMATES: DfsCostEstimates = {
   labsTaskUsdMicro: 50_000, // $0.05
   serpTaskUsdMicro: 10_000, // $0.01
+  contentParsingTaskUsdMicro: 10_000, // $0.01 (deliberately overestimated per Phase 4 plan)
 };
 
 const DFS_COST_ESTIMATES_KV_KEY = 'bp:config:dfs-cost-estimates';
@@ -44,8 +47,12 @@ export async function loadDfsCostEstimates(kv: KVNamespace): Promise<DfsCostEsti
     typeof override.serpTaskUsdMicro === 'number'
       ? override.serpTaskUsdMicro
       : DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro;
+  const contentParsingTaskUsdMicro =
+    typeof override.contentParsingTaskUsdMicro === 'number'
+      ? override.contentParsingTaskUsdMicro
+      : DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro;
 
-  return { labsTaskUsdMicro, serpTaskUsdMicro };
+  return { labsTaskUsdMicro, serpTaskUsdMicro, contentParsingTaskUsdMicro };
 }
 
 export interface CallPlanLine {
@@ -108,6 +115,12 @@ const PLANNED_COMPETITOR_COUNT = 5;
 const MAX_SUGGESTIONS_SEEDS = 8;
 const MAX_SERP_SEEDS = 20;
 const METRIC_ENRICHMENT_TASKS = 2; // one overview chunk + one bulk-KD chunk, upper bound
+// parse_competitor_pages plans for the ruleset ceiling: up to maxClusters (10)
+// clusters, pagesPerCluster (2) competitor URLs each = 20 content_parsing
+// calls. This is a planning CEILING, not doubled for the single JS retry: the
+// retry REPLACES an empty first pass (it is the exception, not an extra call
+// per URL), and the plan doc's verification section budgets exactly 20 calls.
+const CONTENT_PARSING_TASKS = PAGE_PLAN_RULESET_V1.parse.maxClusters * PAGE_PLAN_RULESET_V1.parse.pagesPerCluster;
 
 function planLine(operation: string, tasks: number, unitUsdMicro: number): CallPlanLine {
   return {
@@ -143,6 +156,7 @@ export function buildCallPlan(brief: NormalizedProjectBrief, costs: DfsCostEstim
     planLine('relevant_pages', PLANNED_COMPETITOR_COUNT, costs.labsTaskUsdMicro),
     planLine('metric_enrichment', METRIC_ENRICHMENT_TASKS, costs.labsTaskUsdMicro),
     planLine('serp_task_post', Math.min(primaryAreaSeedCount, MAX_SERP_SEEDS), costs.serpTaskUsdMicro),
+    planLine('content_parsing', CONTENT_PARSING_TASKS, costs.contentParsingTaskUsdMicro),
   ].filter((l) => l.tasks > 0);
 
   const totalUsdMicro = lines.reduce((sum, l) => sum + l.estimatedUsdMicro, 0);

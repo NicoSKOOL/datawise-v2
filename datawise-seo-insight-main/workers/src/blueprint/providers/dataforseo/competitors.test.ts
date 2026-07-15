@@ -19,7 +19,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-const COSTS: DfsCostEstimates = { labsTaskUsdMicro: 50_000, serpTaskUsdMicro: 10_000 };
+const COSTS: DfsCostEstimates = { labsTaskUsdMicro: 50_000, serpTaskUsdMicro: 10_000, contentParsingTaskUsdMicro: 10_000 };
 
 const MARKET: ResolvedMarket = {
   labsLocationCode: 2840,

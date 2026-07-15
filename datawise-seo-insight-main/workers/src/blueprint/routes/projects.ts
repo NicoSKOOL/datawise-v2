@@ -75,7 +75,7 @@ function buildPlannedStages(plan: CallPlan): ResearchEstimate['plannedStages'] {
 }
 
 const ESTIMATE_LIMITATIONS = [
-  'US fan-out, content parsing, and clustering land in later phases; costs shown cover keyword, competitor, and SERP research.',
+  'US fan-out and clustering land in later phases; costs shown cover keyword, competitor, SERP, and content-parsing research.',
 ];
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
