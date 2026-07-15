@@ -128,6 +128,38 @@ describe('refineClusters', () => {
     expect(result.stats.adjudicationsInsufficient).toBe(1);
   });
 
+  it('does not auto-merge on empty SERP snapshots (null overlap); routes to a pending adjudication', () => {
+    // Both clusters have a live snapshot, but each snapshot is empty (no organic
+    // URLs, no related searches, no PAA) -- e.g. an anti-bot/empty SERP. The live
+    // overlap is unmeasurable (null), so even with cosine 1 + intent 1 the pair
+    // must NOT auto-merge on the embedding signal alone; it becomes a pending
+    // merge adjudication tagged no_measurable_serp_overlap.
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning services austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const liveByQuery = new Map<string, LiveSerpEvidence>([
+      ['drain cleaning austin', live([], [], [])],
+      ['drain cleaning services austin', live([], [], [])],
+    ]);
+
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.stats.liveSnapshotCoverage).toBe(2); // both snapshots exist, just empty
+    expect(result.clusters).toHaveLength(2);
+    expect(result.adjudications).toHaveLength(1);
+    const adj = result.adjudications[0];
+    expect(adj.caseType).toBe('merge');
+    expect(adj.decision).toBe('pending');
+    expect(adj.scoreContext.reason).toBe('no_measurable_serp_overlap');
+    expect(adj.scoreContext.serpOverlap).toBeNull();
+  });
+
   it('never merges across a hard constraint even at a high score, and emits no adjudication for it', () => {
     // kwA is branded-navigational, kwB is generic non-branded: a hard
     // branded_navigational_x_generic block. Identical vectors + full organic
@@ -178,7 +210,14 @@ describe('refineClusters', () => {
     expect(result.adjudications[0].scoreContext.violations).toContain('incompatible_intent');
   });
 
-  it('auto-splits a low-cohesion cluster with a clean 2-cut and live evidence', () => {
+  // SYNTHETIC cut-mechanism test: exercises the auto-split 2-cut code with a
+  // cluster whose members form two disconnected vector groups. This is NOT a
+  // reachable production state: stage 10 could never emit two disconnected
+  // groups as a single cluster (clusters are connected components), and Phase 4
+  // has no per-member live SERPs to live-adjust the intra-cluster edges, so
+  // auto-split is inert on real input (see the inertness note in refine.ts).
+  // This test only proves the deterministic cut mechanism itself is correct.
+  it('cut mechanism (synthetic input): splits a cluster whose members form two disconnected groups', () => {
     const nodes = [
       node({ keywordId: 'm1', normalizedKeyword: 'drain repair austin', vector: [1, 0, 0, 0], relevance: 0.9 }),
       node({ keywordId: 'm2', normalizedKeyword: 'drain repair services austin', vector: [1, 0, 0, 0] }),

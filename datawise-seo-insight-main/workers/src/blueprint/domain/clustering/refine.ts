@@ -232,10 +232,15 @@ function clusterBoundaryEdge(
   };
 }
 
-// Every hard-constraint violation introduced by merging two clusters: checked
-// across the cross-cluster member pairs (each side was already internally
-// clean at stage 10, so only the boundary can introduce a new violation). A
-// fixed union so the returned set is order-invariant.
+// Hard-constraint violations across the cross-cluster member pairs of a
+// candidate merge. This is a fast pre-check on the boundary only; it is NOT the
+// authoritative constraint gate. A source cluster is not guaranteed internally
+// clean: stage 10 excludes forbidden edges from CLUSTERING but not from
+// co-membership, so two forbidden members can co-cluster via a non-forbidden
+// path. The all-pairs `unionViolations` check at merge-apply time is the
+// authoritative gate that guarantees no forbidden set is ever persisted; this
+// cross-pair result only drives the per-pair intent-exception / hard-block
+// routing. Returned as a set so it is order-invariant.
 function mergeViolations(
   membersA: readonly string[],
   membersB: readonly string[],
@@ -426,19 +431,35 @@ export function refineClusters(input: {
       continue;
     }
 
-    // Constraint-clean from here.
-    if (edge.score >= edgeThreshold && hasLiveEvidence) {
+    // Constraint-clean from here. Auto-merge additionally requires a MEASURABLE
+    // live SERP overlap (serpOverlap !== null), not merely that a snapshot
+    // exists on both sides. A pair of empty/anti-bot snapshots (empty organic,
+    // no related overlap, no cross-appearance) yields a null overlap, and
+    // scoreEdge would then renormalize the serp component away and decide the
+    // merge on representative-vector cosine + intent alone. That is weaker than
+    // the brief's "combined edge score >= edgeThreshold computed with live SERP
+    // overlap", so the null-overlap case is routed to a pending adjudication
+    // (a snapshot exists, so pending, not insufficient) rather than auto-merged.
+    const measurableLiveOverlap = edge.components.serpOverlap !== null;
+    if (edge.score >= edgeThreshold && hasLiveEvidence && measurableLiveOverlap) {
       mergeEdges.push({ a: A.clusterId, b: B.clusterId });
     } else if (edge.score >= band.low) {
-      // Ambiguous band with live evidence -> pending; any score the auto-merge
-      // gate rejected only for want of live evidence -> insufficient_evidence.
+      // Ambiguous band with live evidence -> pending; a high score with a
+      // snapshot but no measurable overlap -> pending (no_measurable_serp_overlap);
+      // any score the auto-merge gate rejected only for want of live evidence
+      // -> insufficient_evidence.
+      const reason = !hasLiveEvidence
+        ? 'no_live_evidence'
+        : !measurableLiveOverlap
+          ? 'no_measurable_serp_overlap'
+          : 'ambiguous_band';
       adjudications.push({
         caseType: 'merge',
         decision: decisionFor(hasLiveEvidence),
         clusterIds,
         keywordIds,
         scoreContext: {
-          reason: hasLiveEvidence ? 'ambiguous_band' : 'no_live_evidence',
+          reason,
           score: edge.score,
           semantic: edge.components.semantic,
           serpOverlap: edge.components.serpOverlap,
@@ -473,9 +494,17 @@ export function refineClusters(input: {
       ...new Set(component.flatMap((cid) => [...clusterById.get(cid)!.memberIds])),
     ].sort(cmpStr);
 
-    // Re-validate the full union: a transitive conflict (each pairwise edge was
-    // clean, the union is not) is genuinely ambiguous, so demote to a pending
-    // merge adjudication instead of silently merging a forbidden set.
+    // Re-validate the full union against ALL member pairs, not just the
+    // cross-cluster pairs the pairwise merge decision checked. This catches two
+    // things: a genuinely transitive conflict (each pairwise edge clean, the
+    // union not: A-B clean, B-C clean, A-C forbidden) AND a pre-existing
+    // internal forbidden pair inside a single source cluster (stage 10 only
+    // excludes forbidden edges from CLUSTERING, so two forbidden members can
+    // still co-cluster via a non-forbidden path). Either way the union carries a
+    // violation, so demote the whole component to a pending merge adjudication
+    // rather than silently persisting a forbidden set. The reason is
+    // 'union_constraint_conflict' (neutral: the conflict may be transitive or a
+    // pre-existing internal one, and this path cannot cheaply tell them apart).
     const uViolations = unionViolations(unionMembers, byId);
     if (uViolations.size > 0) {
       adjudications.push({
@@ -484,7 +513,7 @@ export function refineClusters(input: {
         clusterIds: [...component].sort(cmpStr),
         keywordIds: unionMembers,
         scoreContext: {
-          reason: 'transitive_constraint_conflict',
+          reason: 'union_constraint_conflict',
           score: null,
           semantic: null,
           serpOverlap: null,
@@ -505,6 +534,25 @@ export function refineClusters(input: {
   }
 
   // ---- Split pass over split-candidate clusters ----
+  //
+  // AUTO-SPLIT IS INTENTIONALLY INERT ON REAL STAGE-10 OUTPUT IN PHASE 4.
+  // The brief's rule 3 wants a cut over "sub-threshold LIVE edges", but Phase 4
+  // only fetches a live SERP for each cluster's REPRESENTATIVE query (stage 11:
+  // one snapshot per cluster), so at most one member of a cluster (its primary)
+  // ever has live SERP data. A live organic-URL jaccard needs BOTH members'
+  // snapshots, so no intra-cluster member PAIR ever has two-sided live evidence,
+  // and the edge weights cannot be live-adjusted per member. The cut below
+  // therefore recomputes the SAME static similarity graph stage 10 used, and a
+  // stage-10 cluster is by construction a single connected component at
+  // edgeThreshold (restricting to a member subset only ever keeps or adds
+  // edges, never removes them), so `components.length` is always 1 for a real
+  // input cluster: every low-cohesion cluster falls through to a `split`
+  // adjudication for the Phase 5 adjudicator. That is the correct Phase 4
+  // posture ("mostly emit adjudications until per-member live SERPs exist").
+  // The 2-cut branch is retained as the deterministic cut MECHANISM (and is
+  // covered by a synthetic unit test that hands it a disconnected member set
+  // stage 10 could never emit); it becomes reachable only once a future phase
+  // fetches per-member live SERPs and folds them into the edge recomputation.
   let autoSplits = 0;
   for (const c of splitCandidates) {
     const memberNodes = c.memberIds.map((id) => byId.get(id)).filter((n): n is KeywordNode => !!n);
@@ -512,6 +560,7 @@ export function refineClusters(input: {
     const clusterHasLive = hasLive.get(c.clusterId) ?? false;
 
     // Recompute the intra-cluster keyword graph and cut on clean strong edges.
+    // (Static graph in Phase 4: see the inertness note above.)
     const memberGraph = buildKeywordSimilarityGraph({ nodes: memberNodes, ruleset });
     const cleanEdges = memberGraph.edges.filter(
       (e: GraphEdge) => e.violations.length === 0 && e.score >= edgeThreshold,
@@ -521,9 +570,11 @@ export function refineClusters(input: {
       cleanEdges,
     );
 
-    // Auto-split only requires (a) a clean 2-cut and (b) live evidence for this
+    // Auto-split requires (a) a clean 2-cut and (b) live evidence for this
     // cluster (a split without live SERP support stays an adjudication, which
-    // is also what keeps a zero-coverage run change-free).
+    // also keeps a zero-coverage run change-free). Per the note above, (a) is
+    // unreachable on real stage-10 input, so this branch only fires for the
+    // synthetic cut-mechanism test.
     if (components.length === 2 && clusterHasLive) {
       for (const part of components) {
         finalSets.push({ members: [...part].sort(cmpStr), origin: 'split', sourceClusterIds: [c.clusterId] });
