@@ -236,6 +236,13 @@ function baseOverrides(): Partial<Record<BlueprintStage, StageHandler>> {
     discover_competitors: async () => ({ output: { stub: true }, status: 'succeeded' as const }),
     collect_competitor_evidence: async () => ({ output: { stub: true }, status: 'succeeded' as const }),
     validate_serps_and_questions: async () => ({ output: { stub: true }, status: 'succeeded' as const }),
+    // Task 16: build_page_plan is now REAL and the single writer of
+    // keyword_clusters.page_candidate + decision_reason. These clustering tests
+    // drive the run to terminal and assert the clustering stage's OWN write to
+    // those columns (page_candidate null, decision_reason names cluster-v1), so
+    // stub build_page_plan here to keep them scoped to clustering. build_page_plan
+    // has its own coverage in page-plan-handlers.test.ts / engine.test.ts.
+    build_page_plan: async () => ({ output: { stage: 'build_page_plan' as const, stub: true }, status: 'succeeded' as const }),
   };
 }
 

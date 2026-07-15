@@ -12,6 +12,7 @@ const REQUIRED_STAGES: BlueprintStage[] = [
   'plan_research',
   'collect_keyword_evidence',
   'build_provisional_clusters',
+  'build_page_plan',
   'validate_blueprint',
   'publish_blueprint',
 ];
@@ -43,15 +44,15 @@ describe('STAGE_REGISTRY', () => {
     expect(STAGE_REGISTRY.map((m) => m.stage)).toEqual([...BLUEPRINT_STAGES]);
   });
 
-  it('marks exactly the 8 Manual §8 stages as required', () => {
+  it('marks exactly the 9 required stages (Manual §8 critical path + build_page_plan)', () => {
     const required = STAGE_REGISTRY.filter((m) => m.required).map((m) => m.stage);
     expect(required.sort()).toEqual([...REQUIRED_STAGES].sort());
-    expect(required.length).toBe(8);
+    expect(required.length).toBe(9);
   });
 
   it('marks every other stage as not required', () => {
     const optional = STAGE_REGISTRY.filter((m) => !m.required).map((m) => m.stage);
-    expect(optional.length).toBe(11);
+    expect(optional.length).toBe(10);
     for (const stage of optional) {
       expect(REQUIRED_STAGES).not.toContain(stage);
     }

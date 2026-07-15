@@ -5,10 +5,15 @@ import type { StageContext } from './handlers';
 import { STAGE_HANDLERS } from './handlers';
 import {
   parseCompetitorPagesHandler,
+  buildPagePlanHandler,
   compareClustersForParsing,
   type RankableCluster,
   type ParseCompetitorPagesOutput,
+  type BuildPagePlanOutput,
 } from './page-plan-handlers';
+import type { NormalizedProjectBrief } from '../contracts/types';
+import { hashNormalizedInput } from '../domain/hash';
+import { stageMeta } from './stages';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -563,5 +568,193 @@ describe('parseCompetitorPagesHandler', () => {
     expect(output.clustersSelected).toBe(8);
     expect(output.urlsSelected).toBe(8);
     expect(await countRows(d1, runId)).toBe(8);
+  });
+});
+
+// ======================= build_page_plan (Task 16) =======================
+
+function planBrief(overrides: Partial<NormalizedProjectBrief> = {}): NormalizedProjectBrief {
+  return {
+    mode: 'greenfield',
+    businessName: 'Acme Plumbing',
+    normalizedBusinessName: 'acme plumbing',
+    category: 'plumber',
+    websiteDomain: null,
+    websiteUrl: null,
+    countryIso: 'US',
+    languageCode: 'en',
+    services: [{ id: 's1', name: 'Drain Cleaning', normalizedName: 'drain cleaning', description: null, synonyms: [], priority: 'primary' }],
+    serviceAreas: [{ id: 'a1', city: 'Austin', region: 'TX', countryIso: 'US', radiusKm: null, isPrimary: true, uniqueProof: ['travis county'] }],
+    targetCustomers: [],
+    differentiators: [],
+    knownCompetitorDomains: [],
+    excludedDomains: [],
+    excludedTopics: [],
+    goals: [],
+    maxRecommendedPages: 30,
+    enableUsFanout: false,
+    inputHash: 'hash1',
+    ...overrides,
+  };
+}
+
+function buildPlanCtx(
+  d1: D1Database,
+  projectId: string,
+  runId: string,
+  brief: NormalizedProjectBrief,
+): { ctx: StageContext; artifacts: Map<string, string> } {
+  const kv = new Map<string, string>();
+  const artifacts = new Map<string, string>();
+  const env = {
+    BLUEPRINT_DB: d1,
+    BLUEPRINT_QUEUE: { send: async () => undefined },
+    KV: {
+      get: async (k: string) => kv.get(k) ?? null,
+      put: async (k: string, v: string) => void kv.set(k, v),
+      delete: async (k: string) => void kv.delete(k),
+    } as unknown as KVNamespace,
+    BLUEPRINT_ARTIFACTS: {
+      put: async (k: string, v: string) => void artifacts.set(k, v),
+      get: async (k: string) => (artifacts.has(k) ? { text: async () => artifacts.get(k)! } : null),
+    } as unknown as R2Bucket,
+    DATAFORSEO_EMAIL: 'test@example.com',
+    DATAFORSEO_PASSWORD: 'test-password',
+  };
+  const ctx = {
+    env: env as any,
+    d1,
+    runId,
+    projectId,
+    briefVersionId: 'brief1',
+    normalizedBrief: brief,
+    stage: 'build_page_plan',
+    attempt: 1,
+  } as StageContext;
+  return { ctx, artifacts };
+}
+
+async function seedStrongCluster(
+  d1: D1Database,
+  runId: string,
+  spec: { id: string; nk: string; volume: number; serviceId?: string | null; serviceAreaId?: string | null; intent?: string },
+): Promise<void> {
+  const kid = `k-${spec.id}`;
+  await d1
+    .prepare(`INSERT INTO keywords (id, run_id, display_keyword, normalized_keyword, search_volume, metrics_missing) VALUES (?, ?, ?, ?, ?, 0)`)
+    .bind(kid, runId, spec.nk, spec.nk, spec.volume)
+    .run();
+  await d1
+    .prepare(
+      `INSERT INTO keyword_clusters (id, run_id, label, intent, confidence_label, service_id, service_area_id, primary_keyword_id)
+       VALUES (?, ?, ?, ?, 'high', ?, ?, ?)`,
+    )
+    .bind(spec.id, runId, spec.nk, spec.intent ?? 'transactional', spec.serviceId ?? null, spec.serviceAreaId ?? null, kid)
+    .run();
+  await d1
+    .prepare(`INSERT INTO cluster_keywords (cluster_id, keyword_id, membership_score, is_primary) VALUES (?, ?, 1, 1)`)
+    .bind(spec.id, kid)
+    .run();
+}
+
+describe('buildPagePlanHandler', () => {
+  it('is registered as a REQUIRED stage', () => {
+    expect(STAGE_HANDLERS.build_page_plan).toBe(buildPagePlanHandler);
+    expect(stageMeta('build_page_plan').required).toBe(true);
+  });
+
+  it('persists the plan to R2 + an artifacts row, writes page_candidate back, and returns a compact summary', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const runId = await seedRun(d1, projectId);
+    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'drain cleaning', volume: 500, serviceId: 's1' });
+
+    const { ctx, artifacts } = buildPlanCtx(d1, projectId, runId, planBrief());
+    const result = await buildPagePlanHandler(ctx);
+    expect(result.status).toBe('succeeded');
+    const output = result.output as BuildPagePlanOutput;
+
+    // R2 artifact written at the deterministic key.
+    expect(output.storageKey).toBe(`runs/${runId}/page-plan.json`);
+    expect(artifacts.has(output.storageKey)).toBe(true);
+    const stored = JSON.parse(artifacts.get(output.storageKey)!);
+    expect(stored.rulesetVersion).toBe('pp-v1');
+    expect(Array.isArray(stored.pages)).toBe(true);
+
+    // artifacts row parity.
+    const artRow = await d1
+      .prepare(`SELECT kind, storage_key, content_type FROM artifacts WHERE run_id = ? AND storage_key = ?`)
+      .bind(runId, output.storageKey)
+      .first<{ kind: string; storage_key: string; content_type: string }>();
+    expect(artRow?.kind).toBe('page_plan');
+    expect(artRow?.content_type).toBe('application/json');
+
+    // compact summary carries the skeleton + the earned dedicated page.
+    expect(output.stage).toBe('build_page_plan');
+    expect(output.skeletonPageCount).toBeGreaterThanOrEqual(4);
+    expect(output.dedicatedPageCount).toBe(1);
+    expect(output.pages.some((p) => p.pageType === 'resource')).toBe(true);
+
+    // page_candidate write-back for the cluster.
+    const clusterRow = await d1
+      .prepare(`SELECT page_candidate, decision_reason FROM keyword_clusters WHERE id = ?`)
+      .bind('c1')
+      .first<{ page_candidate: string | null; decision_reason: string | null }>();
+    expect(clusterRow?.page_candidate).toBeTruthy();
+    expect(clusterRow?.decision_reason).toBeTruthy();
+  });
+
+  it('rerun is safe: a second run overwrites the same artifact (no duplicate rows) and page_candidate stays consistent', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const runId = await seedRun(d1, projectId);
+    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'drain cleaning', volume: 500, serviceId: 's1' });
+
+    const { ctx } = buildPlanCtx(d1, projectId, runId, planBrief());
+    await buildPagePlanHandler(ctx);
+    const firstCandidate = await d1.prepare(`SELECT page_candidate FROM keyword_clusters WHERE id = 'c1'`).first<{ page_candidate: string }>();
+    await buildPagePlanHandler(ctx);
+    const secondCandidate = await d1.prepare(`SELECT page_candidate FROM keyword_clusters WHERE id = 'c1'`).first<{ page_candidate: string }>();
+
+    expect(secondCandidate?.page_candidate).toBe(firstCandidate?.page_candidate);
+    const artCount = await d1
+      .prepare(`SELECT COUNT(*) AS n FROM artifacts WHERE run_id = ? AND storage_key = ?`)
+      .bind(runId, `runs/${runId}/page-plan.json`)
+      .first<{ n: number }>();
+    expect(artCount?.n).toBe(1);
+  });
+
+  it('a run with zero clusters still emits a valid minimal plan (skeleton only), not a skip', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const runId = await seedRun(d1, projectId);
+
+    const { ctx } = buildPlanCtx(d1, projectId, runId, planBrief());
+    const result = await buildPagePlanHandler(ctx);
+    expect(result.status).toBe('succeeded');
+    const output = result.output as BuildPagePlanOutput;
+    expect(output.clustersPlaced).toBe(0);
+    expect(output.dedicatedPageCount).toBe(0);
+    expect(output.pageCount).toBeGreaterThanOrEqual(4);
+    expect(output.warnings).toContain('no_clusters_planned');
+  });
+
+  it('is deterministic: the stored plan artifact hashes identically across two fresh runs on the same data', async () => {
+    async function run(): Promise<string> {
+      const { d1 } = createTestDb();
+      const projectId = await seedProject(d1);
+      const runId = await seedRun(d1, projectId);
+      await seedStrongCluster(d1, runId, { id: 'c1', nk: 'drain cleaning', volume: 500, serviceId: 's1' });
+      await seedStrongCluster(d1, runId, { id: 'c2', nk: 'drain cleaning austin', volume: 300, serviceId: 's1', serviceAreaId: 'a1' });
+      const { ctx, artifacts } = buildPlanCtx(d1, projectId, runId, planBrief());
+      const result = await buildPagePlanHandler(ctx);
+      const key = (result.output as BuildPagePlanOutput).storageKey;
+      // Hash the plan body with the per-run runId stripped: only the plan shape
+      // (pages/placements/warnings) must be identical, not the run-scoped key.
+      const stored = JSON.parse(artifacts.get(key)!);
+      return hashNormalizedInput(stored);
+    }
+    const [a, b] = await Promise.all([run(), run()]);
+    expect(a).toBe(b);
   });
 });

@@ -10,6 +10,11 @@ import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
 import { newId, nowIso } from '../db/util';
 import { loadStageOutput } from './stage-io';
 import type { CollectCompetitorEvidenceOutput } from './research-handlers';
+import { buildPagePlan } from '../domain/page-plan/engine';
+import type { PagePlanResult } from '../domain/page-plan/engine';
+import { loadPagePlanFacts } from './page-plan-facts';
+import { BlueprintApiError } from '../domain/api-errors';
+import { safeErrorMessage } from '../providers/dataforseo/envelope';
 
 // Home for Phase 4's page-planning-track stage handlers (parse_competitor_pages
 // onward), the same way orchestration/clustering-handlers.ts is the home for
@@ -569,4 +574,163 @@ export const parseCompetitorPagesHandler: StageHandler = async (ctx: StageContex
   };
 
   return { output, status: allFailedOrBlocked ? ('partial' as const) : ('succeeded' as const) };
+};
+
+// =====================================================================
+// Stage 15: build_page_plan (Task 16) -- REQUIRED
+// =====================================================================
+
+// keyword_clusters.page_candidate + decision_reason write-back: 3 bound params
+// per UPDATE, one statement per cluster (plain UPDATE by id, rerun-safe). Well
+// under D1's 100-param ceiling; the row-budget guard documents the intent.
+const PAGE_CANDIDATE_PARAMS_PER_ROW = 3;
+assertRowBudget(1, PAGE_CANDIDATE_PARAMS_PER_ROW, 'keyword_clusters page_candidate write-back');
+
+// decision_reason is a compact, operator-facing string persisted per cluster;
+// cap it so one pathologically long reason chain cannot bloat the row.
+const MAX_DECISION_REASON_CHARS = 500;
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Writes the full page-plan JSON to R2 and mints (or reuses) its artifacts row,
+// mirroring providers/embeddings/workers-ai.ts's artifact-row parity: the
+// storage key is deterministic per run, so a rerun overwrites the same object
+// and finds the existing artifacts row instead of writing a duplicate.
+async function persistPagePlanArtifact(
+  ctx: StageContext,
+  organizationId: string,
+  rawJson: string,
+): Promise<{ artifactId: string; storageKey: string; byteSize: number }> {
+  const storageKey = `runs/${ctx.runId}/page-plan.json`;
+  await ctx.env.BLUEPRINT_ARTIFACTS.put(storageKey, rawJson);
+
+  const byteSize = new TextEncoder().encode(rawJson).byteLength;
+  const existing = await ctx.d1
+    .prepare(`SELECT id FROM artifacts WHERE run_id = ? AND storage_key = ? ORDER BY created_at ASC LIMIT 1`)
+    .bind(ctx.runId, storageKey)
+    .first<{ id: string }>();
+  if (existing) return { artifactId: existing.id, storageKey, byteSize };
+
+  const artifactId = newId('art');
+  const sha256 = await sha256Hex(rawJson);
+  await ctx.d1
+    .prepare(
+      `INSERT INTO artifacts
+        (id, organization_id, run_id, kind, storage_key, sha256, content_type, byte_size, encrypted, created_at)
+       VALUES (?, ?, ?, 'page_plan', ?, ?, 'application/json', ?, 0, ?)`,
+    )
+    .bind(artifactId, organizationId, ctx.runId, storageKey, sha256, byteSize, nowIso())
+    .run();
+  return { artifactId, storageKey, byteSize };
+}
+
+// Single-writer write-back of each cluster's placement onto keyword_clusters:
+// page_candidate = the placement target logical id (the dedicated page's own id
+// or the parent it folded into), decision_reason = the concise reason chain.
+// Plain UPDATEs by cluster id, batched, so a rerun is idempotent.
+async function persistPageCandidates(
+  d1: D1Database,
+  placements: PagePlanResult['placements'],
+): Promise<void> {
+  if (placements.length === 0) return;
+  const statements: D1PreparedStatement[] = [];
+  for (const p of placements) {
+    const reason = p.reasons.join(' ').slice(0, MAX_DECISION_REASON_CHARS);
+    statements.push(
+      d1
+        .prepare(`UPDATE keyword_clusters SET page_candidate = ?, decision_reason = ? WHERE id = ?`)
+        .bind(p.targetLogicalId, reason, p.clusterId),
+    );
+  }
+  await runBatchedStatements(d1, statements);
+}
+
+export interface BuildPagePlanOutput {
+  stage: 'build_page_plan';
+  artifactId: string;
+  storageKey: string;
+  planByteSize: number;
+  pageCount: number;
+  skeletonPageCount: number;
+  dedicatedPageCount: number;
+  sectionCount: number;
+  faqCount: number;
+  clustersPlaced: number;
+  demotedPageCount: number;
+  cannibalizedCount: number;
+  serviceLocationBlockedCount: number;
+  totalAddressableVolume: number | null;
+  pageBudget: number;
+  pages: Array<{ logicalId: string; pageType: string; slug: string; parentLogicalId: string | null }>;
+  warnings: string[];
+  rulesetVersion: string;
+}
+
+// Real build_page_plan (Phase 4 Task 16). REQUIRED stage (stages.ts): a throw
+// fails the whole run. No paid provider calls here (pure deterministic planning
+// over already-collected evidence), so budget machinery is untouched.
+//
+// Even a run with zero clusters produces a valid minimal plan (the brief-derived
+// skeleton), never a skip: this stage is REQUIRED and always emits a plan. The
+// full plan (up to the user's page budget of pages, too large for a stage output
+// row) goes to R2 + an artifacts row for stages 18/19; the stage output carries
+// a compact summary.
+export const buildPagePlanHandler: StageHandler = async (ctx: StageContext) => {
+  const rulesetVersion = rulesetVersionForStage('build_page_plan');
+
+  const project = await ctx.d1
+    .prepare(`SELECT organization_id FROM projects WHERE id = ?`)
+    .bind(ctx.projectId)
+    .first<{ organization_id: string }>();
+  if (!project) {
+    throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+  }
+
+  const facts = await loadPagePlanFacts(ctx.d1, ctx.runId, ctx.normalizedBrief);
+  const plan = buildPagePlan(facts, PAGE_PLAN_RULESET_V1, {
+    // Page-budget source: the normalized brief's maxRecommendedPages (a per-run
+    // USER choice), never a ruleset constant. It always has a value (brief
+    // normalization defaults it to V1_LIMITS.defaultMaxRecommendedPages and caps
+    // it at maxRecommendedPages), so no separate loader default is needed.
+    pageBudget: ctx.normalizedBrief.maxRecommendedPages,
+  });
+
+  const rawJson = JSON.stringify({ rulesetVersion, ...plan });
+  const { artifactId, storageKey, byteSize } = await persistPagePlanArtifact(ctx, project.organization_id, rawJson);
+
+  await persistPageCandidates(ctx.d1, plan.placements);
+
+  const warnings: string[] = plan.warnings.map((w) => w.code);
+  if (facts.clusters.length === 0) warnings.push('no_clusters_planned');
+
+  const output: BuildPagePlanOutput = {
+    stage: 'build_page_plan',
+    artifactId,
+    storageKey,
+    planByteSize: byteSize,
+    pageCount: plan.stats.pageCount,
+    skeletonPageCount: plan.stats.skeletonPageCount,
+    dedicatedPageCount: plan.stats.dedicatedPageCount,
+    sectionCount: plan.stats.sectionCount,
+    faqCount: plan.stats.faqCount,
+    clustersPlaced: plan.stats.clustersPlaced,
+    demotedPageCount: plan.stats.demotedPageCount,
+    cannibalizedCount: plan.stats.cannibalizedCount,
+    serviceLocationBlockedCount: plan.stats.serviceLocationBlockedCount,
+    totalAddressableVolume: plan.stats.totalAddressableVolume,
+    pageBudget: plan.stats.pageBudget,
+    pages: plan.pages.map((p) => ({
+      logicalId: p.logicalId,
+      pageType: p.pageType,
+      slug: p.slug,
+      parentLogicalId: p.parentLogicalId,
+    })),
+    warnings,
+    rulesetVersion,
+  };
+
+  return { output, status: 'succeeded' as const };
 };

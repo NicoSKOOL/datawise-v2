@@ -25,6 +25,7 @@ export interface StageMeta {
 //   - research planning          -> plan_research (gates which evidence stages even run)
 //   - minimum keyword evidence   -> collect_keyword_evidence
 //   - initial clustering         -> build_provisional_clusters
+//   - deterministic page plan    -> build_page_plan (the site skeleton + placements every later stage consumes)
 //   - blueprint validation       -> validate_blueprint
 //   - persistence / publish      -> publish_blueprint
 const REQUIRED_STAGES = new Set<BlueprintStage>([
@@ -34,6 +35,7 @@ const REQUIRED_STAGES = new Set<BlueprintStage>([
   'plan_research',
   'collect_keyword_evidence',
   'build_provisional_clusters',
+  'build_page_plan',
   'validate_blueprint',
   'publish_blueprint',
 ]);
