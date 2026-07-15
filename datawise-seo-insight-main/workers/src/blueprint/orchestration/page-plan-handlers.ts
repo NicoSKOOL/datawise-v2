@@ -15,6 +15,13 @@ import type { PagePlanResult } from '../domain/page-plan/engine';
 import { loadPagePlanFacts } from './page-plan-facts';
 import { BlueprintApiError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
+import type { PlannedPage } from '../domain/page-plan/types';
+import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
+import { fetchTextResource, fetchPageTitle, SiteFetchError } from '../providers/site-fetch/fetcher';
+import { parseRobotsTxt, parseSitemapXml, selectTitleFetchCandidates } from '../domain/overlay/sitemap';
+import { assignMatches } from '../domain/overlay/match';
+import type { ExistingPageInput } from '../domain/overlay/match';
+import { fetchOwnRankedUrls } from '../providers/dataforseo/site-pages';
 
 // Home for Phase 4's page-planning-track stage handlers (parse_competitor_pages
 // onward), the same way orchestration/clustering-handlers.ts is the home for
@@ -733,4 +740,439 @@ export const buildPagePlanHandler: StageHandler = async (ctx: StageContext) => {
   };
 
   return { output, status: 'succeeded' as const };
+};
+
+// =====================================================================
+// Stage 16: overlay_existing_site (Task 18) -- OPTIONAL
+// =====================================================================
+//
+// Inventories the business's EXISTING website and matches it against the pages
+// stage 15 planned, so the published blueprint can say Keep / Update / Create /
+// Consolidate instead of pretending every page is new. OPTIONAL (stages.ts): a
+// throw only degrades the run to partial, never fails it. All fetched site
+// content (robots.txt, sitemaps, page titles) is untrusted DATA, never
+// instructions, and is bounded by the fetcher/parsers before it reaches here.
+//
+// Two inventory sources, in preference order:
+//   1. FREE sitemap crawl (robots.txt -> sitemaps -> page URLs), via the Task 17
+//      SSRF-safe fetcher and pure parsers.
+//   2. PAID labs fallback (one ranked_keywords call against the own domain), used
+//      ONLY when the sitemap crawl found zero URLs. The plan's 1-call budget line
+//      for site_ranked_urls is a ceiling: a successful sitemap crawl never spends
+//      it (see step 4 below).
+//
+// Subrequest ceiling (all sequential, no fan-out, no retries): at most
+// MAX_SITEMAP_FETCHES (10, including robots.txt) sitemap-family fetches + overlay
+// .maxPageFetches (20) title fetches + 1 labs DFS call. Each site fetch carries
+// the fetcher's default 10s deadline, so a pathological redirect/child-sitemap
+// chain is bounded by the fetch COUNT above, not just per-call timeouts.
+//
+// Artifact contract for Tasks 19 (validate) and 20 (publish): this stage writes a
+// SECOND artifact, runs/{runId}/overlay.json, and NEVER mutates stage 15's
+// runs/{runId}/page-plan.json (single-writer determinism). Validate and publish
+// compose the two: page-plan.json is the plan, overlay.json is the per-planned-
+// page recommendation (keep/update/create + matched URL) plus the consolidation
+// proposals for leftover existing URLs.
+
+const OVERLAY = PAGE_PLAN_RULESET_V1.overlay;
+
+// Hard cap on sitemap-family fetches per run, robots.txt inclusive. A
+// sitemapindex can legally chain into thousands of child sitemaps; this bounds
+// how many we will actually pull. Page URLs have their own ceiling
+// (OVERLAY.maxSitemapUrls); this bounds the recursion frontier's network cost.
+const MAX_SITEMAP_FETCHES = 10;
+
+// existing_pages writes 9 columns; at 9 params/row D1's 100-bound-parameter
+// ceiling allows 11 rows per statement (11 * 9 = 99).
+const EXISTING_PAGE_PARAMS_PER_ROW = 9;
+const EXISTING_PAGE_ROWS_PER_STATEMENT = 11;
+assertRowBudget(EXISTING_PAGE_ROWS_PER_STATEMENT, EXISTING_PAGE_PARAMS_PER_ROW, 'existing_pages insert');
+
+// discovered_via provenance (schema CHECK: 'sitemap' | 'robots' | 'labs').
+// 'robots' = the page came from a sitemap that robots.txt pointed us at.
+// 'sitemap' = robots.txt listed no sitemap, so the page came from the
+// well-known /sitemap.xml fallback. 'labs' = the paid ranked_keywords fallback.
+type DiscoveredVia = 'sitemap' | 'robots' | 'labs';
+
+// Subdomain-aware registrable-domain match (reuses domainMatches/hostFromUrl
+// above): an off-domain URL sitting in a sitemap (a syndication partner, a CDN
+// host) is dropped so the inventory only ever contains the project's own pages.
+function urlOnDomain(rawUrl: string, domain: string): boolean {
+  const host = hostFromUrl(rawUrl);
+  if (host === null) return false;
+  return domainMatches(host, domain);
+}
+
+// Map a SiteFetchError to a compact, machine-readable warning code; a non-fetch
+// error degrades to a generic code rather than leaking a raw message.
+function siteFetchWarning(kind: string, err: unknown): string {
+  if (err instanceof SiteFetchError) return `${kind}_fetch_${err.reason}`;
+  return `${kind}_fetch_error`;
+}
+
+interface SitemapOrigin {
+  url: string;
+  origin: 'sitemap' | 'robots';
+}
+
+// FREE sitemap-based inventory: robots.txt -> its Sitemap: directives (or the
+// /sitemap.xml fallback) -> page URLs, recursing bounded into sitemapindex
+// children. Returns discovered page URLs (deduped, first-origin wins) tagged with
+// their provenance. Every fetch failure becomes a warning, never a throw: a
+// bot-challenged or missing sitemap must not fail this optional stage.
+async function crawlSitemapInventory(
+  site: string,
+  domain: string,
+  maxUrls: number,
+  warnings: string[]
+): Promise<Map<string, 'sitemap' | 'robots'>> {
+  const collected = new Map<string, 'sitemap' | 'robots'>();
+  const seenSitemaps = new Set<string>();
+  const frontier: SitemapOrigin[] = [];
+  let fetches = 0;
+
+  // 1: robots.txt (counts as the first sitemap-family fetch).
+  const robotsUrl = new URL('/robots.txt', site).href;
+  fetches++;
+  try {
+    const res = await fetchTextResource(robotsUrl);
+    if (res.status < 400) {
+      for (const sm of parseRobotsTxt(res.body)) {
+        if (!seenSitemaps.has(sm)) {
+          seenSitemaps.add(sm);
+          frontier.push({ url: sm, origin: 'robots' });
+        }
+      }
+    }
+  } catch (err) {
+    warnings.push(siteFetchWarning('robots', err));
+  }
+
+  // 2: /sitemap.xml fallback when robots.txt listed no sitemap.
+  if (frontier.length === 0) {
+    const fallback = new URL('/sitemap.xml', site).href;
+    seenSitemaps.add(fallback);
+    frontier.push({ url: fallback, origin: 'sitemap' });
+  }
+
+  // 3: bounded crawl of the sitemap frontier.
+  while (frontier.length > 0 && fetches < MAX_SITEMAP_FETCHES && collected.size < maxUrls) {
+    const { url: sitemapUrl, origin } = frontier.shift()!;
+    fetches++;
+    let res;
+    try {
+      res = await fetchTextResource(sitemapUrl);
+    } catch (err) {
+      warnings.push(siteFetchWarning('sitemap', err));
+      continue;
+    }
+    if (res.status >= 400) {
+      warnings.push(`sitemap_http_${res.status}`);
+      continue;
+    }
+    const parsed = parseSitemapXml(res.body, maxUrls);
+    for (const pageUrl of parsed.urls) {
+      if (collected.size >= maxUrls) break;
+      if (!urlOnDomain(pageUrl, domain)) continue; // drop off-domain entries
+      if (!collected.has(pageUrl)) collected.set(pageUrl, origin);
+    }
+    for (const child of parsed.childSitemaps) {
+      if (!seenSitemaps.has(child)) {
+        seenSitemaps.add(child);
+        frontier.push({ url: child, origin });
+      }
+    }
+  }
+
+  return collected;
+}
+
+interface TitleFetch {
+  title: string | null;
+  status: number | null;
+}
+
+// Load stage 15's page plan back from R2. build_page_plan is REQUIRED and runs
+// before this stage, so the object must exist; a null here is a broken pipeline
+// precondition, surfaced as an internal error (which, this stage being optional,
+// degrades the run to partial rather than failing it).
+async function loadPagePlanPages(ctx: StageContext): Promise<PlannedPage[]> {
+  const storageKey = `runs/${ctx.runId}/page-plan.json`;
+  const obj = await ctx.env.BLUEPRINT_ARTIFACTS.get(storageKey);
+  if (!obj) {
+    throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+  }
+  const raw = await obj.text();
+  const parsed = JSON.parse(raw) as { pages?: PlannedPage[] };
+  return parsed.pages ?? [];
+}
+
+interface ExistingPageRow {
+  url: string;
+  title: string | null;
+  discoveredVia: DiscoveredVia;
+  httpStatus: number | null;
+  matchedLogicalPageId: string | null;
+  matchScore: number | null;
+}
+
+// Rerun-safe reset-then-apply of the run's existing_pages rows, mirroring
+// persistParsedPages: every attempt fully REPLACES the run's rows so a retry
+// never accumulates duplicates (and never trips UNIQUE(run_id, url)). Chunked
+// multi-row INSERTs stay under D1's bound-parameter ceiling.
+async function persistExistingPages(d1: D1Database, runId: string, rows: ExistingPageRow[]): Promise<void> {
+  await d1.prepare(`DELETE FROM existing_pages WHERE run_id = ?`).bind(runId).run();
+  if (rows.length === 0) return;
+
+  const statements: D1PreparedStatement[] = [];
+  for (const rowsChunk of chunk(rows, EXISTING_PAGE_ROWS_PER_STATEMENT)) {
+    const placeholders = rowsChunk.map(() => '(?,?,?,?,?,?,?,?,?)').join(',');
+    const args: unknown[] = [];
+    for (const r of rowsChunk) {
+      args.push(
+        newId('exp'),
+        runId,
+        r.url,
+        null, // canonical_url: not derived in V1 (we never fetch a rel=canonical)
+        r.title,
+        r.discoveredVia,
+        r.httpStatus,
+        r.matchedLogicalPageId,
+        r.matchScore
+      );
+    }
+    statements.push(
+      d1
+        .prepare(
+          `INSERT INTO existing_pages
+            (id, run_id, url, canonical_url, title, discovered_via, http_status, matched_logical_page_id, match_score)
+           VALUES ${placeholders}`
+        )
+        .bind(...args)
+    );
+  }
+  await runBatchedStatements(d1, statements);
+}
+
+// Writes overlay.json to R2 and mints (or reuses) its artifacts row, mirroring
+// persistPagePlanArtifact's parity exactly: deterministic per-run key, so a
+// rerun overwrites the same object and finds the existing row instead of
+// duplicating it. Kind 'overlay' distinguishes it from the 'page_plan' artifact.
+async function persistOverlayArtifact(
+  ctx: StageContext,
+  organizationId: string,
+  rawJson: string
+): Promise<{ artifactId: string; storageKey: string; byteSize: number }> {
+  const storageKey = `runs/${ctx.runId}/overlay.json`;
+  await ctx.env.BLUEPRINT_ARTIFACTS.put(storageKey, rawJson);
+
+  const byteSize = new TextEncoder().encode(rawJson).byteLength;
+  const existing = await ctx.d1
+    .prepare(`SELECT id FROM artifacts WHERE run_id = ? AND storage_key = ? ORDER BY created_at ASC LIMIT 1`)
+    .bind(ctx.runId, storageKey)
+    .first<{ id: string }>();
+  if (existing) return { artifactId: existing.id, storageKey, byteSize };
+
+  const artifactId = newId('art');
+  const sha256 = await sha256Hex(rawJson);
+  await ctx.d1
+    .prepare(
+      `INSERT INTO artifacts
+        (id, organization_id, run_id, kind, storage_key, sha256, content_type, byte_size, encrypted, created_at)
+       VALUES (?, ?, ?, 'overlay', ?, ?, 'application/json', ?, 0, ?)`
+    )
+    .bind(artifactId, organizationId, ctx.runId, storageKey, sha256, byteSize, nowIso())
+    .run();
+  return { artifactId, storageKey, byteSize };
+}
+
+export interface OverlayExistingSiteOutput {
+  stage: 'overlay_existing_site';
+  // Present (and true) only on the greenfield short-circuit.
+  skipped?: boolean;
+  reason?: string;
+  urlsDiscovered: { sitemap: number; robots: number; labs: number };
+  titleFetches: { attempted: number; blocked: number; failed: number };
+  matches: { keep: number; update: number; create: number; consolidate: number; unmatchedExisting: number };
+  warnings: string[];
+  rulesetVersion: string;
+}
+
+function emptyOverlayOutput(extra: Partial<OverlayExistingSiteOutput>): OverlayExistingSiteOutput {
+  return {
+    stage: 'overlay_existing_site',
+    urlsDiscovered: { sitemap: 0, robots: 0, labs: 0 },
+    titleFetches: { attempted: 0, blocked: 0, failed: 0 },
+    matches: { keep: 0, update: 0, create: 0, consolidate: 0, unmatchedExisting: 0 },
+    warnings: [],
+    rulesetVersion: rulesetVersionForStage('overlay_existing_site'),
+    ...extra,
+  };
+}
+
+// Real overlay_existing_site (Phase 4 Task 18). OPTIONAL stage.
+export const overlayExistingSiteHandler: StageHandler = async (ctx: StageContext) => {
+  const rulesetVersion = rulesetVersionForStage('overlay_existing_site');
+  const warnings: string[] = [];
+
+  // 1: greenfield skip. No existing site to overlay -> clean skip (succeeded),
+  // never a failure. websiteUrl is the crawl base; websiteDomain is the
+  // registrable-domain filter + the labs target.
+  const site = ctx.normalizedBrief.websiteUrl;
+  const domain = ctx.normalizedBrief.websiteDomain;
+  if (!site || !domain) {
+    const output = emptyOverlayOutput({ skipped: true, reason: 'greenfield' });
+    return { output, status: 'succeeded' as const };
+  }
+
+  // Load stage 15's planned pages once (used for both title-candidate ranking
+  // and the match step).
+  const plannedPages = await loadPagePlanPages(ctx);
+
+  // 2: free sitemap inventory.
+  const inventory = new Map<string, DiscoveredVia>();
+  const sitemapUrls = await crawlSitemapInventory(site, domain, OVERLAY.maxSitemapUrls, warnings);
+  for (const [url, via] of sitemapUrls) inventory.set(url, via);
+
+  // 3: title enrichment on the highest-overlap candidates (a no-op when the
+  // crawl found nothing). A blocked page or a failed fetch keeps a null title.
+  const titleByUrl = new Map<string, TitleFetch>();
+  let titleAttempted = 0;
+  let titleBlocked = 0;
+  let titleFailed = 0;
+  const candidates = selectTitleFetchCandidates([...inventory.keys()], plannedPages, OVERLAY.maxPageFetches);
+  for (const url of candidates) {
+    titleAttempted++;
+    try {
+      const res = await fetchPageTitle(url);
+      if (res.blocked) titleBlocked++;
+      titleByUrl.set(url, { title: res.blocked ? null : res.title, status: res.status });
+    } catch (err) {
+      titleFailed++;
+      warnings.push(siteFetchWarning('title', err));
+    }
+  }
+
+  // 4: paid labs fallback, ONLY when the free crawl yielded zero URLs. A
+  // successful crawl never spends the DFS call (the plan line is a ceiling). A
+  // provider throw here is CAUGHT into inventory_limited, not propagated: this
+  // is an optional-stage last-resort fallback, and the stage's own semantics
+  // already treat "the fallback learned nothing" as a partial result, so
+  // catching yields a cleaner, still-truthful outcome than letting the throw
+  // degrade the run with no structured output. We NEVER report "the site has no
+  // pages" as a finding: zero inventory from all sources is a warning, and every
+  // planned page simply stays `create`.
+  if (inventory.size === 0) {
+    warnings.push('inventory_limited');
+    const market = await loadStageOutput<ResolvedMarket>(ctx.d1, ctx.runId, 'resolve_market');
+    if (market) {
+      try {
+        const costs = await loadDfsCostEstimates(ctx.env.KV);
+        const own = await fetchOwnRankedUrls(ctx, market, domain, costs);
+        for (const o of own) {
+          if (!urlOnDomain(o.url, domain)) continue;
+          if (!inventory.has(o.url)) inventory.set(o.url, 'labs');
+        }
+      } catch {
+        // Fallback errored; inventory stays empty -> the stage degrades to
+        // partial below. The error is intentionally swallowed (see above).
+      }
+    }
+  }
+
+  // 5: match the inventory against the planned pages.
+  const existingInputs: ExistingPageInput[] = [...inventory.keys()]
+    .sort()
+    .map((url) => ({ url, title: titleByUrl.get(url)?.title ?? null }));
+  const matchResult = assignMatches(existingInputs, plannedPages, {
+    keepMatchScoreMin: OVERLAY.keepMatchScoreMin,
+    matchScoreMin: OVERLAY.matchScoreMin,
+  });
+  const existingByUrl = new Map(matchResult.existingPages.map((e) => [e.url, e]));
+
+  // 6a: persist existing_pages (reset-then-apply). match_score is the ONE-TO-ONE
+  // match's score; a consolidate-only URL carries no matched page here (its
+  // proposal lives in the overlay artifact), so its match_score stays NULL.
+  const rows: ExistingPageRow[] = [...inventory.keys()].sort().map((url) => {
+    const match = existingByUrl.get(url);
+    const title = titleByUrl.get(url);
+    const matchedLogicalPageId = match?.matchedLogicalPageId ?? null;
+    return {
+      url,
+      title: title?.title ?? null,
+      discoveredVia: inventory.get(url)!,
+      httpStatus: title?.status ?? null,
+      matchedLogicalPageId,
+      matchScore: matchedLogicalPageId !== null ? match?.matchScore ?? null : null,
+    };
+  });
+  await persistExistingPages(ctx.d1, ctx.runId, rows);
+
+  // 6b: overlay artifact (the second, additive artifact; page-plan.json is never
+  // mutated). Consolidations are the leftover existing URLs that overlap a
+  // planned page above the floor but did not win a one-to-one match.
+  const project = await ctx.d1
+    .prepare(`SELECT organization_id FROM projects WHERE id = ?`)
+    .bind(ctx.projectId)
+    .first<{ organization_id: string }>();
+  if (!project) {
+    throw new BlueprintApiError('internal_error', safeErrorMessage('internal_error'));
+  }
+  const overlayArtifact = {
+    rulesetVersion,
+    plannedPages: matchResult.plannedPages.map((p) => ({
+      logicalId: p.logicalId,
+      recommendation: p.recommendation,
+      matchedUrl: p.matchedUrl,
+      matchScore: p.matchScore,
+    })),
+    consolidations: matchResult.existingPages
+      .filter((e) => e.consolidateTargetLogicalId !== null)
+      .map((e) => ({
+        existingUrl: e.url,
+        consolidateTargetLogicalId: e.consolidateTargetLogicalId,
+        matchScore: e.matchScore,
+      })),
+  };
+  await persistOverlayArtifact(ctx, project.organization_id, JSON.stringify(overlayArtifact));
+
+  // 7: counts + semantics.
+  let keep = 0;
+  let update = 0;
+  let create = 0;
+  for (const p of matchResult.plannedPages) {
+    if (p.recommendation === 'keep') keep++;
+    else if (p.recommendation === 'update') update++;
+    else create++;
+  }
+  let consolidate = 0;
+  let unmatchedExisting = 0;
+  for (const e of matchResult.existingPages) {
+    if (e.consolidateTargetLogicalId !== null) consolidate++;
+    else if (e.matchedLogicalPageId === null) unmatchedExisting++;
+  }
+  let sitemapCount = 0;
+  let robotsCount = 0;
+  let labsCount = 0;
+  for (const via of inventory.values()) {
+    if (via === 'sitemap') sitemapCount++;
+    else if (via === 'robots') robotsCount++;
+    else labsCount++;
+  }
+
+  const output: OverlayExistingSiteOutput = {
+    stage: 'overlay_existing_site',
+    urlsDiscovered: { sitemap: sitemapCount, robots: robotsCount, labs: labsCount },
+    titleFetches: { attempted: titleAttempted, blocked: titleBlocked, failed: titleFailed },
+    matches: { keep, update, create, consolidate, unmatchedExisting },
+    warnings,
+    rulesetVersion,
+  };
+
+  // Succeeded when ANY inventory was collected (even partially, with warnings).
+  // Partial ONLY when we learned nothing about the existing site: the sitemap
+  // crawl was empty (inventory_limited) AND the labs fallback also errored or
+  // returned nothing, leaving zero inventory rows.
+  const status = inventory.size === 0 ? ('partial' as const) : ('succeeded' as const);
+  return { output, status };
 };

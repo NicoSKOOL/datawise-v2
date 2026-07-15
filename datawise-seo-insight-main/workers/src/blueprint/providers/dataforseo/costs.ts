@@ -157,6 +157,17 @@ export function buildCallPlan(brief: NormalizedProjectBrief, costs: DfsCostEstim
     planLine('metric_enrichment', METRIC_ENRICHMENT_TASKS, costs.labsTaskUsdMicro),
     planLine('serp_task_post', Math.min(primaryAreaSeedCount, MAX_SERP_SEEDS), costs.serpTaskUsdMicro),
     planLine('content_parsing', CONTENT_PARSING_TASKS, costs.contentParsingTaskUsdMicro),
+    // overlay_existing_site's labs fallback: at most ONE ranked_keywords call
+    // against the project's own domain, and only for an existing-site brief (a
+    // greenfield brief has no site to overlay). It is the same labs endpoint
+    // family as ranked_keywords so it is priced at labsTaskUsdMicro. This is a
+    // budget CEILING, not an obligation: the overlay handler skips this call
+    // entirely when the free sitemap inventory already yielded URLs (see the
+    // handler's step-4 comment), the same way content_parsing plans for a
+    // ceiling the fetch loop may not reach.
+    ...(brief.mode === 'existing_site' && brief.websiteDomain
+      ? [planLine('site_ranked_urls', 1, costs.labsTaskUsdMicro)]
+      : []),
   ].filter((l) => l.tasks > 0);
 
   const totalUsdMicro = lines.reduce((sum, l) => sum + l.estimatedUsdMicro, 0);

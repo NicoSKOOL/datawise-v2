@@ -80,6 +80,18 @@ describe('buildCallPlan', () => {
     expect(findLine(plan, 'keywords_for_site')?.estimatedUsdMicro).toBe(DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro);
   });
 
+  it('adds a 1-call site_ranked_urls ceiling for an existing_site brief, and none for greenfield', async () => {
+    // overlay_existing_site's labs fallback: at most one own-domain
+    // ranked_keywords call, priced at labsTaskUsdMicro, existing-site only.
+    const existing = buildCallPlan(await makeBrief({ withWebsite: true }), DEFAULT_DFS_COST_ESTIMATES);
+    expect(findLine(existing, 'site_ranked_urls')?.tasks).toBe(1);
+    expect(findLine(existing, 'site_ranked_urls')?.estimatedUsdMicro).toBe(DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro);
+    expect(findLine(existing, 'site_ranked_urls')?.stage).toBe('overlay_existing_site');
+
+    const greenfield = buildCallPlan(await makeBrief(), DEFAULT_DFS_COST_ESTIMATES);
+    expect(findLine(greenfield, 'site_ranked_urls')).toBeUndefined();
+  });
+
   it('caps keyword_suggestions and serp_task_post seeds at their documented ceilings', async () => {
     const brief = await normalizeProjectBrief(
       parseProjectBrief({

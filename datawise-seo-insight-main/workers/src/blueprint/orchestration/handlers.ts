@@ -23,7 +23,7 @@ import {
   buildProvisionalClustersHandler,
   refineClustersHandler,
 } from './clustering-handlers';
-import { parseCompetitorPagesHandler, buildPagePlanHandler } from './page-plan-handlers';
+import { parseCompetitorPagesHandler, buildPagePlanHandler, overlayExistingSiteHandler } from './page-plan-handlers';
 
 export interface StageContext {
   env: BlueprintProviderEnv;
@@ -268,5 +268,6 @@ STAGE_HANDLERS.build_provisional_clusters = buildProvisionalClustersHandler;
 STAGE_HANDLERS.refine_clusters = refineClustersHandler;
 STAGE_HANDLERS.parse_competitor_pages = parseCompetitorPagesHandler;
 STAGE_HANDLERS.build_page_plan = buildPagePlanHandler;
+STAGE_HANDLERS.overlay_existing_site = overlayExistingSiteHandler;
 STAGE_HANDLERS.collect_us_fanout = collectUsFanoutHandler;
 STAGE_HANDLERS.publish_blueprint = publishBlueprintHandler;

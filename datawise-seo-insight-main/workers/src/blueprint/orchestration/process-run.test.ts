@@ -300,9 +300,12 @@ describe('processResearchRun', () => {
     // second gap here: this drive stubs validate_serps_and_questions so no live
     // SERP snapshots exist, and refine_clusters over clusters with zero live
     // coverage completes 'partial' with a no_live_serp_evidence warning by
-    // design. Sorted before comparison because loadGapStageNames has no total
-    // ORDER BY (TEXT-PK scan order), so the gap list order is not guaranteed.
-    expect(JSON.parse(finalRun.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'refine_clusters']);
+    // design. overlay_existing_site (Task 18) is a third gap: this existing-site
+    // brief's robots/sitemap fetches throw in the harness and its labs fallback
+    // returns an empty ranked-keywords response, so it completes 'partial' with
+    // inventory_limited. Sorted before comparison because loadGapStageNames has
+    // no total ORDER BY (TEXT-PK scan order), so the gap list order is not guaranteed.
+    expect(JSON.parse(finalRun.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
 
     const finalStageRows = await getStageRows(d1, runId);
     expect(finalStageRows.length).toBe(19);
@@ -336,7 +339,7 @@ describe('processResearchRun', () => {
     // would. Status ('partial'), run.partial_reasons_json, and version
     // completeness must all agree.
     expect(versions.results[0].completeness).toBe('partial');
-    expect(JSON.parse(versions.results[0].partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'refine_clusters']);
+    expect(JSON.parse(versions.results[0].partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
     expect(versions.results[0].latest_revision_id).toBeTruthy();
 
     const revisions = await d1
