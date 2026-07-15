@@ -283,11 +283,33 @@ describe('Phase 2 orchestration acceptance', () => {
     expect(stageRows.results.find((r) => r.stage_name === 'collect_us_fanout')?.status).toBe('skipped');
 
     const versionRow = await env.BLUEPRINT_DB
-      .prepare(`SELECT completeness, partial_reasons_json FROM blueprint_versions WHERE run_id = ?`)
+      .prepare(`SELECT id, completeness, partial_reasons_json, schema_version, ruleset_version, summary_json, latest_revision_id FROM blueprint_versions WHERE run_id = ?`)
       .bind(run.data.id)
-      .first<{ completeness: string; partial_reasons_json: string }>();
+      .first<{ id: string; completeness: string; partial_reasons_json: string; schema_version: string; ruleset_version: string; summary_json: string; latest_revision_id: string }>();
     expect(versionRow?.completeness).toBe('partial');
     expect(JSON.parse(versionRow!.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
+
+    // Task 20: publish materializes the real page set with real version strings.
+    // The version row carries the Phase 4 ruleset/schema tags (not the old
+    // 'phase2-stub'/'p2' stubs) and a populated summary_json whose pageCount
+    // matches the number of blueprint_pages rows written under its revision.
+    expect(versionRow!.schema_version).toBe('p4');
+    expect(versionRow!.ruleset_version).toBe('cluster-v1+pp-v1');
+    const summary = JSON.parse(versionRow!.summary_json);
+    expect(summary.pageCount).toBeGreaterThan(0);
+
+    const pageRows = await env.BLUEPRINT_DB
+      .prepare(`SELECT logical_page_id, slug, primary_keyword_normalized, recommendation FROM blueprint_pages WHERE blueprint_revision_id = ? ORDER BY logical_page_id ASC`)
+      .bind(versionRow!.latest_revision_id)
+      .all<{ logical_page_id: string; slug: string; primary_keyword_normalized: string | null; recommendation: string }>();
+    expect(pageRows.results.length).toBe(summary.pageCount);
+    expect(pageRows.results.length).toBeGreaterThan(0);
+    // Acceptance-style invariants (Task 21 formalizes these): unique slugs and
+    // unique non-null primary keywords across the published revision.
+    const slugs = pageRows.results.map((r) => r.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+    const kws = pageRows.results.map((r) => r.primary_keyword_normalized).filter((k): k is string => k !== null);
+    expect(new Set(kws).size).toBe(kws.length);
   });
 
   it('acceptance: a blocking validation failure fails the run permanently and publishes nothing', async () => {

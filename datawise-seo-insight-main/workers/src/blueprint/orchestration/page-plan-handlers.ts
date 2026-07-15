@@ -1211,7 +1211,7 @@ export const overlayExistingSiteHandler: StageHandler = async (ctx: StageContext
 // valid; only a new run over a changed brief can), the same terminal path
 // resolve_market's unsupported-language throw already uses.
 
-interface FullPagePlan {
+export interface FullPagePlan {
   pages: PlannedPage[];
   warnings: BlueprintWarning[];
   stats: PagePlanStats;
@@ -1221,7 +1221,9 @@ interface FullPagePlan {
 // stats). build_page_plan is REQUIRED and runs before this stage, so a missing
 // object is a broken pipeline precondition surfaced as internal_error (which, as
 // a non-BlueprintValidationError throw, takes the generic retry/fail path).
-async function loadFullPagePlan(ctx: StageContext): Promise<FullPagePlan> {
+// Exported so stage 19 publish_blueprint loads the plan through the exact same
+// path validate does (single reader), never a divergent re-parse.
+export async function loadFullPagePlan(ctx: StageContext): Promise<FullPagePlan> {
   const storageKey = `runs/${ctx.runId}/page-plan.json`;
   const obj = await ctx.env.BLUEPRINT_ARTIFACTS.get(storageKey);
   if (!obj) {
@@ -1259,7 +1261,8 @@ async function loadFullPagePlan(ctx: StageContext): Promise<FullPagePlan> {
 // Loads stage 16's overlay.json from R2, or null when absent. Overlay is
 // OPTIONAL: greenfield briefs and overlay-skipped runs have no object, and
 // validate composes with a null overlay (every planned page defaults to create).
-async function loadOverlayArtifact(ctx: StageContext): Promise<OverlayResult | null> {
+// Exported so publish_blueprint reads the overlay identically to validate.
+export async function loadOverlayArtifact(ctx: StageContext): Promise<OverlayResult | null> {
   const storageKey = `runs/${ctx.runId}/overlay.json`;
   const obj = await ctx.env.BLUEPRINT_ARTIFACTS.get(storageKey);
   if (!obj) return null;
