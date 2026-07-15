@@ -57,16 +57,22 @@ async function seedCluster(
   spec: {
     id: string; label?: string; intent?: string | null; confidence?: string | null;
     serviceId?: string | null; serviceAreaId?: string | null; primaryKeywordId: string; memberIds?: string[];
+    evidenceRefIds?: string[] | null; scoreBreakdownJson?: string | null;
   },
 ): Promise<void> {
+  const scoreBreakdownJson = spec.scoreBreakdownJson !== undefined
+    ? spec.scoreBreakdownJson
+    : spec.evidenceRefIds !== undefined
+      ? JSON.stringify({ rulesetVersion: 'cluster-v1', evidenceRefIds: spec.evidenceRefIds })
+      : null;
   await d1
     .prepare(
-      `INSERT INTO keyword_clusters (id, run_id, label, intent, confidence_label, service_id, service_area_id, primary_keyword_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO keyword_clusters (id, run_id, label, intent, confidence_label, service_id, service_area_id, primary_keyword_id, score_breakdown_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       spec.id, runId, spec.label ?? spec.id, spec.intent ?? null, spec.confidence ?? null,
-      spec.serviceId ?? null, spec.serviceAreaId ?? null, spec.primaryKeywordId,
+      spec.serviceId ?? null, spec.serviceAreaId ?? null, spec.primaryKeywordId, scoreBreakdownJson,
     )
     .run();
   for (const mid of spec.memberIds ?? [spec.primaryKeywordId]) {
@@ -143,6 +149,7 @@ describe('loadPagePlanFacts', () => {
     await seedCluster(d1, runId, {
       id: 'c1', label: 'drain cleaning austin', intent: 'transactional', confidence: 'high',
       serviceId: 's1', serviceAreaId: 'a1', primaryKeywordId: 'k1', memberIds: ['k1', 'k2'],
+      evidenceRefIds: ['evr_a', 'evr_b'],
     });
     await seedSnapshot(d1, runId, 'k1', [{ rank: 1, url: 'https://rival.com/austin' }, { rank: 2, url: 'https://other.com/x' }], 1);
     await seedCompetitor(d1, runId, 'comp1', 'rival.com');
@@ -170,6 +177,26 @@ describe('loadPagePlanFacts', () => {
     expect(c.competitorPages[0].titleTokens).toEqual(['drain', 'cleaning', 'austin']);
     expect(c.competitorPages[0].headingTokens).toContain('pricing');
     expect(c.competitorPages[0].headingTokens).toContain('emergency');
+    // evidence refs threaded from the clustering stage's score_breakdown_json.
+    expect(c.evidenceRefIds).toEqual(['evr_a', 'evr_b']);
+  });
+
+  it('threads evidence refs from score_breakdown_json and stays null-safe on missing/malformed blobs', async () => {
+    const { d1 } = createTestDb();
+    const runId = newId('run');
+    await seedKeyword(d1, runId, { id: 'k1', nk: 'a', volume: 10 });
+    await seedKeyword(d1, runId, { id: 'k2', nk: 'b', volume: 10 });
+    await seedKeyword(d1, runId, { id: 'k3', nk: 'c', volume: 10 });
+    // has refs; no blob; malformed blob.
+    await seedCluster(d1, runId, { id: 'c1', primaryKeywordId: 'k1', evidenceRefIds: ['evr_x', 'evr_y'] });
+    await seedCluster(d1, runId, { id: 'c2', primaryKeywordId: 'k2' });
+    await seedCluster(d1, runId, { id: 'c3', primaryKeywordId: 'k3', scoreBreakdownJson: '{not valid json' });
+
+    const facts = await loadPagePlanFacts(d1, runId, brief());
+    const byId = new Map(facts.clusters.map((c) => [c.clusterId, c]));
+    expect(byId.get('c1')!.evidenceRefIds).toEqual(['evr_x', 'evr_y']);
+    expect(byId.get('c2')!.evidenceRefIds).toEqual([]);
+    expect(byId.get('c3')!.evidenceRefIds).toEqual([]);
   });
 
   it('is null-safe: missing volume -> null, no snapshot -> serp.urls null, no parsed pages -> empty', async () => {

@@ -637,19 +637,22 @@ function buildPlanCtx(
 async function seedStrongCluster(
   d1: D1Database,
   runId: string,
-  spec: { id: string; nk: string; volume: number; serviceId?: string | null; serviceAreaId?: string | null; intent?: string },
+  spec: { id: string; nk: string; volume: number; serviceId?: string | null; serviceAreaId?: string | null; intent?: string; evidenceRefIds?: string[] },
 ): Promise<void> {
   const kid = `k-${spec.id}`;
   await d1
     .prepare(`INSERT INTO keywords (id, run_id, display_keyword, normalized_keyword, search_volume, metrics_missing) VALUES (?, ?, ?, ?, ?, 0)`)
     .bind(kid, runId, spec.nk, spec.nk, spec.volume)
     .run();
+  const scoreBreakdownJson = spec.evidenceRefIds !== undefined
+    ? JSON.stringify({ rulesetVersion: 'cluster-v1', evidenceRefIds: spec.evidenceRefIds })
+    : null;
   await d1
     .prepare(
-      `INSERT INTO keyword_clusters (id, run_id, label, intent, confidence_label, service_id, service_area_id, primary_keyword_id)
-       VALUES (?, ?, ?, ?, 'high', ?, ?, ?)`,
+      `INSERT INTO keyword_clusters (id, run_id, label, intent, confidence_label, service_id, service_area_id, primary_keyword_id, score_breakdown_json)
+       VALUES (?, ?, ?, ?, 'high', ?, ?, ?, ?)`,
     )
-    .bind(spec.id, runId, spec.nk, spec.intent ?? 'transactional', spec.serviceId ?? null, spec.serviceAreaId ?? null, kid)
+    .bind(spec.id, runId, spec.nk, spec.intent ?? 'transactional', spec.serviceId ?? null, spec.serviceAreaId ?? null, kid, scoreBreakdownJson)
     .run();
   await d1
     .prepare(`INSERT INTO cluster_keywords (cluster_id, keyword_id, membership_score, is_primary) VALUES (?, ?, 1, 1)`)
@@ -667,7 +670,7 @@ describe('buildPagePlanHandler', () => {
     const { d1 } = createTestDb();
     const projectId = await seedProject(d1);
     const runId = await seedRun(d1, projectId);
-    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'drain cleaning', volume: 500, serviceId: 's1' });
+    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'drain cleaning', volume: 500, serviceId: 's1', evidenceRefIds: ['evr_1', 'evr_2'] });
 
     const { ctx, artifacts } = buildPlanCtx(d1, projectId, runId, planBrief());
     const result = await buildPagePlanHandler(ctx);
@@ -680,6 +683,9 @@ describe('buildPagePlanHandler', () => {
     const stored = JSON.parse(artifacts.get(output.storageKey)!);
     expect(stored.rulesetVersion).toBe('pp-v1');
     expect(Array.isArray(stored.pages)).toBe(true);
+    // evidence refs threaded from the cluster onto its dedicated page.
+    const resourcePage = stored.pages.find((p: any) => p.pageType === 'resource');
+    expect(resourcePage.scores.evidenceRefs).toEqual(['evr_1', 'evr_2']);
 
     // artifacts row parity.
     const artRow = await d1

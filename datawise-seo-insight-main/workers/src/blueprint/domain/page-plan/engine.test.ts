@@ -47,6 +47,7 @@ function cluster(overrides: Partial<PagePlanCluster> = {}): PagePlanCluster {
     hasLocalizedEvidence: false,
     serp: { urls: null },
     competitorPages: [],
+    evidenceRefIds: [],
     ...overrides,
   };
 }
@@ -418,6 +419,45 @@ describe('addressable demand', () => {
 // Zero clusters + determinism
 // ---------------------------------------------------------------------------
 
+describe('evidence refs', () => {
+  it('a dedicated page carries its owning cluster evidence refs, deduped and sorted', () => {
+    const { pages, placements } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Plumbing')] }),
+        clusters: [cluster({ clusterId: 'c1', serviceId: 's1', intent: 'transactional', addressableVolume: 200, evidenceRefIds: ['evr_b', 'evr_a', 'evr_b'] })],
+      }),
+      RS, BUDGET,
+    );
+    const page = byLogicalId(pages, placements[0].targetLogicalId)!;
+    expect(page.scores.evidenceRefs).toEqual(['evr_a', 'evr_b']);
+  });
+
+  it('a page that absorbs folded clusters unions their evidence refs with the owner', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Plumbing')] }),
+        clusters: [
+          // dedicated owner on the service page.
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'drain repair', coreTokens: ['drain', 'repair'], serviceId: 's1', intent: 'transactional', addressableVolume: 400, evidenceRefIds: ['evr_owner'] }),
+          // a weak cluster that folds onto home as a section.
+          cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'plumbing faq', coreTokens: ['plumbing', 'faq'], serviceId: null, intent: 'informational', addressableVolume: 5, evidenceRefIds: ['evr_folded'] }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const home = byLogicalId(pages, 'home')!;
+    expect(home.scores.evidenceRefs).toContain('evr_folded');
+    const dedicated = pages.find((p) => p.pageType === 'resource')!;
+    expect(dedicated.scores.evidenceRefs).toEqual(['evr_owner']);
+  });
+
+  it('skeleton-only pages carry no evidence refs and no warning', () => {
+    const { pages, warnings } = buildPagePlan(facts({ brief: brief({ services: [svc('s1', 'Plumbing')] }) }), RS, BUDGET);
+    for (const p of pages) expect(p.scores.evidenceRefs).toEqual([]);
+    expect(warnings.every((w) => w.code !== 'missing_metrics')).toBe(true);
+  });
+});
+
 describe('zero clusters', () => {
   it('emits a valid skeleton-only plan (never empty), with a partial_evidence note', () => {
     const { pages, placements, warnings, stats } = buildPagePlan(
@@ -437,8 +477,8 @@ describe('determinism', () => {
       serviceAreas: [area('a1', 'Austin', ['travis county']), area('a2', 'Dallas', ['dallas county'])],
     }),
     clusters: [
-      cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'drain cleaning austin', coreTokens: ['drain', 'cleaning'], serviceId: 's1', serviceAreaId: 'a1', hasLocalizedEvidence: true, intent: 'transactional', addressableVolume: 400 }),
-      cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'water heater repair', coreTokens: ['water', 'heater'], serviceId: 's2', intent: 'commercial', addressableVolume: 250, competitorPages: [{ competitorDomain: 'r.com', hasParsedData: true, titleTokens: ['water', 'heater'], headingTokens: [] }] }),
+      cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'drain cleaning austin', coreTokens: ['drain', 'cleaning'], serviceId: 's1', serviceAreaId: 'a1', hasLocalizedEvidence: true, intent: 'transactional', addressableVolume: 400, evidenceRefIds: ['evr_2', 'evr_1'] }),
+      cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'water heater repair', coreTokens: ['water', 'heater'], serviceId: 's2', intent: 'commercial', addressableVolume: 250, competitorPages: [{ competitorDomain: 'r.com', hasParsedData: true, titleTokens: ['water', 'heater'], headingTokens: [] }], evidenceRefIds: ['evr_3'] }),
       cluster({ clusterId: 'c3', primaryKeywordId: 'k3', primaryKeyword: 'how to fix a leak', coreTokens: ['fix', 'leak'], serviceId: null, intent: 'informational', addressableVolume: 30 }),
       cluster({ clusterId: 'c4', primaryKeywordId: 'k4', primaryKeyword: 'leak repair cost', coreTokens: ['leak', 'repair'], serviceId: 's3', intent: 'commercial', addressableVolume: 90 }),
     ],

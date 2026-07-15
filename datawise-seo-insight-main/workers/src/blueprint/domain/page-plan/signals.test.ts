@@ -22,6 +22,7 @@ function cluster(overrides: Partial<PagePlanCluster> = {}): PagePlanCluster {
     hasLocalizedEvidence: false,
     serp: { urls: null },
     competitorPages: [],
+    evidenceRefIds: [],
     ...overrides,
   };
 }

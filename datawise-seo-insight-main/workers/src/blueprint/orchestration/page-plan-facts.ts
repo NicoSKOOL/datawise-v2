@@ -68,6 +68,7 @@ interface ClusterRow {
   primary_keyword_id: string | null;
   primary_normalized: string | null;
   primary_core: string | null;
+  score_breakdown_json: string | null;
 }
 
 interface ClusterVolumeRow {
@@ -103,6 +104,17 @@ function parseJson<T>(raw: string | null): T | null {
   }
 }
 
+// The cluster's evidence-ref ids as the clustering stage stored them inside
+// score_breakdown_json.evidenceRefIds (a sorted, deduped, capped union of member
+// keyword evidence refs). Null-safe: a missing/malformed blob, or a blob without
+// a string[] evidenceRefIds, yields [] (never a fabricated ref).
+function evidenceRefIdsFrom(scoreBreakdownJson: string | null): string[] {
+  const parsed = parseJson<{ evidenceRefIds?: unknown }>(scoreBreakdownJson);
+  const refs = parsed?.evidenceRefIds;
+  if (!Array.isArray(refs)) return [];
+  return refs.filter((r): r is string => typeof r === 'string');
+}
+
 // ---------------------------------------------------------------------------
 // Loaders
 // ---------------------------------------------------------------------------
@@ -114,6 +126,7 @@ async function loadClusterRows(d1: D1Database, runId: string): Promise<ClusterRo
       `SELECT kc.id AS id, kc.label AS label, kc.intent AS intent,
               kc.service_id AS service_id, kc.service_area_id AS service_area_id,
               kc.confidence_label AS confidence_label, kc.primary_keyword_id AS primary_keyword_id,
+              kc.score_breakdown_json AS score_breakdown_json,
               pk.normalized_keyword AS primary_normalized, pk.core_keyword AS primary_core
        FROM keyword_clusters kc
        LEFT JOIN keywords pk ON pk.id = kc.primary_keyword_id
@@ -321,6 +334,7 @@ export async function loadPagePlanFacts(
       hasLocalizedEvidence: serviceAreaId !== null && localPackClusters.has(row.id),
       serp,
       competitorPages: competitorByCluster.get(row.id) ?? [],
+      evidenceRefIds: evidenceRefIdsFrom(row.score_breakdown_json),
     };
   });
 

@@ -179,6 +179,15 @@ function pageOwnVolume(page: WorkingPage): number | null {
 // is the clamped fired-fraction. Absent signals are kept (rawValue 0) so the
 // breakdown explains the call either way (handoff: score_breakdown carries the
 // full evaluation, present AND absent).
+//
+// Note the effective cap: two of the six signals (distinct_intent,
+// low_serp_overlap) can only fire when the parent carries its own intent/SERP,
+// but clusters are compared against STRUCTURAL parents (home/service/location),
+// which never do (see toParentCandidate). So today at most four signals are
+// reachable and total tops out near 4/6 (~0.67). This is intentional for v1
+// (all six weigh equally so the breakdown stays comparable if sibling-page
+// parents later make the other two reachable); it is a documented cap, not a
+// bug. minStrongSignals (2) is unaffected: it counts fired signals, not total.
 function scoreBreakdownFrom(evals: SignalEvaluation[]): ScoreBreakdown {
   const weight = evals.length > 0 ? 1 / evals.length : 0;
   const components: ScoreComponent[] = evals.map((e) => ({
@@ -414,6 +423,12 @@ interface PlanState {
   slugRegistry: Set<string>;
   logicalIds: Set<string>;
   serviceLocationCandidates: PageCandidate[];
+  // Count of clusters that carried BOTH a service and area link but were denied a
+  // service_location URL by the guardrail (evaluateServiceLocationPage /
+  // detectDoorwayRisk / signal floor). Distinct from cannibalization/demotion
+  // folds: this counts ONLY guardrail blocks, so a reviewer can tell "the doorway
+  // guardrail suppressed N combinations" from other fold reasons.
+  serviceLocationBlocked: number;
 }
 
 function toParentCandidate(page: WorkingPage, cluster: PagePlanCluster): ParentCandidate {
@@ -579,6 +594,7 @@ function placeCluster(
     }
 
     foldInto(parentForFold, cluster, 'section', evals, state);
+    state.serviceLocationBlocked++;
     const why = !decision.allowed ? decision.reasons.join(', ') || 'guardrail not satisfied'
       : !meetsSignalFloor ? `only ${fired.length} strong signal(s), needs ${ruleset.separate.minStrongSignals}`
         : 'doorway risk detected';
@@ -727,6 +743,19 @@ function pageAddressableVolume(page: WorkingPage, clusterById: Map<string, PageP
   return sawVolume ? sum : null;
 }
 
+// The evidence-ref ids a page's decision rests on: the deduped, sorted union of
+// every cluster placed on the page (dedicated owner + folded sections). A
+// skeleton-only page (home/hub/contact/company with no cluster) keeps [] with no
+// warning: it is brief-derived structure, not an evidence-backed page decision,
+// so there is no evidence to cite.
+function pageEvidenceRefs(page: WorkingPage, clusterById: Map<string, PagePlanCluster>): string[] {
+  const refs = new Set<string>();
+  for (const clusterId of page.clusterIds) {
+    for (const ref of clusterById.get(clusterId)?.evidenceRefIds ?? []) refs.add(ref);
+  }
+  return [...refs].sort();
+}
+
 function freeze(page: WorkingPage, clusterById: Map<string, PagePlanCluster>): PlannedPage {
   return {
     logicalId: page.logicalId,
@@ -745,7 +774,7 @@ function freeze(page: WorkingPage, clusterById: Map<string, PagePlanCluster>): P
       addressableVolume: pageAddressableVolume(page, clusterById),
       confidence: page.scoreConfidence,
       scoreBreakdown: page.scoreBreakdown,
-      evidenceRefs: [],
+      evidenceRefs: pageEvidenceRefs(page, clusterById),
     },
     warnings: page.warnings.slice(),
   };
@@ -772,6 +801,7 @@ export function buildPagePlan(
     slugRegistry,
     logicalIds,
     serviceLocationCandidates: [],
+    serviceLocationBlocked: 0,
   };
 
   const clusterById = new Map(facts.clusters.map((c) => [c.clusterId, c]));
@@ -810,11 +840,10 @@ export function buildPagePlan(
   const sectionCount = placements.filter((p) => p.placement === 'section').length;
   const faqCount = placements.filter((p) => p.placement === 'faq').length;
   const cannibalizedCount = warnings.filter((w) => w.code === 'cannibalization_risk').length;
-  const serviceLocationBlockedCount = placements.filter(
-    (p) => p.placement !== 'dedicated_page'
-      && (clusterById.get(p.clusterId)?.serviceId ?? null) !== null
-      && (clusterById.get(p.clusterId)?.serviceAreaId ?? null) !== null,
-  ).length;
+  // Only clusters the service-location guardrail actually denied a URL (tracked
+  // at the block site), NOT every service+area cluster that folded for some other
+  // reason (cannibalization, page-cap demotion).
+  const serviceLocationBlockedCount = state.serviceLocationBlocked;
 
   const stats: PagePlanStats = {
     pageCount: pages.length,

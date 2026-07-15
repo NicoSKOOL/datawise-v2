@@ -108,6 +108,13 @@ export interface PagePlanCluster {
   hasLocalizedEvidence: boolean;
   serp: ClusterSerpFacts;
   competitorPages: CompetitorPageFact[];
+  // Evidence-ref ids backing this cluster's placement decision: the union of its
+  // member keywords' evidence refs, as the clustering stage already computed and
+  // stored in keyword_clusters.score_breakdown_json.evidenceRefIds. The facts
+  // loader threads these through so a PlannedPage can carry the evidence its
+  // decision rests on (Phase 4 acceptance: score breakdown + evidence refs on
+  // every page decision). Empty when the cluster carries no refs, never fabricated.
+  evidenceRefIds: string[];
 }
 
 // The candidate parent a cluster would attach to or fold into (home, a hub, a
