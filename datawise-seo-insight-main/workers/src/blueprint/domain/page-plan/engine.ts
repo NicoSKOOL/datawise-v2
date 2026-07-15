@@ -770,6 +770,9 @@ function freeze(page: WorkingPage, clusterById: Map<string, PagePlanCluster>): P
     sections: page.sections.slice(),
     metaDescription: null,
     recommendation: 'create',
+    // build_page_plan only ever proposes new pages; overlay_existing_site (stage 16)
+    // is where a consolidate target would later be attached.
+    consolidateTargetLogicalId: null,
     scores: {
       addressableVolume: pageAddressableVolume(page, clusterById),
       confidence: page.scoreConfidence,

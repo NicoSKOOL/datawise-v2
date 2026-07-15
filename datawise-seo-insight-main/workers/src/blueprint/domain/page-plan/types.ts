@@ -191,6 +191,15 @@ export interface PlannedPageScores {
 // in page_json. metaDescription stays null until synthesize_page_briefs fills it
 // (placeholder policy). recommendation defaults to 'create'; the overlay stage
 // may later set update/keep/consolidate. sections is bounded by the engine.
+//
+// consolidateTargetLogicalId is the logical id of the page this page should be
+// consolidated INTO, and is meaningful only when recommendation === 'consolidate'
+// (blueprint_pages enforces this with a CHECK: a consolidate row must carry a
+// non-null consolidate_target_logical_page_id, see db/schema.sql). The build_page_plan
+// engine always leaves it null: it only ever proposes 'create'. Stage 16
+// overlay_existing_site is the stage that can turn an existing URL into a
+// consolidation proposal; this field is where that target would live once the
+// overlay handler (Task 18) folds its match result back onto the plan.
 export interface PlannedPage {
   logicalId: string;
   pageType: PageType;
@@ -204,6 +213,7 @@ export interface PlannedPage {
   sections: PlannedPageSection[];
   metaDescription: string | null;
   recommendation: RecommendationStatus;
+  consolidateTargetLogicalId: string | null;
   scores: PlannedPageScores;
   warnings: BlueprintWarning[];
 }
