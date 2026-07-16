@@ -21,6 +21,7 @@ import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import type { SeedQuery } from '../domain/seeds';
 import { DataForSeoQuotaError } from '../../dataforseo/client';
+import { pseudoVector } from '../test-support/env';
 
 // This is the same STAGE_HANDLERS-driven approach process-run.test.ts and
 // acceptance.e2e.test.ts already use: drive the real registry through
@@ -54,7 +55,7 @@ const SAMPLE_BRIEF_INPUT = {
   serviceAreas: [{ clientId: 'a1', city: 'Austin', countryIso: 'us', isPrimary: true }],
 };
 
-function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD' | 'AI'> {
   return {
     KV: {
       get: async () => null,
@@ -67,6 +68,16 @@ function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACT
     } as unknown as R2Bucket,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
+    // These full-drive tests run past normalize_keyword_universe into
+    // embed_keyword_features (Phase 4 Task 8), which now really calls
+    // env.AI.run -- same deterministic pseudoVector fake as
+    // test-support/env.ts's fakeEnv().
+    AI: {
+      async run(_model: string, input: Record<string, unknown>) {
+        const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+        return { shape: [texts.length, 32], data: texts.map(pseudoVector) };
+      },
+    },
   };
 }
 
@@ -441,7 +452,7 @@ describe('discoverCompetitorsHandler', () => {
     const { restore, capturedBodies } = stubDiscoveryFetch([
       { domain: 'yelp.com', intersections: 999 }, // excluded directory domain
       { domain: 'aquaplumbing.com', intersections: 500 }, // own domain
-      { domain: 'd90.com', intersections: 90 },
+      { domain: 'd90.com', intersections: 90, full_domain_metrics: { organic: { etv: 777.7 } } },
       { domain: 'd70.com', intersections: 70 },
       { domain: 'd30.com', intersections: 30 },
       { domain: 'd10.com', intersections: 10 },
@@ -473,16 +484,28 @@ describe('discoverCompetitorsHandler', () => {
     expect(parsedOutput.stageCostUsdMicro).toBe(50_000);
 
     const competitorRows = raw
-      .prepare(`SELECT domain, selected, source, visibility_score FROM competitors WHERE run_id = ?`)
-      .all(runId) as Array<{ domain: string; selected: number; source: string; visibility_score: number | null }>;
+      .prepare(`SELECT domain, selected, source, visibility_score, estimated_traffic FROM competitors WHERE run_id = ?`)
+      .all(runId) as Array<{
+        domain: string;
+        selected: number;
+        source: string;
+        visibility_score: number | null;
+        estimated_traffic: number | null;
+      }>;
     expect(competitorRows).toHaveLength(6);
     const dnull = competitorRows.find((r) => r.domain === 'dnull.com');
     expect(dnull?.selected).toBe(0);
     expect(dnull?.visibility_score).toBeNull();
+    expect(dnull?.estimated_traffic).toBeNull();
     for (const domain of ['d90.com', 'd70.com', 'd30.com', 'd10.com', 'd5.com']) {
       expect(competitorRows.find((r) => r.domain === domain)?.selected).toBe(1);
     }
     for (const row of competitorRows) expect(row.source).toBe('competitors_domain');
+    // d90.com carried a real etv on this run; it must persist to estimated_traffic.
+    expect(competitorRows.find((r) => r.domain === 'd90.com')?.estimated_traffic).toBe(777.7);
+    // Every other candidate's fixture omitted full_domain_metrics/metrics
+    // entirely, so estimated_traffic stays null, never coerced to 0.
+    expect(competitorRows.find((r) => r.domain === 'd70.com')?.estimated_traffic).toBeNull();
 
     const evidenceRows = raw
       .prepare(`SELECT ce.evidence_ref_id FROM competitor_evidence_refs ce
@@ -666,6 +689,43 @@ describe('discoverCompetitorsHandler', () => {
     expect(rows.filter((r) => r.selected === 1)).toHaveLength(5);
 
     restore();
+  });
+
+  it('a retry upsert with a null estimated_traffic never clobbers a real value persisted by a prior attempt', async () => {
+    const { d1, raw } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    // Attempt 1: rival.com carries a real etv, persisted to estimated_traffic.
+    const attempt1 = stubDiscoveryFetch([
+      { domain: 'rival.com', intersections: 50, full_domain_metrics: { organic: { etv: 900.1 } } },
+    ]);
+    restoreFetch = attempt1.restore;
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCompetitorCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+    await discoverCompetitorsHandler(ctx);
+    attempt1.restore();
+
+    const afterAttempt1 = raw
+      .prepare(`SELECT estimated_traffic FROM competitors WHERE run_id = ? AND domain = 'rival.com'`)
+      .get(runId) as { estimated_traffic: number | null } | undefined;
+    expect(afterAttempt1?.estimated_traffic).toBe(900.1);
+
+    // Attempt 2: same domain resurfaces without an etv this time (provider
+    // omitted full_domain_metrics) -- the retry must NOT overwrite the real
+    // value from attempt 1 with null.
+    const attempt2 = stubDiscoveryFetch([{ domain: 'rival.com', intersections: 55 }]);
+    restoreFetch = attempt2.restore;
+    await discoverCompetitorsHandler({ ...ctx, attempt: 2 });
+    attempt2.restore();
+
+    const afterAttempt2 = raw
+      .prepare(`SELECT estimated_traffic FROM competitors WHERE run_id = ? AND domain = 'rival.com'`)
+      .get(runId) as { estimated_traffic: number | null } | undefined;
+    expect(afterAttempt2?.estimated_traffic).toBe(900.1);
   });
 
   it('keeps ALL user-supplied known competitors selected even when there are more than 5 of them', async () => {
@@ -1277,6 +1337,52 @@ describe('validateSerpsAndQuestionsHandler', () => {
     return { restore: () => { globalThis.fetch = original; } };
   }
 
+  // Task 11: like taskPostFetchStub, but also records every task_post
+  // request's parsed body array so a test can assert on the exact keywords
+  // posted (proving cluster-representative queries -- or their seed-derived
+  // fallback -- reached task_post, not just that SOME batch was posted).
+  // Mints one task id per body entry, in submission order, matching the same
+  // "provider returns tasks in request order" assumption serp.ts's
+  // postSerpTasks already relies on.
+  function taskPostCapturingFetchStub(): { restore: () => void; calls: any[][] } {
+    const original = globalThis.fetch;
+    const calls: any[][] = [];
+    globalThis.fetch = (async (_url: any, init?: any) => {
+      const bodies = init?.body ? JSON.parse(init.body) : [];
+      calls.push(bodies);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status_code: 20000,
+          tasks: bodies.map((_b: unknown, i: number) => ({
+            id: `task-${i + 1}`,
+            status_code: 20100,
+            status_message: 'Task Created.',
+            cost: 0.01,
+            result: [{ id: `task-${i + 1}` }],
+          })),
+        }),
+      };
+    }) as any;
+    return { restore: () => { globalThis.fetch = original; }, calls };
+  }
+
+  async function seedClustersStage(
+    d1: D1Database,
+    runId: string,
+    representativeQueries: Array<{ clusterId: string; keywordId: string; query: string; serviceAreaId: string | null }>
+  ): Promise<void> {
+    await d1
+      .prepare(
+        `INSERT INTO research_stage_runs
+          (id, run_id, stage_name, stage_input_hash, status, required, attempt_count, output_json, finished_at)
+         VALUES (?, ?, 'build_provisional_clusters', 'hash-clusters', 'succeeded', 1, 1, ?, ?)`
+      )
+      .bind(newId('stagerun'), runId, JSON.stringify({ representativeQueries }), nowIso())
+      .run();
+  }
+
   it('first attempt (no dfs_serp_tasks rows yet): posts a batch and throws SerpTasksPendingError', async () => {
     const { d1 } = createTestDb();
     const projectId = await seedProject(d1);
@@ -1406,9 +1512,197 @@ describe('validateSerpsAndQuestionsHandler', () => {
     const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
     const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
 
+    // Task 11: no build_provisional_clusters stage output was seeded for
+    // this run, so this stays on the seeds fallback path -- querySource
+    // 'seeds', queryCount is the one dfs_serp_tasks row this run posted.
     const { output, status } = await validateSerpsAndQuestionsHandler(ctx);
     expect(status).toBe('succeeded');
-    expect(output).toEqual({ snapshots: 1, failed: 0 });
+    expect(output).toEqual({ snapshots: 1, failed: 0, querySource: 'seeds', queryCount: 1 });
+  });
+
+  it('Task 11: prefers cluster representative queries over seed-derived queries when build_provisional_clusters produced them', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const representativeQueries = [
+      { clusterId: 'kcl_1', keywordId: 'kw_1', query: 'emergency plumbing near me', serviceAreaId: 'a1' },
+      { clusterId: 'kcl_2', keywordId: 'kw_2', query: 'water heater repair austin', serviceAreaId: null },
+    ];
+    await seedClustersStage(d1, runId, representativeQueries);
+    await seedKeywordRows(d1, runId, ['emergency plumbing near me', 'water heater repair austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    // Exactly the two cluster representative queries were posted, one
+    // task_post call -- NOT the seed-derived 'emergency plumbing austin'/
+    // 'drain cleaning austin' this same brief would otherwise produce (see
+    // SAMPLE_BRIEF_INPUT above).
+    expect(calls).toHaveLength(1);
+    const postedKeywords = calls[0].map((b: any) => b.keyword);
+    expect(postedKeywords).toEqual(['emergency plumbing near me', 'water heater repair austin']);
+    expect(postedKeywords).not.toContain('emergency plumbing austin');
+    expect(postedKeywords).not.toContain('drain cleaning austin');
+
+    const rows = await d1
+      .prepare(
+        `SELECT keyword, service_area_id, location_code FROM dfs_serp_tasks WHERE run_id = ? ORDER BY keyword ASC`
+      )
+      .bind(runId)
+      .all<{ keyword: string; service_area_id: string | null; location_code: number }>();
+    expect(rows.results).toEqual([
+      { keyword: 'emergency plumbing near me', service_area_id: 'a1', location_code: 1023191 },
+      { keyword: 'water heater repair austin', service_area_id: null, location_code: MARKET.fallbackSerpLocationCode },
+    ]);
+  });
+
+  it('Task 11: falls back to seed-derived queries when build_provisional_clusters produced no stage output at all', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    // Deliberately no build_provisional_clusters stage row at all (e.g. the
+    // clusters stage has not run yet, or was skipped).
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin', 'drain cleaning austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    expect(calls).toHaveLength(1);
+    const postedKeywords = calls[0].map((b: any) => b.keyword);
+    expect(postedKeywords).toEqual(['emergency plumbing austin', 'drain cleaning austin']);
+  });
+
+  it('Task 11: falls back to seed-derived queries when build_provisional_clusters output exists but representativeQueries is empty', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+    // A real build_provisional_clusters output, but zero non-singleton
+    // clusters (e.g. this run's whole universe clustered into singletons).
+    await seedClustersStage(d1, runId, []);
+    await seedKeywordRows(d1, runId, ['emergency plumbing austin', 'drain cleaning austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    expect(calls).toHaveLength(1);
+    const postedKeywords = calls[0].map((b: any) => b.keyword);
+    expect(postedKeywords).toEqual(['emergency plumbing austin', 'drain cleaning austin']);
+  });
+
+  it('Task 11: dedupes duplicate cluster representative queries (same normalized keyword) before posting', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    // Two different clusters whose primary keyword display text normalizes
+    // to the exact same keyword (differing only by case/whitespace) -- must
+    // collapse to a single posted query, same as dfs_serp_tasks's own
+    // UNIQUE(run_id, keyword, location_code) semantics require.
+    const representativeQueries = [
+      { clusterId: 'kcl_1', keywordId: 'kw_1', query: 'Emergency Plumbing Austin', serviceAreaId: 'a1' },
+      { clusterId: 'kcl_2', keywordId: 'kw_2', query: 'emergency  plumbing   austin', serviceAreaId: 'a1' },
+    ];
+    await seedClustersStage(d1, runId, representativeQueries);
+    await seedKeywordRows(d1, runId, ['Emergency Plumbing Austin']);
+
+    const { restore, calls } = taskPostCapturingFetchStub();
+    restoreFetch = restore;
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    await expect(validateSerpsAndQuestionsHandler(ctx)).rejects.toBeInstanceOf(SerpTasksPendingError);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(1);
+    expect(calls[0][0].keyword).toBe('Emergency Plumbing Austin');
+
+    const countRow = await d1
+      .prepare(`SELECT COUNT(*) AS n FROM dfs_serp_tasks WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(countRow?.n).toBe(1);
+  });
+
+  it('Task 11: final output reports querySource clusters and the deduped queryCount once cluster-sourced SERP tasks complete', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const briefVersionId = await seedBriefVersion(d1, projectId);
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    await seedMarketStage(d1, runId);
+
+    const representativeQueries = [
+      { clusterId: 'kcl_1', keywordId: 'kw_1', query: 'emergency plumbing near me', serviceAreaId: 'a1' },
+      { clusterId: 'kcl_2', keywordId: 'kw_2', query: 'water heater repair austin', serviceAreaId: null },
+    ];
+    await seedClustersStage(d1, runId, representativeQueries);
+    await seedKeywordRows(d1, runId, ['emergency plumbing near me', 'water heater repair austin']);
+
+    const { restore: restorePost, calls } = taskPostCapturingFetchStub();
+    await expect(validateSerpsAndQuestionsHandler(
+      buildCtx(d1, runId, projectId, briefVersionId, await normalizeProjectBrief(parseProjectBrief(SAMPLE_BRIEF_INPUT), V1_LIMITS))
+    )).rejects.toBeInstanceOf(SerpTasksPendingError);
+    restorePost();
+    expect(calls).toHaveLength(1);
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: any) => {
+      const href = String(url);
+      const taskId = href.split('/serp/google/organic/task_get/advanced/')[1];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status_code: 20000,
+          tasks: [
+            {
+              id: taskId,
+              status_code: 20000,
+              status_message: 'Ok.',
+              cost: 0,
+              result: [{ items: [{ type: 'organic', rank_group: 1, url: 'https://a.com', title: 'A', domain: 'a.com' }] }],
+            },
+          ],
+        }),
+      };
+    }) as any;
+    restoreFetch = () => { globalThis.fetch = original; };
+
+    const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
+    const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
+    const ctx = buildCtx(d1, runId, projectId, briefVersionId, normalizedBrief);
+
+    const { output, status } = await validateSerpsAndQuestionsHandler(ctx);
+    expect(status).toBe('succeeded');
+    expect(output).toEqual({ snapshots: 2, failed: 0, querySource: 'clusters', queryCount: 2 });
   });
 
   it('throws provider_invalid_response when resolve_market has no output to read', async () => {

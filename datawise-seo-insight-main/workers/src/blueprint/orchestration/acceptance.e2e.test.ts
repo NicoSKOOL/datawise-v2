@@ -258,7 +258,17 @@ describe('Phase 2 orchestration acceptance', () => {
       .prepare(`SELECT partial_reasons_json FROM research_runs WHERE id = ?`)
       .bind(run.data.id)
       .first<{ partial_reasons_json: string }>();
-    expect(JSON.parse(runRow!.partial_reasons_json)).toEqual(['collect_us_fanout']);
+    // Three gaps: collect_us_fanout's clean optional skip; refine_clusters
+    // (Task 12) completing 'partial' with no_live_serp_evidence because this
+    // drive stubs validate_serps_and_questions and so persists no live SERP
+    // snapshots for the clusters to refine against; and overlay_existing_site
+    // (Task 18) completing 'partial' with inventory_limited because this
+    // existing-site brief points at a site whose robots/sitemap fetches throw
+    // in the harness and whose labs fallback (the shared DFS stub) returns an
+    // empty ranked-keywords response, so the run learns nothing about the site.
+    // Sorted before comparison: loadGapStageNames has no total ORDER BY, so
+    // gap-list order is not fixed.
+    expect(JSON.parse(runRow!.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
 
     const stageRows = await env.BLUEPRINT_DB
       .prepare(`SELECT stage_name, status, attempt_count FROM research_stage_runs WHERE run_id = ?`)
@@ -273,11 +283,93 @@ describe('Phase 2 orchestration acceptance', () => {
     expect(stageRows.results.find((r) => r.stage_name === 'collect_us_fanout')?.status).toBe('skipped');
 
     const versionRow = await env.BLUEPRINT_DB
-      .prepare(`SELECT completeness, partial_reasons_json FROM blueprint_versions WHERE run_id = ?`)
+      .prepare(`SELECT id, completeness, partial_reasons_json, schema_version, ruleset_version, summary_json, latest_revision_id FROM blueprint_versions WHERE run_id = ?`)
       .bind(run.data.id)
-      .first<{ completeness: string; partial_reasons_json: string }>();
+      .first<{ id: string; completeness: string; partial_reasons_json: string; schema_version: string; ruleset_version: string; summary_json: string; latest_revision_id: string }>();
     expect(versionRow?.completeness).toBe('partial');
-    expect(JSON.parse(versionRow!.partial_reasons_json)).toEqual(['collect_us_fanout']);
+    expect(JSON.parse(versionRow!.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
+
+    // Task 20: publish materializes the real page set with real version strings.
+    // The version row carries the Phase 4 ruleset/schema tags (not the old
+    // 'phase2-stub'/'p2' stubs) and a populated summary_json whose pageCount
+    // matches the number of blueprint_pages rows written under its revision.
+    expect(versionRow!.schema_version).toBe('p4');
+    expect(versionRow!.ruleset_version).toBe('cluster-v2+pp-v1');
+    const summary = JSON.parse(versionRow!.summary_json);
+    expect(summary.pageCount).toBeGreaterThan(0);
+
+    const pageRows = await env.BLUEPRINT_DB
+      .prepare(`SELECT logical_page_id, slug, primary_keyword_normalized, recommendation FROM blueprint_pages WHERE blueprint_revision_id = ? ORDER BY logical_page_id ASC`)
+      .bind(versionRow!.latest_revision_id)
+      .all<{ logical_page_id: string; slug: string; primary_keyword_normalized: string | null; recommendation: string }>();
+    expect(pageRows.results.length).toBe(summary.pageCount);
+    expect(pageRows.results.length).toBeGreaterThan(0);
+    // Acceptance-style invariants (Task 21 formalizes these): unique slugs and
+    // unique non-null primary keywords across the published revision.
+    const slugs = pageRows.results.map((r) => r.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+    const kws = pageRows.results.map((r) => r.primary_keyword_normalized).filter((k): k is string => k !== null);
+    expect(new Set(kws).size).toBe(kws.length);
+  });
+
+  it('acceptance: a blocking validation failure fails the run permanently and publishes nothing', async () => {
+    const env = fakeEnv();
+    const { json: project } = await createProject(env);
+    const estimate = await createEstimate(env, project.data.id);
+    const { json: run } = await startRun(env, project.data.id, estimate.estimateId, newId('idem'));
+    const runId = run.data.id;
+
+    // Override build_page_plan to emit a STRUCTURALLY INVALID page-plan.json
+    // (two active pages sharing a slug -> validateBlueprintGraph duplicate_slug).
+    // The real overlay + validate_blueprint stages then run over it: validate
+    // composes, finds the blocking issue, and throws BlueprintValidationError.
+    const badPlan: StageHandler = async (ctx) => {
+      const page = (logicalId: string, slug: string, parentLogicalId: string | null, primaryKeyword: string | null, pageType = 'service') => ({
+        logicalId, pageType, slug, title: logicalId, h1: logicalId, parentLogicalId,
+        primaryKeywordId: null, primaryKeyword, clusterIds: [], sections: [], metaDescription: null,
+        recommendation: 'create', consolidateTargetLogicalId: null,
+        scores: { addressableVolume: null, confidence: null, scoreBreakdown: null, evidenceRefs: [] }, warnings: [],
+      });
+      const artifact = {
+        rulesetVersion: 'pp-v1',
+        pages: [page('home', 'dup', null, null, 'home'), page('svc', 'dup', 'home', 'svc kw')],
+        placements: [],
+        warnings: [],
+        stats: {
+          pageCount: 2, skeletonPageCount: 1, dedicatedPageCount: 1, sectionCount: 0, faqCount: 0,
+          clustersPlaced: 0, demotedPageCount: 0, cannibalizedCount: 0, serviceLocationBlockedCount: 0,
+          totalAddressableVolume: null, pageBudget: 30,
+        },
+      };
+      await ctx.env.BLUEPRINT_ARTIFACTS.put(`runs/${ctx.runId}/page-plan.json`, JSON.stringify(artifact));
+      return { output: { stage: 'build_page_plan' as const, pageCount: 2 }, status: 'succeeded' as const };
+    };
+
+    await drainQueue(env, env.BLUEPRINT_QUEUE.sent, 'w1', {
+      build_page_plan: badPlan,
+      validate_serps_and_questions: stubValidateSerps,
+    });
+
+    // The run failed permanently: validate_blueprint is REQUIRED and its
+    // BlueprintValidationError is a permanent (non-retryable) failure, so it
+    // fails on the first attempt.
+    expect(await getRunStatus(env.BLUEPRINT_DB, runId)).toBe('failed');
+    const validateRow = await env.BLUEPRINT_DB
+      .prepare(`SELECT status, attempt_count, safe_error_code FROM research_stage_runs WHERE run_id = ? AND stage_name = 'validate_blueprint'`)
+      .bind(runId)
+      .first<{ status: string; attempt_count: number; safe_error_code: string }>();
+    expect(validateRow?.status).toBe('failed');
+    expect(validateRow?.attempt_count).toBe(1);
+    expect(validateRow?.safe_error_code).toBe('invalid_input');
+
+    // Nothing downstream ran: publish_blueprint never executed, no version row.
+    const publishRow = await getStageRow(env.BLUEPRINT_DB, runId, 'publish_blueprint');
+    expect(publishRow).toBeNull();
+    const versionRow = await env.BLUEPRINT_DB
+      .prepare(`SELECT id FROM blueprint_versions WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ id: string }>();
+    expect(versionRow).toBeNull();
   });
 
   it('acceptance: cancellation mid-drain ends the run cancelled with no blueprint_versions row published', async () => {

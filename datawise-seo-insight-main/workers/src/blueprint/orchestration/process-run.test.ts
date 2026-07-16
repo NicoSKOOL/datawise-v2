@@ -4,6 +4,7 @@ import { newId, nowIso } from '../db/util';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { V1_LIMITS } from '../contracts/limits';
 import { buildStageInputHash } from '../domain/hash';
+import { LEGACY_RULESET_VERSION } from '../domain/ruleset';
 import { acquireStageLease } from '../db/leases';
 import type { BlueprintStage } from '../contracts/enums';
 import { processResearchRun } from './process-run';
@@ -15,6 +16,7 @@ import { installDfsCatalogFetchStub } from '../test-support/dfs-catalog';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import { validateSerpsAndQuestionsHandler } from './research-handlers';
 import { DataForSeoQuotaError } from '../../dataforseo/client';
+import { pseudoVector } from '../test-support/env';
 
 // Same sample brief used by Task 11's domain/brief.test.ts (validInput).
 const SAMPLE_BRIEF_INPUT = {
@@ -50,6 +52,7 @@ interface StageRow {
   attempt_count: number;
   safe_error_code: string | null;
   safe_error_message: string | null;
+  ruleset_version: string | null;
 }
 
 interface BlueprintVersionRow {
@@ -95,22 +98,56 @@ const stubValidateSerps: StageHandler = async () => ({
 });
 
 // Stub provider bindings/credentials this file's tests never actually
-// exercise (no handler override here reads ctx.env), but processResearchRun
-// now requires a BlueprintProviderEnv, so every constructed env needs these
-// fields to satisfy the type.
-function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD'> {
+// exercise directly (no handler override here reads ctx.env itself), but
+// processResearchRun now requires a BlueprintProviderEnv, so every
+// constructed env needs these fields to satisfy the type. Real in-memory
+// Map-backed KV/R2 (not pure no-op get-always-null stubs): Phase 4 Task 7
+// registers normalize_keyword_universe as the first REAL reader of the R2
+// artifacts/KV cache entries collect_keyword_evidence/discover_competitors/
+// collect_competitor_evidence write earlier in this same full-drive path
+// (providers/dataforseo/evidence-readback.ts). A no-op `get` that always
+// returns null makes every one of those real writes look "missing" the
+// moment something finally reads them back, which would incorrectly degrade
+// normalize_keyword_universe to 'partial' on every run through this test,
+// even though nothing was actually lost. A real round-trip (put really
+// stores, get really returns it) is what production R2/KV actually do, so
+// this is a fixture-fidelity fix, not a behavior change to what's being
+// tested here.
+function providerFields(): Pick<BlueprintProviderEnv, 'KV' | 'BLUEPRINT_ARTIFACTS' | 'DATAFORSEO_EMAIL' | 'DATAFORSEO_PASSWORD' | 'AI'> {
+  const kvStore = new Map<string, string>();
+  const r2Store = new Map<string, string>();
   return {
     KV: {
-      get: async () => null,
-      put: async () => undefined,
-      delete: async () => undefined,
+      get: async (key: string) => kvStore.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        kvStore.set(key, value);
+      },
+      delete: async (key: string) => {
+        kvStore.delete(key);
+      },
     } as unknown as KVNamespace,
     BLUEPRINT_ARTIFACTS: {
-      put: async () => undefined,
-      get: async () => null,
+      put: async (key: string, value: string) => {
+        r2Store.set(key, value);
+      },
+      get: async (key: string) => {
+        const body = r2Store.get(key);
+        return body === undefined ? null : { text: async () => body };
+      },
     } as unknown as R2Bucket,
     DATAFORSEO_EMAIL: 'test@example.com',
     DATAFORSEO_PASSWORD: 'test-password',
+    // Phase 4 Task 8: embed_keyword_features is now a REAL handler that
+    // calls env.AI.run for every retained keyword, so every full-drive test
+    // in this file needs a working (not undefined) AI binding -- same
+    // deterministic pseudoVector fake test-support/env.ts's own fakeEnv()
+    // uses, not a real model call.
+    AI: {
+      async run(_model: string, input: Record<string, unknown>) {
+        const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
+        return { shape: [texts.length, 32], data: texts.map(pseudoVector) };
+      },
+    },
   };
 }
 
@@ -179,6 +216,35 @@ async function forceRetryNow(d1: D1Database, runId: string, stage: string): Prom
     .run();
 }
 
+// Task 4: writes one provider_usage row for a run+stage, the same shape a
+// real paid DataForSEO call writes (providers/dataforseo/call.ts), so tests
+// can assert that the stage row's cost_usd_micro is the SUM of these rather
+// than anything the handler's own output reports.
+async function insertProviderUsage(
+  d1: D1Database,
+  runId: string,
+  stage: string,
+  costUsdMicro: number
+): Promise<void> {
+  await d1
+    .prepare(
+      `INSERT INTO provider_usage
+        (id, run_id, stage, provider, operation, endpoint_or_model, cache_status, request_count, cost_usd_micro, latency_ms, created_at)
+       VALUES (?, ?, ?, 'dataforseo', 'keyword_ideas', 'keywords_data/keyword_ideas', 'miss', 1, ?, 100, ?)`
+    )
+    .bind(newId('pu'), runId, stage, costUsdMicro, nowIso())
+    .run();
+}
+
+async function getStageCost(d1: D1Database, runId: string, stage: string): Promise<{ status: string; cost_usd_micro: number }> {
+  const row = await d1
+    .prepare(`SELECT status, cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
+    .bind(runId, stage)
+    .first<{ status: string; cost_usd_micro: number }>();
+  if (!row) throw new Error(`stage row not found: ${stage}`);
+  return row;
+}
+
 describe('processResearchRun', () => {
   // resolve_market (Task 8) makes real DataForSEO catalog GETs; every test in
   // this file drives runs through it without overriding it (a handful of
@@ -230,8 +296,16 @@ describe('processResearchRun', () => {
     expect(finalRun.finished_at).toBeTruthy();
     // Task 8 Fix 2: partial_reasons is derived from stage rows, not
     // incrementally appended, so it must already list collect_us_fanout's
-    // clean skip by the time the run finishes.
-    expect(JSON.parse(finalRun.partial_reasons_json)).toEqual(['collect_us_fanout']);
+    // clean skip by the time the run finishes. refine_clusters (Task 12) is a
+    // second gap here: this drive stubs validate_serps_and_questions so no live
+    // SERP snapshots exist, and refine_clusters over clusters with zero live
+    // coverage completes 'partial' with a no_live_serp_evidence warning by
+    // design. overlay_existing_site (Task 18) is a third gap: this existing-site
+    // brief's robots/sitemap fetches throw in the harness and its labs fallback
+    // returns an empty ranked-keywords response, so it completes 'partial' with
+    // inventory_limited. Sorted before comparison because loadGapStageNames has
+    // no total ORDER BY (TEXT-PK scan order), so the gap list order is not guaranteed.
+    expect(JSON.parse(finalRun.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
 
     const finalStageRows = await getStageRows(d1, runId);
     expect(finalStageRows.length).toBe(19);
@@ -240,6 +314,17 @@ describe('processResearchRun', () => {
     }
     const fanoutRow = finalStageRows.find((r) => r.stage_name === 'collect_us_fanout');
     expect(fanoutRow?.status).toBe('skipped');
+
+    // Part E plumbing: rulesetVersionForStage(stage) is stamped onto every
+    // completed stage row via completeStage's ruleset_version column, not
+    // just baked into the input hash. Clustering/page-plan stages get their
+    // real versioned ruleset; every other stage still gets the legacy stub.
+    const clusterStageRow = finalStageRows.find((r) => r.stage_name === 'build_provisional_clusters');
+    expect(clusterStageRow?.ruleset_version).toBe('cluster-v2');
+    const pagePlanStageRow = finalStageRows.find((r) => r.stage_name === 'build_page_plan');
+    expect(pagePlanStageRow?.ruleset_version).toBe('pp-v1');
+    const legacyStageRow = finalStageRows.find((r) => r.stage_name === 'validate_intake');
+    expect(legacyStageRow?.ruleset_version).toBe(LEGACY_RULESET_VERSION);
 
     const versions = await d1
       .prepare(`SELECT * FROM blueprint_versions WHERE project_id = ?`)
@@ -254,7 +339,7 @@ describe('processResearchRun', () => {
     // would. Status ('partial'), run.partial_reasons_json, and version
     // completeness must all agree.
     expect(versions.results[0].completeness).toBe('partial');
-    expect(JSON.parse(versions.results[0].partial_reasons_json)).toEqual(['collect_us_fanout']);
+    expect(JSON.parse(versions.results[0].partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
     expect(versions.results[0].latest_revision_id).toBeTruthy();
 
     const revisions = await d1
@@ -304,7 +389,7 @@ describe('processResearchRun', () => {
       runId,
       stage: 'plan_research',
       normalizedInputHash: briefRow!.input_hash,
-      rulesetVersion: 'phase2-stub',
+      rulesetVersion: LEGACY_RULESET_VERSION,
     });
     await d1
       .prepare(
@@ -348,13 +433,13 @@ describe('processResearchRun', () => {
       runId: runA,
       stage: 'validate_intake',
       normalizedInputHash: inputHash,
-      rulesetVersion: 'phase2-stub',
+      rulesetVersion: LEGACY_RULESET_VERSION,
     });
     const hashB = await buildStageInputHash({
       runId: runB,
       stage: 'validate_intake',
       normalizedInputHash: inputHash,
-      rulesetVersion: 'phase2-stub',
+      rulesetVersion: LEGACY_RULESET_VERSION,
     });
     // Different runId -> different stage hash: nothing is reused across runs.
     expect(hashA).not.toBe(hashB);
@@ -742,48 +827,116 @@ describe('processResearchRun', () => {
     expect(run.status).toBe('cancelled');
   });
 
-  // Task 10: collect_keyword_evidence is the first real handler that tracks
-  // its own provider spend and reports it back as a numeric
-  // stageCostUsdMicro field on its output (see research-handlers.ts). This
-  // proves the processor's forwarding in isolation, with a stub handler
-  // standing in for any future handler that reports the same field --
-  // completeStage itself already accepted a costUsdMicro extra (db/leases.ts,
-  // pre-existing), the only new wiring here is process-run.ts reading it off
-  // the handler's own output.
-  it('Task 10: forwards a handler-reported stageCostUsdMicro onto the stage row as cost_usd_micro', async () => {
+  // Task 4: stage cost now comes from SUM(provider_usage), not from a
+  // handler-reported stageCostUsdMicro output field (that field is kept,
+  // but purely informational -- see research-handlers.ts). This test used
+  // to assert the opposite (Task 10's original forwarding behavior); it is
+  // rewritten here to prove the new source of truth, deliberately using a
+  // DIFFERENT amount on the output field than on the provider_usage row so
+  // a regression back to output-forwarding would be caught immediately.
+  it('Task 4: cost_usd_micro comes from SUM(provider_usage), not the handler-reported stageCostUsdMicro output field', async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { queue } = makeQueue();
     const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
     const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
-      resolve_market: async () => ({
-        output: { stage: 'resolve_market' as const, stub: true, stageCostUsdMicro: 123_456 },
-      }),
+      resolve_market: async () => {
+        await insertProviderUsage(d1, runId, 'resolve_market', 99_000);
+        return { output: { stage: 'resolve_market' as const, stub: true, stageCostUsdMicro: 123_456 } };
+      },
     };
 
     await processResearchRun(env, runId, 'w1', overrides); // validate_intake
-    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, reports cost)
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, writes a usage row)
 
-    const stageRow = await d1
-      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
-      .bind(runId, 'resolve_market')
-      .first<{ cost_usd_micro: number }>();
-    expect(stageRow?.cost_usd_micro).toBe(123_456);
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.cost_usd_micro).toBe(99_000);
   });
 
-  it("Task 10: a handler output with no stageCostUsdMicro field leaves cost_usd_micro at completeStage's default (0)", async () => {
+  it("Task 4: a stage with no provider_usage rows at all leaves cost_usd_micro at 0 (the SUM's default)", async () => {
     const { d1, projectId, briefVersionId } = await setup();
     const runId = await seedRun(d1, projectId, briefVersionId);
     const { queue } = makeQueue();
     const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
 
-    await processResearchRun(env, runId, 'w1'); // validate_intake: real handler, no stageCostUsdMicro field
+    await processResearchRun(env, runId, 'w1'); // validate_intake: real handler, no provider_usage rows
 
-    const stageRow = await d1
-      .prepare(`SELECT cost_usd_micro FROM research_stage_runs WHERE run_id = ? AND stage_name = ?`)
-      .bind(runId, 'validate_intake')
-      .first<{ cost_usd_micro: number }>();
-    expect(stageRow?.cost_usd_micro).toBe(0);
+    const stageRow = await getStageCost(d1, runId, 'validate_intake');
+    expect(stageRow.cost_usd_micro).toBe(0);
+  });
+
+  it('Task 4: a handler output with NO stageCostUsdMicro field (the validate_serps shape) still gets cost_usd_micro = SUM(provider_usage)', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        await insertProviderUsage(d1, runId, 'resolve_market', 75_000);
+        // No stageCostUsdMicro field on this output at all.
+        return { output: { stage: 'resolve_market' as const, stub: true } };
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market (overridden, writes a usage row)
+
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.cost_usd_micro).toBe(75_000);
+  });
+
+  it('Task 4: sums provider_usage across TWO attempts (first throws after writing a row, retry completes and writes another) into the completed stage row', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async (ctx) => {
+        if (ctx.attempt === 1) {
+          await insertProviderUsage(d1, runId, 'resolve_market', 40_000);
+          throw new Error('boom-transient');
+        }
+        await insertProviderUsage(d1, runId, 'resolve_market', 60_000);
+        return { output: { stage: 'resolve_market' as const, stub: true } };
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market attempt 1: writes a row, throws -> retry_wait
+    await forceRetryNow(d1, runId, 'resolve_market');
+    await processResearchRun(env, runId, 'w1', overrides); // resolve_market attempt 2: writes another row, succeeds
+
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.status).toBe('succeeded');
+    expect(stageRow.cost_usd_micro).toBe(100_000);
+  });
+
+  it('Task 4: a REQUIRED stage that fails permanently after writing provider_usage rows on earlier attempts carries their SUM on the failed stage row', async () => {
+    const { d1, projectId, briefVersionId } = await setup();
+    const runId = await seedRun(d1, projectId, briefVersionId);
+    const { queue } = makeQueue();
+    const env: BlueprintProviderEnv = { BLUEPRINT_DB: d1, BLUEPRINT_QUEUE: queue, ...providerFields() };
+    const overrides: Partial<Record<BlueprintStage, StageHandler>> = {
+      resolve_market: async () => {
+        await insertProviderUsage(d1, runId, 'resolve_market', 20_000);
+        throw new Error('boom-required');
+      },
+    };
+
+    await processResearchRun(env, runId, 'w1', overrides); // validate_intake succeeds
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await processResearchRun(env, runId, 'w1', overrides);
+      if (attempt < 3) await forceRetryNow(d1, runId, 'resolve_market');
+    }
+
+    const stageRow = await getStageCost(d1, runId, 'resolve_market');
+    expect(stageRow.status).toBe('failed');
+    // Three attempts, each writing a 20_000 provider_usage row before
+    // throwing: the failed row must carry the SUM of all three, proving the
+    // terminal-failure path (failStage) sums cost the same way the
+    // success path (completeStage) does.
+    expect(stageRow.cost_usd_micro).toBe(60_000);
   });
 
   // Finding 1 (final whole-branch review): collect_keyword_evidence is a

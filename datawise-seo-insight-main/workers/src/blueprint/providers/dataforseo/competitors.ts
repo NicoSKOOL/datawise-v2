@@ -40,6 +40,7 @@ const RANKED_KEYWORDS_FILTERS: unknown[] = [
 export interface CompetitorCandidate {
   domain: string;
   visibilityMetric: number | null;
+  estimatedTraffic: number | null;
   source: 'competitors_domain' | 'serp_competitors';
   evidenceRefId: string;
 }
@@ -105,6 +106,20 @@ function safeNormalizeProviderDomain(raw: unknown): string | null {
 // visibilityMetric for this endpoint (a naturally desc-sortable "more
 // overlap with the target = more of a real competitor" signal). Missing or
 // non-numeric stays null, never coerced to 0.
+// estimatedTraffic (etv, estimated traffic value) is read from
+// full_domain_metrics.organic.etv per DataForSEO's Domain Competitors docs,
+// falling back to metrics.organic.etv when full_domain_metrics is absent.
+// Same documented-assumption caveat as visibilityMetric above: spot-check
+// against a real response in Task 15's staging smoke run. Missing or
+// non-finite stays null, never coerced to 0.
+function extractEstimatedTraffic(item: any): number | null {
+  const fromFullMetrics = item?.full_domain_metrics?.organic?.etv;
+  if (typeof fromFullMetrics === 'number' && Number.isFinite(fromFullMetrics)) return fromFullMetrics;
+  const fromMetrics = item?.metrics?.organic?.etv;
+  if (typeof fromMetrics === 'number' && Number.isFinite(fromMetrics)) return fromMetrics;
+  return null;
+}
+
 function normalizeCompetitorsDomainItem(item: any, evidenceRefId: string): CompetitorCandidate | null {
   if (!item || typeof item !== 'object') return null;
   const domain = safeNormalizeProviderDomain(item.domain);
@@ -112,6 +127,7 @@ function normalizeCompetitorsDomainItem(item: any, evidenceRefId: string): Compe
   return {
     domain,
     visibilityMetric: typeof item.intersections === 'number' ? item.intersections : null,
+    estimatedTraffic: extractEstimatedTraffic(item),
     source: 'competitors_domain',
     evidenceRefId,
   };
@@ -125,6 +141,18 @@ function normalizeCompetitorsDomainItem(item: any, evidenceRefId: string): Compe
 // visibilityMetric, keeping "desc, nulls last" selection consistent with
 // competitors_domain's higher-is-better convention. Missing or non-numeric
 // stays null.
+// serp_competitors carries etv at the top level of the item (not nested
+// under full_domain_metrics like competitors_domain), falling back to
+// metrics.organic.etv when the top-level field is absent. Same
+// documented-assumption caveat as extractEstimatedTraffic above.
+function extractSerpCompetitorEstimatedTraffic(item: any): number | null {
+  const topLevel = item?.etv;
+  if (typeof topLevel === 'number' && Number.isFinite(topLevel)) return topLevel;
+  const fromMetrics = item?.metrics?.organic?.etv;
+  if (typeof fromMetrics === 'number' && Number.isFinite(fromMetrics)) return fromMetrics;
+  return null;
+}
+
 function normalizeSerpCompetitorsItem(item: any, evidenceRefId: string): CompetitorCandidate | null {
   if (!item || typeof item !== 'object') return null;
   const domain = safeNormalizeProviderDomain(item.domain);
@@ -132,6 +160,7 @@ function normalizeSerpCompetitorsItem(item: any, evidenceRefId: string): Competi
   return {
     domain,
     visibilityMetric: typeof item.avg_position === 'number' ? -item.avg_position : null,
+    estimatedTraffic: extractSerpCompetitorEstimatedTraffic(item),
     source: 'serp_competitors',
     evidenceRefId,
   };

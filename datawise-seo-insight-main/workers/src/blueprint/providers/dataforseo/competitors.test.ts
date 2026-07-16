@@ -19,7 +19,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-const COSTS: DfsCostEstimates = { labsTaskUsdMicro: 50_000, serpTaskUsdMicro: 10_000 };
+const COSTS: DfsCostEstimates = { labsTaskUsdMicro: 50_000, serpTaskUsdMicro: 10_000, contentParsingTaskUsdMicro: 10_000 };
 
 const MARKET: ResolvedMarket = {
   labsLocationCode: 2840,
@@ -122,6 +122,7 @@ function candidate(overrides: Partial<CompetitorCandidate> = {}): CompetitorCand
   return {
     domain: 'rival.com',
     visibilityMetric: 10,
+    estimatedTraffic: null,
     source: 'competitors_domain',
     evidenceRefId: 'evr_1',
     ...overrides,
@@ -152,6 +153,7 @@ describe('discoverCompetitorsForDomain', () => {
       {
         domain: 'rival-plumbing.com',
         visibilityMetric: 42,
+        estimatedTraffic: null,
         source: 'competitors_domain',
         evidenceRefId: candidates[0].evidenceRefId,
       },
@@ -165,6 +167,39 @@ describe('discoverCompetitorsForDomain', () => {
     const candidates = await discoverCompetitorsForDomain(ctx, MARKET, 'aquaplumbing.com', COSTS);
 
     expect(candidates[0].visibilityMetric).toBeNull();
+  });
+
+  it('extracts estimatedTraffic from full_domain_metrics.organic.etv', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(
+      okResponse([
+        { domain: 'rival.com', intersections: 42, full_domain_metrics: { organic: { etv: 1234.5 } } },
+      ])
+    );
+
+    const candidates = await discoverCompetitorsForDomain(ctx, MARKET, 'aquaplumbing.com', COSTS);
+
+    expect(candidates[0].estimatedTraffic).toBe(1234.5);
+  });
+
+  it('falls back to metrics.organic.etv for estimatedTraffic when full_domain_metrics is absent', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(
+      okResponse([{ domain: 'rival.com', intersections: 42, metrics: { organic: { etv: 55.2 } } }])
+    );
+
+    const candidates = await discoverCompetitorsForDomain(ctx, MARKET, 'aquaplumbing.com', COSTS);
+
+    expect(candidates[0].estimatedTraffic).toBe(55.2);
+  });
+
+  it('leaves estimatedTraffic null when neither full_domain_metrics nor metrics carries etv, never coerced to 0', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(okResponse([{ domain: 'rival.com', intersections: 42 }]));
+
+    const candidates = await discoverCompetitorsForDomain(ctx, MARKET, 'aquaplumbing.com', COSTS);
+
+    expect(candidates[0].estimatedTraffic).toBeNull();
   });
 });
 
@@ -196,6 +231,7 @@ describe('discoverSerpCompetitors', () => {
     expect(candidates[0]).toEqual({
       domain: 'rival-hvac.com',
       visibilityMetric: -4.5,
+      estimatedTraffic: null,
       source: 'serp_competitors',
       evidenceRefId: candidates[0].evidenceRefId,
     });
@@ -218,6 +254,35 @@ describe('discoverSerpCompetitors', () => {
     const candidates = await discoverSerpCompetitors(ctx, MARKET, ['ac repair austin'], COSTS);
 
     expect(candidates[0].visibilityMetric).toBeNull();
+  });
+
+  it('extracts estimatedTraffic from the top-level etv field', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(okResponse([{ domain: 'rival.com', avg_position: 4.5, etv: 88.2 }]));
+
+    const candidates = await discoverSerpCompetitors(ctx, MARKET, ['ac repair austin'], COSTS);
+
+    expect(candidates[0].estimatedTraffic).toBe(88.2);
+  });
+
+  it('falls back to metrics.organic.etv for estimatedTraffic when top-level etv is absent', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(
+      okResponse([{ domain: 'rival.com', avg_position: 4.5, metrics: { organic: { etv: 33.1 } } }])
+    );
+
+    const candidates = await discoverSerpCompetitors(ctx, MARKET, ['ac repair austin'], COSTS);
+
+    expect(candidates[0].estimatedTraffic).toBe(33.1);
+  });
+
+  it('leaves estimatedTraffic null when neither top-level etv nor metrics.organic.etv is present, never coerced to 0', async () => {
+    const ctx = await buildCtx();
+    stubFetchCapturing(okResponse([{ domain: 'rival.com', avg_position: 4.5 }]));
+
+    const candidates = await discoverSerpCompetitors(ctx, MARKET, ['ac repair austin'], COSTS);
+
+    expect(candidates[0].estimatedTraffic).toBeNull();
   });
 });
 

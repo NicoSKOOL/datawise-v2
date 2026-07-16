@@ -1,6 +1,6 @@
 import type { StageContext, StageHandler } from './handlers';
 import type { KeywordCandidate, KeywordUniverse, MergedKeyword } from '../contracts/types';
-import { BlueprintApiError } from '../domain/api-errors';
+import { BlueprintApiError, isAccountWideProviderError } from '../domain/api-errors';
 import { safeErrorMessage } from '../providers/dataforseo/envelope';
 import { loadStageOutput } from './stage-io';
 import type { ResolvedMarket } from '../providers/dataforseo/catalogs';
@@ -18,6 +18,7 @@ import { mergeKeywordCandidates } from '../domain/merge';
 import { normalizeKeyword } from '../domain/keyword';
 import { normalizeDomain } from '../domain/url';
 import { newId } from '../db/util';
+import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
 import {
   discoverCompetitorsForDomain,
   discoverSerpCompetitors,
@@ -29,6 +30,7 @@ import {
 import type { CompetitorCandidate, RelevantPageRecord } from '../providers/dataforseo/competitors';
 import { postSerpTasks, collectSerpTasks, SerpTasksPendingError } from '../providers/dataforseo/serp';
 import type { SerpQuery } from '../providers/dataforseo/serp';
+import type { BuildProvisionalClustersOutput } from './clustering-handlers';
 
 // Catalog Sec 3: max 8 keyword_suggestions seeds per run (one per
 // service-in-primary-area seed). This module is the home for every real
@@ -101,8 +103,9 @@ function appendMissingUserSeeds(universe: KeywordUniverse, seeds: SeedQuery[], l
 // multi-row `INSERT OR IGNORE ... VALUES (?,?,...),(?,?,...)` statement, and
 // groups of those statements are sent through as few d1.batch() calls as
 // possible, so persisting the same 2,500 candidates now costs on the order
-// of tens of D1 calls, not thousands.
-const D1_MAX_BOUND_PARAMS = 100;
+// of tens of D1 calls, not thousands. chunk/runBatchedStatements/
+// assertRowBudget/D1_MAX_BOUND_PARAMS now live in ../db/batch (Phase 4
+// Task 1 extraction) so later persistence code can reuse them.
 
 // keywords row = (id, run_id, display_keyword, normalized_keyword,
 // search_volume, cpc_usd_micro, keyword_difficulty, metrics_missing): 8
@@ -122,25 +125,11 @@ const JOIN_ROWS_PER_STATEMENT = 45;
 // the 100 cap.
 const REREAD_KEYWORDS_PER_STATEMENT = 90;
 
-// How many prepared statements ride in a single d1.batch() call. D1 has no
-// documented hard statement-count-per-batch ceiling, but batching everything
-// into one call would still make one very large request; splitting into
-// groups keeps each batch call itself modest.
-const STATEMENTS_PER_BATCH = 40;
-
 // Runtime guard (this codebase has no compile-time static_assert): if a
 // future column addition to one of these tables changes params-per-row
 // without updating the matching ROWS_PER_STATEMENT constant, this throws
 // immediately at module load instead of silently reintroducing the
-// subrequest-cap bug this function exists to fix.
-function assertRowBudget(rowsPerStatement: number, paramsPerRow: number, label: string): void {
-  const total = rowsPerStatement * paramsPerRow;
-  if (total > D1_MAX_BOUND_PARAMS) {
-    throw new Error(
-      `${label}: ${rowsPerStatement} rows * ${paramsPerRow} params/row = ${total} exceeds D1's ${D1_MAX_BOUND_PARAMS}-bound-parameter-per-statement limit`
-    );
-  }
-}
+// subrequest-cap bug this function exists to fix. Imported from ../db/batch.
 assertRowBudget(KEYWORDS_ROWS_PER_STATEMENT, KEYWORDS_PARAMS_PER_ROW, 'keywords insert');
 assertRowBudget(JOIN_ROWS_PER_STATEMENT, JOIN_PARAMS_PER_ROW, 'join table insert');
 
@@ -161,25 +150,6 @@ assertRowBudget(JOIN_ROWS_PER_STATEMENT, JOIN_PARAMS_PER_ROW, 'join table insert
 function cpcToMicro(cpc: number | null): number | null {
   if (cpc === null || !Number.isFinite(cpc) || cpc < 0) return null;
   return Math.round(cpc * 1_000_000);
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
-// Sends `statements` through d1.batch() in groups of STATEMENTS_PER_BATCH.
-// d1.batch() is transactional per call (not across calls), which matches
-// this function's existing consistency contract: it was never atomic across
-// its own 3-round-trips-per-keyword loop either, so grouping into several
-// batch() calls introduces no new partial-write exposure versus the
-// original.
-async function runBatchedStatements(d1: D1Database, statements: D1PreparedStatement[]): Promise<void> {
-  for (const group of chunk(statements, STATEMENTS_PER_BATCH)) {
-    if (group.length === 0) continue;
-    await d1.batch(group);
-  }
 }
 
 // Builds and persists one join table's rows (keyword_services,
@@ -435,21 +405,31 @@ async function upsertCompetitorRow(
   runId: string,
   domain: string,
   source: string,
-  visibilityMetric: number | null
+  visibilityMetric: number | null,
+  estimatedTraffic: number | null
 ): Promise<string> {
   const existing = await d1
     .prepare(`SELECT id FROM competitors WHERE run_id = ? AND domain = ?`)
     .bind(runId, domain)
     .first<{ id: string }>();
-  if (existing) return existing.id;
+  if (existing) {
+    // COALESCE(estimated_traffic, ?): a retry attempt whose provider
+    // response happens to omit etv this time must never overwrite a real
+    // value this domain already persisted on a prior attempt with null.
+    await d1
+      .prepare(`UPDATE competitors SET estimated_traffic = COALESCE(estimated_traffic, ?) WHERE id = ?`)
+      .bind(estimatedTraffic, existing.id)
+      .run();
+    return existing.id;
+  }
 
   const id = newId('comp');
   await d1
     .prepare(
-      `INSERT INTO competitors (id, run_id, domain, source, selected, visibility_score)
-       VALUES (?, ?, ?, ?, 0, ?)`
+      `INSERT INTO competitors (id, run_id, domain, source, selected, visibility_score, estimated_traffic)
+       VALUES (?, ?, ?, ?, 0, ?, ?)`
     )
-    .bind(id, runId, domain, source, visibilityMetric)
+    .bind(id, runId, domain, source, visibilityMetric, estimatedTraffic)
     .run();
   return id;
 }
@@ -495,7 +475,14 @@ async function persistCompetitors(
   keptKnownDomains: string[]
 ): Promise<{ selectedDomains: string[] }> {
   for (const candidate of filtered) {
-    const id = await upsertCompetitorRow(d1, runId, candidate.domain, candidate.source, candidate.visibilityMetric);
+    const id = await upsertCompetitorRow(
+      d1,
+      runId,
+      candidate.domain,
+      candidate.source,
+      candidate.visibilityMetric,
+      candidate.estimatedTraffic
+    );
     await d1
       .prepare(`INSERT OR IGNORE INTO competitor_evidence_refs (competitor_id, evidence_ref_id) VALUES (?, ?)`)
       .bind(id, candidate.evidenceRefId)
@@ -506,7 +493,7 @@ async function persistCompetitors(
   for (const domain of knownSet) {
     // Already persisted above if the DFS candidate pool also surfaced this
     // domain; upsertCompetitorRow is idempotent either way.
-    await upsertCompetitorRow(d1, runId, domain, 'user_seed', null);
+    await upsertCompetitorRow(d1, runId, domain, 'user_seed', null, null);
   }
 
   // Stable sort (desc by visibilityMetric, nulls last) over ONLY the
@@ -629,25 +616,13 @@ export interface CollectCompetitorEvidenceOutput {
 // actually reads.
 const MAX_TOP_PAGES = 100;
 
-// Account-wide DataForSEO conditions that no per-competitor isolation can
-// route around: whichever competitor's call hits one of these first, every
-// OTHER competitor's remaining calls this attempt would burn are guaranteed
-// to hit the exact same wall. Mirrors collectSerpTasks's own account-wide
-// classification (providers/dataforseo/serp.ts) with 'budget_exceeded' added
-// -- a per-run DataForSEO budget ceiling is exactly as account-wide as a
-// provider quota/rate-limit wall, and reserveProviderBudget/
-// assertRunWithinBudget throw it as a BlueprintApiError the same way. Any
-// other error (including provider_timeout and a genuine per-task DFS
-// failure) stays isolated to that one competitor/field, per this handler's
-// existing per-competitor try/catch design below.
-function isAccountWideProviderError(err: unknown): boolean {
-  return (
-    err instanceof BlueprintApiError &&
-    (err.code === 'provider_quota_exhausted' ||
-      err.code === 'provider_rate_limited' ||
-      err.code === 'budget_exceeded')
-  );
-}
+// isAccountWideProviderError (shared, in domain/api-errors.ts): whichever
+// competitor's call hits provider_quota_exhausted / provider_rate_limited /
+// budget_exceeded first, every OTHER competitor's remaining calls this attempt
+// are guaranteed to hit the exact same wall, so it is rethrown instead of
+// isolated to that one competitor/field. Any other error (including
+// provider_timeout and a genuine per-task DFS failure) stays isolated, per this
+// handler's existing per-competitor try/catch design below.
 
 // Real collect_competitor_evidence, not a stub. Optional stage (stages.ts):
 // even so, this handler does NOT rely on the processor's optional-stage
@@ -776,9 +751,72 @@ export function buildSerpQueriesFromSeeds(seeds: SeedQuery[], market: ResolvedMa
     }));
 }
 
+// Task 11: build_provisional_clusters (a REQUIRED stage that always runs
+// immediately before this one, per stages.ts's BLUEPRINT_STAGES order) now
+// emits up to 20 representative queries, one per non-singleton provisional
+// cluster (clustering-handlers.ts). Those queries are a strictly better SERP
+// validation target than the old seed-derived list (one SERP snapshot per
+// real page-candidate cluster, instead of one per raw service-in-primary-area
+// seed with no clustering signal behind it), so this handler prefers them
+// whenever they exist and only falls back to the seed-derived list when
+// build_provisional_clusters produced none (clusters skipped, or a universe
+// with zero non-singleton clusters). Same dedup-by-normalized-keyword and
+// MAX_SERP_QUERIES cap as buildSerpQueriesFromSeeds, since the same
+// dfs_serp_tasks UNIQUE(run_id, keyword, location_code) constraint and the
+// same catalog Sec 15 operating point apply to either source. Exported
+// standalone (same rationale as buildSerpQueriesFromSeeds) for direct unit
+// testing.
+export function buildSerpQueriesFromClusterRepresentatives(
+  representativeQueries: BuildProvisionalClustersOutput['representativeQueries'],
+  market: ResolvedMarket,
+  locale: string
+): SerpQuery[] {
+  const locationByServiceArea = new Map(market.serpLocations.map((l) => [l.serviceAreaId, l.locationCode]));
+  const seenNormalized = new Set<string>();
+  const queries: SerpQuery[] = [];
+  for (const rep of representativeQueries) {
+    const normalized = normalizeKeyword(rep.query, locale);
+    if (!normalized || seenNormalized.has(normalized)) continue;
+    seenNormalized.add(normalized);
+    queries.push({
+      keyword: rep.query,
+      serviceAreaId: rep.serviceAreaId,
+      locationCode:
+        (rep.serviceAreaId ? locationByServiceArea.get(rep.serviceAreaId) : undefined) ??
+        market.fallbackSerpLocationCode,
+    });
+    if (queries.length >= MAX_SERP_QUERIES) break;
+  }
+  return queries;
+}
+
+// Re-checks, on ANY attempt of this stage, whether build_provisional_clusters
+// produced representative queries for this run. build_provisional_clusters
+// is a REQUIRED stage that always finishes (successfully) before this stage's
+// first attempt ever runs, and its output never changes across this stage's
+// own later attempts, so re-reading it here (rather than threading the
+// decision through some new persisted column) is safe and gives every
+// attempt, first or last, the same answer.
+async function usedClusterRepresentativeQueries(d1: D1Database, runId: string): Promise<boolean> {
+  const clustersOutput = await loadStageOutput<Pick<BuildProvisionalClustersOutput, 'representativeQueries'>>(
+    d1,
+    runId,
+    'build_provisional_clusters'
+  );
+  return !!clustersOutput && clustersOutput.representativeQueries.length > 0;
+}
+
 export interface ValidateSerpsAndQuestionsOutput {
   snapshots: number;
   failed: number;
+  // Task 11: which query population this run's SERP batch was built from.
+  // 'clusters' whenever build_provisional_clusters had at least one
+  // non-singleton cluster to represent, 'seeds' otherwise (clusters stage
+  // skipped, or a universe with zero non-singleton clusters). queryCount is
+  // the number of distinct queries actually posted (dfs_serp_tasks row count
+  // for this run), true regardless of which attempt this output came from.
+  querySource: 'clusters' | 'seeds';
+  queryCount: number;
 }
 
 // Real validate_serps_and_questions, not a stub. Optional stage (stages.ts),
@@ -814,21 +852,35 @@ export const validateSerpsAndQuestionsHandler: StageHandler = async (ctx: StageC
       throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
     }
 
-    const costs = await loadDfsCostEstimates(ctx.env.KV);
-    const { seeds } = buildSeedQueries(ctx.normalizedBrief, {
-      maxTotalSeeds: V1_LIMITS.maxSeedQueries,
-      includePrimaryAreaSeeds: true,
-    });
-    const queries = buildSerpQueriesFromSeeds(seeds, market);
+    const locale = `${ctx.normalizedBrief.languageCode}-${ctx.normalizedBrief.countryIso}`;
+    const clustersOutput = await loadStageOutput<BuildProvisionalClustersOutput>(
+      ctx.d1,
+      ctx.runId,
+      'build_provisional_clusters'
+    );
+    const useClusterQueries = !!clustersOutput && clustersOutput.representativeQueries.length > 0;
+
+    const queries = useClusterQueries
+      ? buildSerpQueriesFromClusterRepresentatives(clustersOutput!.representativeQueries, market, locale)
+      : buildSerpQueriesFromSeeds(
+          buildSeedQueries(ctx.normalizedBrief, {
+            maxTotalSeeds: V1_LIMITS.maxSeedQueries,
+            includePrimaryAreaSeeds: true,
+          }).seeds,
+          market
+        );
+    const querySource: 'clusters' | 'seeds' = useClusterQueries ? 'clusters' : 'seeds';
 
     if (queries.length === 0) {
       // No service-in-primary-area seeds to validate against (a brief with
       // no primary area, which normalize_brief/validate_intake should never
-      // actually allow through) -- nothing to post, nothing pending.
-      const output: ValidateSerpsAndQuestionsOutput = { snapshots: 0, failed: 0 };
+      // actually allow through) and no cluster representative queries either
+      // -- nothing to post, nothing pending.
+      const output: ValidateSerpsAndQuestionsOutput = { snapshots: 0, failed: 0, querySource, queryCount: 0 };
       return { output, status: 'succeeded' as const };
     }
 
+    const costs = await loadDfsCostEstimates(ctx.env.KV);
     await postSerpTasks(ctx, queries, costs);
     throw new SerpTasksPendingError('SERP tasks posted; awaiting task_get results');
   }
@@ -838,6 +890,19 @@ export const validateSerpsAndQuestionsHandler: StageHandler = async (ctx: StageC
     throw new SerpTasksPendingError('SERP tasks still processing');
   }
 
-  const output: ValidateSerpsAndQuestionsOutput = { snapshots: completed, failed };
+  const postedCountRow = await ctx.d1
+    .prepare(`SELECT COUNT(*) AS n FROM dfs_serp_tasks WHERE run_id = ?`)
+    .bind(ctx.runId)
+    .first<{ n: number }>();
+  const querySource: 'clusters' | 'seeds' = (await usedClusterRepresentativeQueries(ctx.d1, ctx.runId))
+    ? 'clusters'
+    : 'seeds';
+
+  const output: ValidateSerpsAndQuestionsOutput = {
+    snapshots: completed,
+    failed,
+    querySource,
+    queryCount: postedCountRow?.n ?? 0,
+  };
   return { output, status: failed > 0 ? ('partial' as const) : ('succeeded' as const) };
 };

@@ -70,3 +70,9 @@ max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3
 dead_letter_queue = "blueprint-research-dlq"
+
+# Workers AI: embed_keyword_features (Blueprint Phase 4 clustering track)
+# calls @cf/baai/bge-m3 through this binding. Free tier, no budget
+# reservation (see workers/src/blueprint/providers/embeddings/workers-ai.ts).
+[ai]
+binding = "AI"

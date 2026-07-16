@@ -18,6 +18,23 @@ export class BlueprintApiError extends Error {
   }
 }
 
+// Account-wide (as opposed to one-call) DataForSEO conditions: a per-run budget
+// ceiling, an exhausted provider quota, or a rate-limit wall. Whichever call
+// hits one of these first, every other paid call the run would make this attempt
+// is guaranteed to hit the same wall, so these must NOT be swallowed by a
+// per-call/per-stage try-catch: they are rethrown so the stage lands in
+// retry_wait/fail with the true code rather than quietly reporting 'partial'.
+// Shared by collect_competitor_evidence (per-competitor loop) and
+// overlay_existing_site (labs fallback) so both classify identically.
+export function isAccountWideProviderError(err: unknown): boolean {
+  return (
+    err instanceof BlueprintApiError &&
+    (err.code === 'provider_quota_exhausted' ||
+      err.code === 'provider_rate_limited' ||
+      err.code === 'budget_exceeded')
+  );
+}
+
 // Thrown by the actor/access layer for missing, cross-tenant, or soft-deleted
 // resources. Always maps to a 404 so we never leak existence of another
 // organization's data (invisible-404 rule).

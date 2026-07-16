@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_DFS_COST_ESTIMATES, loadDfsCostEstimates, buildCallPlan } from './costs';
+import { DEFAULT_DFS_COST_ESTIMATES, loadDfsCostEstimates, buildCallPlan, OPERATION_STAGE } from './costs';
 import type { CallPlan } from './costs';
 import { parseProjectBrief, normalizeProjectBrief } from '../../domain/brief';
 import { V1_LIMITS } from '../../contracts/limits';
@@ -56,13 +56,21 @@ describe('buildCallPlan', () => {
     expect(findLine(plan, 'relevant_pages')?.tasks).toBe(5);
     expect(findLine(plan, 'metric_enrichment')?.tasks).toBe(2);
     expect(findLine(plan, 'serp_task_post')?.tasks).toBe(1);
+    // parse_competitor_pages ceiling: maxClusters (10) * pagesPerCluster (2).
+    expect(findLine(plan, 'content_parsing')?.tasks).toBe(20);
 
     const labsTasks = 1 + 1 + 1 + 5 + 5 + 2; // ideas + suggestions + discovery + ranked + relevant + enrichment
     const expectedTotal =
-      labsTasks * DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro + 1 * DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro;
+      labsTasks * DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro +
+      1 * DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro +
+      20 * DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro;
     expect(plan.totalUsdMicro).toBe(expectedTotal);
     expect(plan.lines.every((l) => l.cacheEligible)).toBe(true);
     expect(findLine(plan, 'serp_task_post')?.estimatedUsdMicro).toBe(DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro);
+    expect(findLine(plan, 'content_parsing')?.estimatedUsdMicro).toBe(
+      20 * DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro
+    );
+    expect(findLine(plan, 'content_parsing')?.stage).toBe('parse_competitor_pages');
   });
 
   it('adds keywords_for_site for an existing_site brief with a domain', async () => {
@@ -70,6 +78,18 @@ describe('buildCallPlan', () => {
     const plan = buildCallPlan(brief, DEFAULT_DFS_COST_ESTIMATES);
     expect(findLine(plan, 'keywords_for_site')?.tasks).toBe(1);
     expect(findLine(plan, 'keywords_for_site')?.estimatedUsdMicro).toBe(DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro);
+  });
+
+  it('adds a 1-call site_ranked_urls ceiling for an existing_site brief, and none for greenfield', async () => {
+    // overlay_existing_site's labs fallback: at most one own-domain
+    // ranked_keywords call, priced at labsTaskUsdMicro, existing-site only.
+    const existing = buildCallPlan(await makeBrief({ withWebsite: true }), DEFAULT_DFS_COST_ESTIMATES);
+    expect(findLine(existing, 'site_ranked_urls')?.tasks).toBe(1);
+    expect(findLine(existing, 'site_ranked_urls')?.estimatedUsdMicro).toBe(DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro);
+    expect(findLine(existing, 'site_ranked_urls')?.stage).toBe('overlay_existing_site');
+
+    const greenfield = buildCallPlan(await makeBrief(), DEFAULT_DFS_COST_ESTIMATES);
+    expect(findLine(greenfield, 'site_ranked_urls')).toBeUndefined();
   });
 
   it('caps keyword_suggestions and serp_task_post seeds at their documented ceilings', async () => {
@@ -101,9 +121,39 @@ describe('buildCallPlan', () => {
     const serpHalved = findLine(halvedPlan, 'serp_task_post')?.estimatedUsdMicro ?? 0;
     expect(serpHalved).toBe(serpDefault); // serp price untouched by the labs override
 
-    const labsTotalDefault = defaultPlan.totalUsdMicro - serpDefault;
-    const labsTotalHalved = halvedPlan.totalUsdMicro - serpHalved;
+    const contentDefault = findLine(defaultPlan, 'content_parsing')?.estimatedUsdMicro ?? 0;
+    const contentHalved = findLine(halvedPlan, 'content_parsing')?.estimatedUsdMicro ?? 0;
+    expect(contentHalved).toBe(contentDefault); // content-parsing price untouched by the labs override
+
+    // Isolate the labs-only portion by removing both non-labs lines.
+    const labsTotalDefault = defaultPlan.totalUsdMicro - serpDefault - contentDefault;
+    const labsTotalHalved = halvedPlan.totalUsdMicro - serpHalved - contentHalved;
     expect(labsTotalHalved).toBe(labsTotalDefault / 2);
+  });
+});
+
+describe('OPERATION_STAGE (buildCallPlan exhaustiveness)', () => {
+  it('assigns a stage to every operation buildCallPlan can produce, across brief shapes', async () => {
+    const briefs = [await makeBrief(), await makeBrief({ withWebsite: true })];
+    for (const brief of briefs) {
+      const plan = buildCallPlan(brief, DEFAULT_DFS_COST_ESTIMATES);
+      for (const line of plan.lines) {
+        // A missing OPERATION_STAGE entry makes this undefined at runtime even
+        // though CallPlanLine.stage is typed as the non-optional BlueprintStage:
+        // this assertion is what actually catches a new operation that forgot
+        // to register a stage, not the type checker.
+        expect(OPERATION_STAGE[line.operation]).toBeDefined();
+        expect(line.stage).toBe(OPERATION_STAGE[line.operation]);
+      }
+    }
+  });
+
+  it('maps metric_enrichment to collect_keyword_evidence, not normalize_keyword_universe', () => {
+    // enrichMissingMetrics (keywords.ts) runs inside collectKeywordEvidenceHandler
+    // (orchestration/research-handlers.ts), which is registered under the
+    // collect_keyword_evidence stage (orchestration/handlers.ts). It never runs
+    // as part of normalize_keyword_universe.
+    expect(OPERATION_STAGE.metric_enrichment).toBe('collect_keyword_evidence');
   });
 });
 
@@ -116,13 +166,19 @@ describe('loadDfsCostEstimates', () => {
   it('overrides one field from KV JSON and falls back to the default for the other', async () => {
     const kv = fakeKv({ [DFS_COST_KV_KEY]: JSON.stringify({ labsTaskUsdMicro: 25_000 }) });
     const costs = await loadDfsCostEstimates(kv);
-    expect(costs).toEqual({ labsTaskUsdMicro: 25_000, serpTaskUsdMicro: DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro });
+    expect(costs).toEqual({
+      labsTaskUsdMicro: 25_000,
+      serpTaskUsdMicro: DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro,
+      contentParsingTaskUsdMicro: DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro,
+    });
   });
 
-  it('overrides both fields when both are present', async () => {
-    const kv = fakeKv({ [DFS_COST_KV_KEY]: JSON.stringify({ labsTaskUsdMicro: 1, serpTaskUsdMicro: 2 }) });
+  it('overrides all fields when all are present', async () => {
+    const kv = fakeKv({
+      [DFS_COST_KV_KEY]: JSON.stringify({ labsTaskUsdMicro: 1, serpTaskUsdMicro: 2, contentParsingTaskUsdMicro: 3 }),
+    });
     const costs = await loadDfsCostEstimates(kv);
-    expect(costs).toEqual({ labsTaskUsdMicro: 1, serpTaskUsdMicro: 2 });
+    expect(costs).toEqual({ labsTaskUsdMicro: 1, serpTaskUsdMicro: 2, contentParsingTaskUsdMicro: 3 });
   });
 
   it('falls back to defaults on invalid JSON', async () => {
@@ -134,7 +190,11 @@ describe('loadDfsCostEstimates', () => {
   it('falls back to defaults per-field when a field has the wrong type', async () => {
     const kv = fakeKv({ [DFS_COST_KV_KEY]: JSON.stringify({ labsTaskUsdMicro: 'a lot', serpTaskUsdMicro: 3 }) });
     const costs = await loadDfsCostEstimates(kv);
-    expect(costs).toEqual({ labsTaskUsdMicro: DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro, serpTaskUsdMicro: 3 });
+    expect(costs).toEqual({
+      labsTaskUsdMicro: DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro,
+      serpTaskUsdMicro: 3,
+      contentParsingTaskUsdMicro: DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro,
+    });
   });
 });
 
