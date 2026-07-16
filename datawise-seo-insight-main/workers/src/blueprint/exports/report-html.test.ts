@@ -232,4 +232,56 @@ describe('renderBlueprintReportHtml', () => {
 
     expect(html).toContain('Primary landing page for the head keyword.');
   });
+
+  it('renders an explanation for every partial reason, not just collect_us_fanout, and never leaves limitations empty', () => {
+    const home = makeNode();
+    const facts = baseFacts({
+      nodes: [home],
+      detailByPageId: new Map([[home.logicalPageId, makeDetail(home)]]),
+      latest: makeLatest({ completeness: 'partial', partialReasons: ['overlay_existing_site', 'refine_clusters'] }),
+    });
+
+    const html = renderBlueprintReportHtml(facts);
+
+    expect(html).toContain('The existing-site inventory could not be fully collected, so keep/update recommendations may be incomplete.');
+    expect(html).toContain('Live SERP refinement was incomplete, so some cluster boundaries are unrefined.');
+    expect(html).not.toMatch(/<h3>Partial Run Limitations<\/h3>\s*<ul>\s*<\/ul>/);
+  });
+
+  it('renders a fallback sentence for an unrecognized partial reason stage', () => {
+    const home = makeNode();
+    const facts = baseFacts({
+      nodes: [home],
+      detailByPageId: new Map([[home.logicalPageId, makeDetail(home)]]),
+      latest: makeLatest({ completeness: 'partial', partialReasons: ['some_future_stage'] }),
+    });
+
+    const html = renderBlueprintReportHtml(facts);
+
+    expect(html).toContain('Stage some_future_stage did not complete; related evidence may be missing.');
+  });
+
+  it('never drops a mutual parent cycle: both pages render under Detached and every node id appears exactly once', () => {
+    const nodeA = makeNode({ logicalPageId: 'page-a', slug: 'page-a', title: 'Page A', parentLogicalPageId: 'page-b' });
+    const nodeB = makeNode({ logicalPageId: 'page-b', slug: 'page-b', title: 'Page B', parentLogicalPageId: 'page-a' });
+    const facts = baseFacts({
+      nodes: [nodeA, nodeB],
+      detailByPageId: new Map([
+        [nodeA.logicalPageId, makeDetail(nodeA)],
+        [nodeB.logicalPageId, makeDetail(nodeB)],
+      ]),
+    });
+
+    const html = renderBlueprintReportHtml(facts);
+
+    expect(html).toContain('Detached');
+    const siteTreeStart = html.indexOf('<section class="site-tree">');
+    const siteTreeEnd = html.indexOf('</section>', siteTreeStart);
+    const siteTreeHtml = html.slice(siteTreeStart, siteTreeEnd);
+
+    expect(siteTreeHtml).toContain('Page A');
+    expect(siteTreeHtml).toContain('Page B');
+    const liCount = (siteTreeHtml.match(/<li>/g) ?? []).length;
+    expect(liCount).toBe(2);
+  });
 });

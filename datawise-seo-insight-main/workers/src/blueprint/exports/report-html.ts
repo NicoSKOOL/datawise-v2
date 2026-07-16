@@ -14,7 +14,20 @@ export interface BlueprintReportFacts {
 }
 
 const FOOTER_URL = 'https://datawiseseo.com';
-const FANOUT_LIMITATION = 'US fan-out evidence lands in a later phase.';
+
+// Copy for every stage that can show up in partialReasons. A partial run
+// must never render an empty limitations list, so any stage not listed here
+// falls back to a generic sentence built from the stage name itself.
+const PARTIAL_REASON_COPY: Record<string, string> = {
+  collect_us_fanout: 'US fan-out evidence lands in a later phase.',
+  synthesize_page_briefs: 'Per-page content briefs land in a later phase.',
+  overlay_existing_site: 'The existing-site inventory could not be fully collected, so keep/update recommendations may be incomplete.',
+  refine_clusters: 'Live SERP refinement was incomplete, so some cluster boundaries are unrefined.',
+};
+
+function partialReasonCopy(stage: string): string {
+  return PARTIAL_REASON_COPY[stage] ?? `Stage ${stage} did not complete; related evidence may be missing.`;
+}
 
 function esc(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -104,12 +117,15 @@ function buildChildrenByParent(nodes: BlueprintGraphNode[]): Map<string, Bluepri
 }
 
 // ancestors guards against a cyclical parent chain (should never happen, but
-// a broken chain must render something rather than recurse forever).
-function renderTreeItem(node: BlueprintGraphNode, childrenByParent: Map<string, BlueprintGraphNode[]>, ancestors: Set<string>): string {
+// a broken chain must render something rather than recurse forever). visited
+// records every node id actually rendered anywhere in the tree, so callers
+// can detect nodes a mutual parent cycle would otherwise drop entirely.
+function renderTreeItem(node: BlueprintGraphNode, childrenByParent: Map<string, BlueprintGraphNode[]>, ancestors: Set<string>, visited: Set<string>): string {
+  visited.add(node.logicalPageId);
   const children = (childrenByParent.get(node.logicalPageId) ?? []).filter((child) => !ancestors.has(child.logicalPageId));
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(node.logicalPageId);
-  const childrenHtml = children.length > 0 ? `<ul>${children.map((child) => renderTreeItem(child, childrenByParent, nextAncestors)).join('')}</ul>` : '';
+  const childrenHtml = children.length > 0 ? `<ul>${children.map((child) => renderTreeItem(child, childrenByParent, nextAncestors, visited)).join('')}</ul>` : '';
   return `<li>${esc(node.title)} <span class="slug">/${esc(node.slug)}</span>${childrenHtml}</li>`;
 }
 
@@ -119,9 +135,29 @@ function renderSiteTree(nodes: BlueprintGraphNode[]): string {
   const roots = nodes.filter((node) => node.parentLogicalPageId === null);
   const orphans = nodes.filter((node) => node.parentLogicalPageId !== null && !nodeById.has(node.parentLogicalPageId));
 
-  const rootsHtml = `<ul>${roots.map((node) => renderTreeItem(node, childrenByParent, new Set())).join('')}</ul>`;
-  const orphansHtml = orphans.length > 0
-    ? `<h3>Detached</h3><p>Pages whose parent no longer exists in this revision:</p><ul>${orphans.map((node) => renderTreeItem(node, childrenByParent, new Set())).join('')}</ul>`
+  const visited = new Set<string>();
+  const rootsHtml = `<ul>${roots.map((node) => renderTreeItem(node, childrenByParent, new Set(), visited)).join('')}</ul>`;
+  const orphanItems = orphans.map((node) => renderTreeItem(node, childrenByParent, new Set(), visited));
+
+  // Nodes whose parent is a mutual (or longer) cycle are neither a root nor
+  // an orphan (their declared parent id does exist), so they are never
+  // reached by the pass above. Every node id must appear exactly once, so
+  // promote whatever is left over to additional Detached entry points,
+  // sorted by id for deterministic output. Re-check `visited` inside the
+  // loop (not just at the point `remaining` was computed): an earlier
+  // cycle entry point can pull a later one in as a nested child.
+  const remaining = nodes
+    .filter((node) => !visited.has(node.logicalPageId))
+    .sort((a, b) => (a.logicalPageId < b.logicalPageId ? -1 : a.logicalPageId > b.logicalPageId ? 1 : 0));
+  const cycleItems: string[] = [];
+  for (const node of remaining) {
+    if (visited.has(node.logicalPageId)) continue;
+    cycleItems.push(renderTreeItem(node, childrenByParent, new Set(), visited));
+  }
+
+  const detachedItems = [...orphanItems, ...cycleItems];
+  const orphansHtml = detachedItems.length > 0
+    ? `<h3>Detached</h3><p>Pages whose parent no longer exists in this revision, or whose parent chain forms a cycle:</p><ul>${detachedItems.join('')}</ul>`
     : '';
 
   return `<section class="site-tree">
@@ -209,10 +245,7 @@ function renderEvidenceAppendix(nodes: BlueprintGraphNode[], detailByPageId: Map
 }
 
 function renderMethodology(facts: BlueprintReportFacts): string {
-  const limitations: string[] = [];
-  if (facts.latest.partialReasons.includes('collect_us_fanout')) {
-    limitations.push(FANOUT_LIMITATION);
-  }
+  const limitations: string[] = facts.latest.partialReasons.map(partialReasonCopy);
 
   const evidenceGapPages = facts.nodes.filter((node) => {
     const detail = facts.detailByPageId.get(node.logicalPageId);
