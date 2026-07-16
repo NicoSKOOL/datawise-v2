@@ -56,7 +56,7 @@ export default function BlueprintCanvas() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<'map' | 'table'>('map');
 
-  const { data: latest, isLoading, isError } = useLatestBlueprint(projectId ?? '');
+  const { data: latest, isLoading, isError, error, refetch } = useLatestBlueprint(projectId ?? '');
   const revisionId = latest?.revision.id;
   const { data: graph, isLoading: graphLoading } = useBlueprintGraph(revisionId);
 
@@ -68,11 +68,35 @@ export default function BlueprintCanvas() {
     );
   }
 
-  // The shared api() helper stringifies error bodies (useless for Blueprint
-  // routes, whose error field is an object, not a string), so a 404 for
-  // "no published blueprint yet" is indistinguishable from any other
-  // failure at this layer. Treat every error state as the empty state.
-  if (isError || !latest) {
+  // The worker's NotFoundError branch is the only backend error whose message
+  // reaches this component as the exact string 'Not Found' (see api.ts). That
+  // is the real "no blueprint published yet" case. Any other error message is
+  // a genuine backend failure and must not be shown as the empty state, since
+  // that copy could prompt an admin to kick off a redundant paid run.
+  const isNotFound = isError && error instanceof Error && error.message === 'Not Found';
+
+  if (isError && !isNotFound) {
+    return (
+      <div className="p-6">
+        <Card className="mx-auto max-w-lg">
+          <CardHeader>
+            <CardTitle>Could not load the blueprint</CardTitle>
+            <CardDescription>
+              Something went wrong while loading this project's blueprint. The run itself is not affected.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex gap-2">
+            <Button onClick={() => refetch()}>Retry</Button>
+            <Button asChild variant="outline">
+              <Link to="/blueprint">Back to projects</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (isNotFound || !latest) {
     return (
       <div className="p-6">
         <Card className="mx-auto max-w-lg">
