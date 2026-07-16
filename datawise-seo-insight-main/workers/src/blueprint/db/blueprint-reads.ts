@@ -1,7 +1,8 @@
 // Shared read loaders for the Blueprint Canvas UI wave: the latest published
 // version + revision for a project, ownership resolution for a bare revision
-// id, and the page graph for a revision (nodes + their primary keyword
-// metrics). Every later Canvas endpoint composes these instead of
+// id, the page graph for a revision (nodes + their primary keyword metrics),
+// and single-page detail (evidence composed from the cluster, SERP snapshot,
+// and FAQ tables). Every later Canvas endpoint composes these instead of
 // re-deriving the same joins.
 import { NotFoundError } from '../domain/api-errors';
 import { chunk } from './batch';
@@ -180,35 +181,119 @@ interface BlueprintPageRow {
   page_json: string;
 }
 
-interface ClusterMetricsRow {
-  cluster_id: string;
-  display_keyword: string | null;
-  search_volume: number | null;
-  main_intent: string | null;
-  member_count: number;
+// Shape of the `page_json` blob written by buildPageJson (domain/validate/publish.ts)
+// at materialization time. Only the fields this module reads are declared;
+// everything else in the blob (sections, warnings, overlay, ...) is ignored here.
+interface PageJsonScoreComponent {
+  key?: unknown;
+  contribution?: unknown;
+}
+
+interface PageJsonShape {
+  h1?: unknown;
+  metaDescription?: unknown;
+  clusterIds?: unknown;
+  scoreBreakdown?: { components?: unknown } | null;
+  evidenceRefs?: unknown;
+}
+
+function parsePageJson(raw: string): PageJsonShape {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as PageJsonShape) : {};
+  } catch {
+    return {};
+  }
+}
+
+function clusterIdsFrom(pageJson: PageJsonShape): string[] {
+  return Array.isArray(pageJson.clusterIds) ? pageJson.clusterIds.filter((id): id is string => typeof id === 'string') : [];
+}
+
+function firedSignalsFrom(pageJson: PageJsonShape): string[] {
+  const components = pageJson.scoreBreakdown?.components;
+  if (!Array.isArray(components)) return [];
+  return (components as PageJsonScoreComponent[])
+    .filter((c): c is { key: string; contribution: number } => typeof c?.key === 'string' && typeof c?.contribution === 'number' && c.contribution > 0)
+    .map((c) => c.key);
+}
+
+function evidenceRefIdsFrom(pageJson: PageJsonShape): string[] {
+  return Array.isArray(pageJson.evidenceRefs) ? pageJson.evidenceRefs.filter((id): id is string => typeof id === 'string') : [];
 }
 
 // The primary cluster for a page is clusterIds[0] inside its page_json blob;
 // there is no SQL-level join for that (it is JSON, not a column), so this
 // pulls it out in application code rather than trying to express it in SQL.
 function firstClusterId(pageJsonRaw: string): string | null {
-  try {
-    const parsed = JSON.parse(pageJsonRaw) as { clusterIds?: unknown };
-    const clusterIds = parsed?.clusterIds;
-    if (Array.isArray(clusterIds) && clusterIds.length > 0 && typeof clusterIds[0] === 'string') {
-      return clusterIds[0];
+  const clusterIds = clusterIdsFrom(parsePageJson(pageJsonRaw));
+  return clusterIds.length > 0 ? clusterIds[0] : null;
+}
+
+interface ClusterMetricsRow {
+  cluster_id: string;
+  decision_reason: string | null;
+  semantic_cohesion: number | null;
+  serp_overlap_cohesion: number | null;
+  primary_keyword_id: string | null;
+  display_keyword: string | null;
+  search_volume: number | null;
+  main_intent: string | null;
+  member_count: number;
+}
+
+// One metrics query per chunk of distinct cluster ids (chunked at 90 to stay
+// under D1's 100-bound-param ceiling alongside the run_id bind -- see
+// db/batch.ts). Shared by loadGraph (many clusters, one call) and
+// loadPageDetail (a single cluster) so the keyword_clusters + keywords join
+// lives in exactly one place.
+async function fetchClusterMetrics(d1: D1Database, runId: string, clusterIds: string[]): Promise<Map<string, ClusterMetricsRow>> {
+  const clusterMetrics = new Map<string, ClusterMetricsRow>();
+  for (const group of chunk(clusterIds, 90)) {
+    if (group.length === 0) continue;
+    const placeholders = group.map(() => '?').join(', ');
+    const result = await d1
+      .prepare(
+        `SELECT kc.id AS cluster_id, kc.decision_reason, kc.semantic_cohesion, kc.serp_overlap_cohesion,
+                kc.primary_keyword_id, k.display_keyword, k.search_volume, k.main_intent,
+                (SELECT COUNT(*) FROM cluster_keywords ck2 WHERE ck2.cluster_id = kc.id) AS member_count
+         FROM keyword_clusters kc
+         LEFT JOIN keywords k ON k.id = kc.primary_keyword_id
+         WHERE kc.run_id = ?
+           AND kc.id IN (${placeholders})
+         ORDER BY kc.id ASC`
+      )
+      .bind(runId, ...group)
+      .all<ClusterMetricsRow>();
+    for (const row of result.results) {
+      clusterMetrics.set(row.cluster_id, row);
     }
-    return null;
-  } catch {
-    return null;
   }
+  return clusterMetrics;
+}
+
+function buildGraphNode(page: BlueprintPageRow, metrics: ClusterMetricsRow | undefined): BlueprintGraphNode {
+  return {
+    logicalPageId: page.logical_page_id,
+    parentLogicalPageId: page.parent_logical_page_id,
+    pageType: page.page_type,
+    title: page.title,
+    slug: page.slug,
+    primaryKeyword: metrics ? metrics.display_keyword ?? page.primary_keyword_normalized : null,
+    primaryVolume: metrics ? metrics.search_volume ?? null : null,
+    primaryIntent: metrics ? metrics.main_intent ?? null : null,
+    recommendation: page.recommendation,
+    approval: page.approval,
+    priority: page.priority,
+    confidenceLabel: page.confidence_label,
+    supportingKeywordCount: metrics ? metrics.member_count : 0,
+  };
 }
 
 // Two queries total regardless of page count: all pages for the revision,
-// then one metrics query per chunk of distinct first-cluster ids (chunked at
-// 90 to stay under D1's 100-bound-param ceiling alongside the run_id bind --
-// see db/batch.ts). Pages with no cluster (skeleton pages like contact) get
-// null keyword fields and a 0 supporting-keyword count.
+// then one metrics query per chunk of distinct first-cluster ids. Pages with
+// no cluster (skeleton pages like contact) get null keyword fields and a 0
+// supporting-keyword count.
 export async function loadGraph(d1: D1Database, revisionId: string, runId: string): Promise<BlueprintGraphNode[]> {
   const pagesResult = await d1
     .prepare(
@@ -232,44 +317,251 @@ export async function loadGraph(d1: D1Database, revisionId: string, runId: strin
     }
   }
 
-  const clusterMetrics = new Map<string, ClusterMetricsRow>();
-  for (const group of chunk(Array.from(clusterIdSet), 90)) {
+  const clusterMetrics = await fetchClusterMetrics(d1, runId, Array.from(clusterIdSet));
+
+  return pages.map((page) => {
+    const clusterId = primaryClusterIdByPage.get(page.row_id);
+    return buildGraphNode(page, clusterId ? clusterMetrics.get(clusterId) : undefined);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Page detail: one page's node summary plus the evidence (cluster members,
+// competitor SERP positions, FAQs) that backs its placement decision.
+// ---------------------------------------------------------------------------
+
+export interface BlueprintPageDetail {
+  node: BlueprintGraphNode;
+  page: {
+    h1: string | null;
+    metaDescription: string | null;
+    decisionReason: string | null;
+    firedSignals: string[];
+    evidenceRefIds: string[];
+    clusterIds: string[];
+  };
+  cluster: {
+    members: { keyword: string; volume: number | null; intent: string | null }[];
+    totalMembers: number;
+    semanticCohesion: number | null;
+    serpOverlapCohesion: number | null;
+  } | null;
+  competitorEvidence: { domain: string; position: number; url: string }[];
+  evidenceAvailable: boolean;
+  faqs: { question: string; source: string | null }[];
+  fanOut: { status: 'pending_phase_5' };
+}
+
+async function loadPageRow(d1: D1Database, revisionId: string, logicalPageId: string): Promise<BlueprintPageRow> {
+  const row = await d1
+    .prepare(
+      `SELECT row_id, logical_page_id, parent_logical_page_id, page_type, title, slug,
+              primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json
+       FROM blueprint_pages
+       WHERE blueprint_revision_id = ?
+         AND logical_page_id = ?`
+    )
+    .bind(revisionId, logicalPageId)
+    .first<BlueprintPageRow>();
+  if (!row) throw new NotFoundError(`Blueprint page not found: ${logicalPageId}`);
+  return row;
+}
+
+interface ClusterMemberRow {
+  display_keyword: string;
+  search_volume: number | null;
+  main_intent: string | null;
+}
+
+// Top-30 members by volume (SQLite has no NULLS LAST, so the null check rides
+// as its own ascending sort key ahead of the descending volume) plus a
+// separate unbounded COUNT for totalMembers.
+async function loadClusterMembers(
+  d1: D1Database,
+  clusterId: string
+): Promise<{ members: { keyword: string; volume: number | null; intent: string | null }[]; totalMembers: number }> {
+  const membersResult = await d1
+    .prepare(
+      `SELECT k.display_keyword, k.search_volume, k.main_intent
+       FROM cluster_keywords ck
+       JOIN keywords k ON k.id = ck.keyword_id
+       WHERE ck.cluster_id = ?
+       ORDER BY (k.search_volume IS NULL) ASC, k.search_volume DESC, k.normalized_keyword ASC
+       LIMIT 30`
+    )
+    .bind(clusterId)
+    .all<ClusterMemberRow>();
+
+  const countRow = await d1
+    .prepare(`SELECT COUNT(*) AS total FROM cluster_keywords WHERE cluster_id = ?`)
+    .bind(clusterId)
+    .first<{ total: number }>();
+
+  return {
+    members: membersResult.results.map((row) => ({
+      keyword: row.display_keyword,
+      volume: row.search_volume,
+      intent: row.main_intent,
+    })),
+    totalMembers: countRow?.total ?? 0,
+  };
+}
+
+// Mirrors the ParsedOrganicItem shape providers/dataforseo/serp.ts actually
+// writes into serp_snapshots.organic_json (`rank`, not `position` or
+// `rank_absolute`; see parseSerpPayload in that file).
+interface OrganicItem {
+  rank: number | null;
+  url: string | null;
+  title: string | null;
+  domain: string | null;
+}
+
+// Finds the primary keyword's most recent SERP snapshot, filters its organic
+// results to the run's selected competitors, and reports position (`rank`)
+// ascending. Returns evidenceAvailable: false only when no snapshot exists at
+// all -- a snapshot with zero matching competitor domains still counts as
+// "evidence was collected", just with nothing to show.
+async function loadCompetitorEvidence(
+  d1: D1Database,
+  runId: string,
+  primaryKeywordId: string | null
+): Promise<{ competitorEvidence: { domain: string; position: number; url: string }[]; evidenceAvailable: boolean }> {
+  if (!primaryKeywordId) return { competitorEvidence: [], evidenceAvailable: false };
+
+  const snapshot = await d1
+    .prepare(`SELECT organic_json FROM serp_snapshots WHERE run_id = ? AND keyword_id = ? ORDER BY id ASC LIMIT 1`)
+    .bind(runId, primaryKeywordId)
+    .first<{ organic_json: string | null }>();
+  if (!snapshot) return { competitorEvidence: [], evidenceAvailable: false };
+
+  let organic: OrganicItem[];
+  try {
+    const parsed = JSON.parse(snapshot.organic_json ?? '[]');
+    organic = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    organic = [];
+  }
+
+  const competitorsResult = await d1
+    .prepare(`SELECT domain FROM competitors WHERE run_id = ? AND selected = 1`)
+    .bind(runId)
+    .all<{ domain: string }>();
+  const selectedDomains = new Set(competitorsResult.results.map((row) => row.domain));
+
+  const competitorEvidence: { domain: string; position: number; url: string }[] = [];
+  for (const item of organic) {
+    if (typeof item?.domain !== 'string' || !selectedDomains.has(item.domain)) continue;
+    if (typeof item.rank !== 'number' || typeof item.url !== 'string') continue;
+    competitorEvidence.push({ domain: item.domain, position: item.rank, url: item.url });
+  }
+  competitorEvidence.sort((a, b) => a.position - b.position);
+
+  return { competitorEvidence, evidenceAvailable: true };
+}
+
+interface FaqRow {
+  id: string;
+  question: string;
+  source_title: string | null;
+  source_url: string | null;
+}
+
+// faq_evidence has no direct keyword/query column: it links to serp_snapshots
+// via serp_snapshot_id, and serp_snapshots carries keyword_id (see
+// db/schema.sql). Scoping FAQs to a cluster therefore means: cluster's member
+// keyword ids -> snapshots for those keywords in this run -> their FAQs.
+// Chunked at 90 keyword ids to leave room for the run_id bind under D1's
+// 100-bound-param ceiling; results across chunks are merged and re-sorted by
+// id before the top-10 cap since per-chunk LIMITs can't be combined safely.
+async function loadClusterFaqs(d1: D1Database, runId: string, clusterId: string): Promise<{ question: string; source: string | null }[]> {
+  const keywordIdsResult = await d1
+    .prepare(`SELECT keyword_id FROM cluster_keywords WHERE cluster_id = ?`)
+    .bind(clusterId)
+    .all<{ keyword_id: string }>();
+  const keywordIds = keywordIdsResult.results.map((row) => row.keyword_id);
+  if (keywordIds.length === 0) return [];
+
+  const rows: FaqRow[] = [];
+  for (const group of chunk(keywordIds, 90)) {
     if (group.length === 0) continue;
     const placeholders = group.map(() => '?').join(', ');
     const result = await d1
       .prepare(
-        `SELECT kc.id AS cluster_id, k.display_keyword, k.search_volume, k.main_intent,
-                (SELECT COUNT(*) FROM cluster_keywords ck2 WHERE ck2.cluster_id = kc.id) AS member_count
-         FROM keyword_clusters kc
-         LEFT JOIN keywords k ON k.id = kc.primary_keyword_id
-         WHERE kc.run_id = ?
-           AND kc.id IN (${placeholders})
-         ORDER BY kc.id ASC`
+        `SELECT fe.id AS id, fe.question AS question, fe.source_title AS source_title, fe.source_url AS source_url
+         FROM faq_evidence fe
+         JOIN serp_snapshots ss ON ss.id = fe.serp_snapshot_id
+         WHERE ss.run_id = ?
+           AND ss.keyword_id IN (${placeholders})`
       )
       .bind(runId, ...group)
-      .all<ClusterMetricsRow>();
-    for (const row of result.results) {
-      clusterMetrics.set(row.cluster_id, row);
-    }
+      .all<FaqRow>();
+    rows.push(...result.results);
   }
 
-  return pages.map((page) => {
-    const clusterId = primaryClusterIdByPage.get(page.row_id);
-    const metrics = clusterId ? clusterMetrics.get(clusterId) : undefined;
-    return {
-      logicalPageId: page.logical_page_id,
-      parentLogicalPageId: page.parent_logical_page_id,
-      pageType: page.page_type,
-      title: page.title,
-      slug: page.slug,
-      primaryKeyword: metrics ? metrics.display_keyword ?? page.primary_keyword_normalized : null,
-      primaryVolume: metrics ? metrics.search_volume ?? null : null,
-      primaryIntent: metrics ? metrics.main_intent ?? null : null,
-      recommendation: page.recommendation,
-      approval: page.approval,
-      priority: page.priority,
-      confidenceLabel: page.confidence_label,
-      supportingKeywordCount: metrics ? metrics.member_count : 0,
+  rows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+  return rows.slice(0, 10).map((row) => ({
+    question: row.question,
+    source: row.source_title ?? row.source_url ?? null,
+  }));
+}
+
+// Composes one page's node summary with the evidence backing its placement:
+// cluster members + cohesion scores, competitor SERP positions, and FAQs.
+// fanOut is always the Phase 5 placeholder status -- fan-out query generation
+// does not exist yet.
+export async function loadPageDetail(
+  d1: D1Database,
+  revisionId: string,
+  runId: string,
+  logicalPageId: string
+): Promise<BlueprintPageDetail> {
+  const pageRow = await loadPageRow(d1, revisionId, logicalPageId);
+  const pageJson = parsePageJson(pageRow.page_json);
+  const clusterIds = clusterIdsFrom(pageJson);
+  const primaryClusterId = clusterIds.length > 0 ? clusterIds[0] : null;
+
+  const clusterMetrics = primaryClusterId ? await fetchClusterMetrics(d1, runId, [primaryClusterId]) : new Map<string, ClusterMetricsRow>();
+  const metrics = primaryClusterId ? clusterMetrics.get(primaryClusterId) : undefined;
+
+  const node = buildGraphNode(pageRow, metrics);
+
+  let cluster: BlueprintPageDetail['cluster'] = null;
+  let competitorEvidence: BlueprintPageDetail['competitorEvidence'] = [];
+  let evidenceAvailable = false;
+  let faqs: BlueprintPageDetail['faqs'] = [];
+
+  if (primaryClusterId) {
+    const { members, totalMembers } = await loadClusterMembers(d1, primaryClusterId);
+    cluster = {
+      members,
+      totalMembers,
+      semanticCohesion: metrics?.semantic_cohesion ?? null,
+      serpOverlapCohesion: metrics?.serp_overlap_cohesion ?? null,
     };
-  });
+
+    const evidence = await loadCompetitorEvidence(d1, runId, metrics?.primary_keyword_id ?? null);
+    competitorEvidence = evidence.competitorEvidence;
+    evidenceAvailable = evidence.evidenceAvailable;
+
+    faqs = await loadClusterFaqs(d1, runId, primaryClusterId);
+  }
+
+  return {
+    node,
+    page: {
+      h1: typeof pageJson.h1 === 'string' ? pageJson.h1 : null,
+      metaDescription: typeof pageJson.metaDescription === 'string' ? pageJson.metaDescription : null,
+      decisionReason: metrics?.decision_reason ?? null,
+      firedSignals: firedSignalsFrom(pageJson),
+      evidenceRefIds: evidenceRefIdsFrom(pageJson),
+      clusterIds,
+    },
+    cluster,
+    competitorEvidence,
+    evidenceAvailable,
+    faqs,
+    fanOut: { status: 'pending_phase_5' },
+  };
 }
