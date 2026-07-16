@@ -129,6 +129,59 @@ export async function loadLatestBlueprint(
   };
 }
 
+interface VersionRevisionRow {
+  version_id: string;
+  version_number: number;
+  status: string;
+  schema_version: string;
+  ruleset_version: string;
+  completeness: string;
+  partial_reasons_json: string;
+  summary_json: string;
+  published_at: string | null;
+  revision_id: string;
+  revision_number: number;
+  revision_hash: string;
+}
+
+// Loads the BlueprintLatestView-shaped metadata for a SPECIFIC revision,
+// not necessarily the latest published one: the export report describes
+// exactly the revision the caller asked for, even if a newer version has
+// since been published. No organization join here, unlike
+// loadLatestBlueprint: callers resolve and verify ownership of the
+// revisionId via loadRevisionOwned first.
+export async function loadVersionForRevision(d1: D1Database, revisionId: string): Promise<BlueprintLatestView> {
+  const row = await d1
+    .prepare(
+      `SELECT bv.id AS version_id, bv.version_number, bv.status, bv.schema_version, bv.ruleset_version,
+              bv.completeness, bv.partial_reasons_json, bv.summary_json, bv.published_at,
+              br.id AS revision_id, br.revision_number, br.revision_hash
+       FROM blueprint_revisions br
+       JOIN blueprint_versions bv ON bv.id = br.blueprint_version_id
+       WHERE br.id = ?`
+    )
+    .bind(revisionId)
+    .first<VersionRevisionRow>();
+  if (!row) throw new NotFoundError(`Blueprint revision not found: ${revisionId}`);
+
+  return {
+    versionId: row.version_id,
+    versionNumber: row.version_number,
+    status: row.status,
+    schemaVersion: row.schema_version,
+    rulesetVersion: row.ruleset_version,
+    completeness: row.completeness,
+    partialReasons: parseJsonArray(row.partial_reasons_json),
+    summary: parseJsonObject(row.summary_json),
+    publishedAt: row.published_at,
+    revision: {
+      id: row.revision_id,
+      revisionNumber: row.revision_number,
+      revisionHash: row.revision_hash,
+    },
+  };
+}
+
 interface RevisionOwnedRow {
   revision_id: string;
   version_id: string;

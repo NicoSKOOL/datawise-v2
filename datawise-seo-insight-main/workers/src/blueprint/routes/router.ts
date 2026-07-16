@@ -13,7 +13,7 @@ import {
   startResearchRun,
 } from './projects';
 import { getRun, cancelRun, retryRun, getUsage } from './runs';
-import { getLatestBlueprint, getBlueprintGraph, getBlueprintPage } from './blueprints';
+import { getLatestBlueprint, getBlueprintGraph, getBlueprintPage, exportBlueprint } from './blueprints';
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -88,6 +88,11 @@ const ROUTES: RouteEntry[] = [
     method: 'GET',
     pattern: /^\/api\/blueprint\/v1\/blueprint-revisions\/(?<id>[^/]+)\/pages\/(?<pageId>[^/]+)$/,
     handler: getBlueprintPage,
+  },
+  {
+    method: 'GET',
+    pattern: /^\/api\/blueprint\/v1\/blueprint-revisions\/(?<id>[^/]+)\/export$/,
+    handler: exportBlueprint,
   },
 ];
 

@@ -25,7 +25,12 @@ function makeRequest(path: string): Request {
 }
 
 async function call(env: any, path: string, user: AuthUser = adminUser): Promise<Response> {
-  return handleBlueprintRequest(makeRequest(path), env, user, path, 'GET');
+  // Mirrors index.ts's real dispatch: path is url.pathname (query string
+  // stripped), not the raw request path. Route patterns are anchored with
+  // `$` and would never match a path that still carries a `?format=...`
+  // suffix.
+  const pathname = new URL(`https://api.test${path}`).pathname;
+  return handleBlueprintRequest(makeRequest(path), env, user, pathname, 'GET');
 }
 
 // Seed helpers below mirror db/blueprint-reads.test.ts's fixtures (that file
@@ -164,6 +169,102 @@ describe('GET /api/blueprint/v1/blueprint-revisions/:id/graph', () => {
     const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/graph`, otherUser);
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'Not Found' });
+  });
+});
+
+async function seedClusterWithDecisionReason(d1: D1Database, runId: string, clusterId: string, decisionReason: string): Promise<void> {
+  await d1
+    .prepare(
+      `INSERT INTO keyword_clusters (id, run_id, label, decision_reason)
+       VALUES (?, ?, 'Test Cluster', ?)`
+    )
+    .bind(clusterId, runId, decisionReason)
+    .run();
+}
+
+describe('GET /api/blueprint/v1/blueprint-revisions/:id/export', () => {
+  it('returns 400 for an unknown format value', async () => {
+    const env = fakeEnv();
+    const { revisionId } = await seedFixture(env);
+
+    const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/export?format=weird`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('invalid_input');
+  });
+
+  it('returns the invisible 404 body for a revision belonging to another organization', async () => {
+    const env = fakeEnv();
+    const { revisionId } = await seedFixture(env);
+
+    const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/export`, otherUser);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Not Found' });
+  });
+
+  describe('format=csv', () => {
+    it('returns a csv attachment with the exact header row and the page\'s decision reason', async () => {
+      const env = fakeEnv();
+      const { projectId, runId, revisionId } = await seedFixture(env);
+      await seedClusterWithDecisionReason(env.BLUEPRINT_DB, runId, 'kcl_export', 'Primary landing page for the head keyword.');
+      await env.BLUEPRINT_DB
+        .prepare(`UPDATE blueprint_pages SET page_json = ? WHERE blueprint_revision_id = ? AND logical_page_id = 'home'`)
+        .bind(JSON.stringify({ clusterIds: ['kcl_export'] }), revisionId)
+        .run();
+
+      const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/export?format=csv`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/csv; charset=utf-8');
+      expect(res.headers.get('Content-Disposition')).toBe(`attachment; filename="blueprint-${projectId}.csv"`);
+      const csv = await res.text();
+      const lines = csv.split('\r\n');
+      expect(lines[0]).toBe(
+        'slug,title,page_type,primary_keyword,volume,intent,parent_slug,recommendation,priority,supporting_keywords,decision_reason'
+      );
+      expect(lines[1]).toContain('Primary landing page for the head keyword.');
+    });
+
+    it('defaults to html when no format is given but csv is explicit opt-in', async () => {
+      const env = fakeEnv();
+      const { revisionId } = await seedFixture(env);
+
+      const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/export`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
+    });
+  });
+
+  describe('format=html', () => {
+    it('returns an inline html document containing the doctype and the project name', async () => {
+      const env = fakeEnv();
+      const { revisionId } = await seedFixture(env);
+
+      const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/export?format=html`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
+      expect(res.headers.get('Content-Disposition')).toBeNull();
+      const html = await res.text();
+      expect(html.startsWith('<!doctype html>')).toBe(true);
+      expect(html).toContain('Test Project');
+    });
+
+    it('escapes a hostile page title instead of rendering it raw', async () => {
+      const env = fakeEnv();
+      const { revisionId } = await seedFixture(env);
+      await env.BLUEPRINT_DB
+        .prepare(`UPDATE blueprint_pages SET title = ? WHERE blueprint_revision_id = ? AND logical_page_id = 'home'`)
+        .bind('<script>alert(1)</script>', revisionId)
+        .run();
+
+      const res = await call(env, `/api/blueprint/v1/blueprint-revisions/${revisionId}/export?format=html`);
+
+      const html = await res.text();
+      expect(html).not.toContain('<script>alert(1)</script>');
+      expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    });
   });
 });
 
