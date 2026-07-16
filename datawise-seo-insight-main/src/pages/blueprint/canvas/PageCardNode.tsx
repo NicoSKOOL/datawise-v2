@@ -4,6 +4,7 @@ import { Home, Wrench, MapPin, Navigation, BookOpen, Building2, Mail, FileText, 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { BlueprintGraphNode } from './types';
+import { recommendationClassName } from './badges';
 
 const PAGE_TYPE_ICONS: Record<string, LucideIcon> = {
   home: Home,
@@ -13,13 +14,6 @@ const PAGE_TYPE_ICONS: Record<string, LucideIcon> = {
   resource: BookOpen,
   company: Building2,
   contact: Mail,
-};
-
-const RECOMMENDATION_STYLES: Record<string, string> = {
-  create: 'bg-emerald-100 text-emerald-900',
-  update: 'bg-amber-100 text-amber-900',
-  keep: 'bg-blue-100 text-blue-900',
-  consolidate: 'bg-slate-100 text-slate-900',
 };
 
 const compactVolume = new Intl.NumberFormat('en', { notation: 'compact' });
@@ -32,7 +26,7 @@ export interface PageCardNodeData extends Record<string, unknown> {
 function PageCardNodeImpl({ data }: NodeProps) {
   const { node, selected } = data as PageCardNodeData;
   const Icon = PAGE_TYPE_ICONS[node.pageType] ?? FileText;
-  const recommendationClass = RECOMMENDATION_STYLES[node.recommendation] ?? RECOMMENDATION_STYLES.keep;
+  const recommendationClass = recommendationClassName(node.recommendation);
 
   return (
     <div
