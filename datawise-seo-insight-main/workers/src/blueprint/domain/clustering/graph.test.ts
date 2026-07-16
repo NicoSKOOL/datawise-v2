@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildKeywordSimilarityGraph } from './graph';
+import { buildKeywordSimilarityGraph, edgeEligibleForMerge } from './graph';
 import type { KeywordNode } from './graph';
-import { CLUSTER_RULESET_V1 } from './ruleset';
+import { CLUSTER_RULESET_V2 } from './ruleset';
 import type { ClusterRuleset } from './ruleset';
 
 function kw(overrides: Partial<KeywordNode> & { keywordId: string }): KeywordNode {
@@ -21,7 +21,7 @@ function kw(overrides: Partial<KeywordNode> & { keywordId: string }): KeywordNod
   };
 }
 
-const RS = CLUSTER_RULESET_V1;
+const RS = CLUSTER_RULESET_V2;
 
 describe('blocking / candidate generation', () => {
   it('pairs nodes that share a token', () => {
@@ -178,5 +178,30 @@ describe('determinism under input reordering', () => {
     const r1 = buildKeywordSimilarityGraph({ nodes: base, ruleset: RS });
     const r2 = buildKeywordSimilarityGraph({ nodes: [...base].reverse(), ruleset: RS });
     expect(JSON.stringify(r1)).toBe(JSON.stringify(r2));
+  });
+});
+
+describe('edgeEligibleForMerge (cluster-v2 semantic-only gate)', () => {
+  const RS = CLUSTER_RULESET_V2;
+  const floor = RS.clusters.semanticOnlyMergeFloor;
+
+  it('rejects any edge below edgeThreshold regardless of components', () => {
+    expect(edgeEligibleForMerge({ score: RS.edgeThreshold - 0.01, components: { semantic: 0.99, serpJaccard: 0.9, intent: 1 } }, RS)).toBe(false);
+  });
+
+  it('accepts a threshold-passing edge with measured SERP overlap, even at low cosine', () => {
+    expect(edgeEligibleForMerge({ score: 0.65, components: { semantic: 0.6, serpJaccard: 0.5, intent: 1 } }, RS)).toBe(true);
+  });
+
+  it('rejects a threshold-passing semantic-only edge below the floor', () => {
+    expect(edgeEligibleForMerge({ score: 0.75, components: { semantic: floor - 0.01, serpJaccard: null, intent: 1 } }, RS)).toBe(false);
+  });
+
+  it('accepts a semantic-only edge at or above the floor', () => {
+    expect(edgeEligibleForMerge({ score: floor, components: { semantic: floor, serpJaccard: null, intent: null } }, RS)).toBe(true);
+  });
+
+  it('rejects an intent-only edge (no cosine, no SERP overlap) even at score 1', () => {
+    expect(edgeEligibleForMerge({ score: 1, components: { semantic: null, serpJaccard: null, intent: 1 } }, RS)).toBe(false);
   });
 });

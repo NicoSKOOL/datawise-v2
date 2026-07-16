@@ -1,7 +1,7 @@
 import type { SearchIntent } from '../../contracts/enums';
 import type { ClusterRuleset } from './ruleset';
 import type { GraphEdge, KeywordNode, ScoreResult } from './graph';
-import { buildKeywordSimilarityGraph, scoreEdge } from './graph';
+import { buildKeywordSimilarityGraph, edgeEligibleForMerge, scoreEdge } from './graph';
 import { forbiddenEdgeViolations } from './constraints';
 import type { ConstraintViolation } from './constraints';
 import { assembleClusterDraft, computeClusterCohesion } from './clusters';
@@ -403,6 +403,21 @@ export function refineClusters(input: {
     // is neither merged nor adjudicated: it is not ambiguous, it is forbidden.
     if (hardBlock) continue;
 
+    // A pair with neither live evidence nor measured SERP overlap is scored on
+    // representative-vector cosine (+ intent) alone. Below the semantic-only
+    // adjudication floor that is not an ambiguous boundary, it is an
+    // unevidenced non-relationship: cluster-v1 persisted 21K such rows in one
+    // run. Only unevidenced pairs at within-service cosine or above are worth
+    // a future adjudicator's attention.
+    const unevidenced = !hasLiveEvidence && edge.components.serpOverlap === null;
+    if (
+      unevidenced &&
+      (edge.components.semantic === null ||
+        edge.components.semantic < ruleset.clusters.semanticOnlyAdjudicationFloor)
+    ) {
+      continue;
+    }
+
     // An intent-only conflict never auto-applies (Phase 4 has no adjudicator);
     // it is surfaced as an intent_exception, but only when the pair is similar
     // enough (>= the ambiguous-band floor) for the intent conflict to be the
@@ -559,11 +574,12 @@ export function refineClusters(input: {
     const cohesion = cohesionByCluster.get(c.clusterId) ?? null;
     const clusterHasLive = hasLive.get(c.clusterId) ?? false;
 
-    // Recompute the intra-cluster keyword graph and cut on clean strong edges.
+    // Recompute the intra-cluster keyword graph and cut on clean strong edges,
+    // using the same merge gate stage 10 clusters with (edgeEligibleForMerge).
     // (Static graph in Phase 4: see the inertness note above.)
     const memberGraph = buildKeywordSimilarityGraph({ nodes: memberNodes, ruleset });
     const cleanEdges = memberGraph.edges.filter(
-      (e: GraphEdge) => e.violations.length === 0 && e.score >= edgeThreshold,
+      (e: GraphEdge) => e.violations.length === 0 && edgeEligibleForMerge(e, ruleset),
     );
     const components = connectedComponents(
       memberNodes.map((n) => n.keywordId),
@@ -622,7 +638,7 @@ export function refineClusters(input: {
     const memberNodes = fs.members.map((id) => byId.get(id)).filter((n): n is KeywordNode => !!n);
     const memberGraph = buildKeywordSimilarityGraph({ nodes: memberNodes, ruleset });
     const strongEdges = memberGraph.edges.filter(
-      (e: GraphEdge) => e.violations.length === 0 && e.score >= edgeThreshold,
+      (e: GraphEdge) => e.violations.length === 0 && edgeEligibleForMerge(e, ruleset),
     );
     const draft = assembleClusterDraft({ memberIds: fs.members, byId, strongEdges, displayKeywords });
     const setKey = fs.members.slice().sort(cmpStr).join(' ');

@@ -3,7 +3,7 @@ import { planUniverseNormalization } from './universe';
 import type { KeywordRowLite } from './universe';
 import type { NormalizedProjectBrief } from '../../contracts/types';
 import type { KeywordEnrichment } from '../../providers/dataforseo/evidence-readback';
-import { CLUSTER_RULESET_V1 } from './ruleset';
+import { CLUSTER_RULESET_V2 } from './ruleset';
 import type { ClusterRuleset } from './ruleset';
 
 const BRIEF: NormalizedProjectBrief = {
@@ -84,7 +84,7 @@ describe('planUniverseNormalization', () => {
       ['plumber austin', { ...EMPTY_ENRICHMENT, coreKeyword: 'different core', mainIntent: 'informational' }],
     ]);
 
-    const plan = planUniverseNormalization({ keywords, enrichment, brief: BRIEF, ruleset: CLUSTER_RULESET_V1 });
+    const plan = planUniverseNormalization({ keywords, enrichment, brief: BRIEF, ruleset: CLUSTER_RULESET_V2 });
 
     const f1 = fieldsFor(plan, 'k1');
     expect(f1.coreKeyword).toBe('drain cleaning');
@@ -106,7 +106,7 @@ describe('planUniverseNormalization', () => {
       keywords,
       enrichment: new Map(),
       brief: BRIEF,
-      ruleset: CLUSTER_RULESET_V1,
+      ruleset: CLUSTER_RULESET_V2,
     });
 
     const f1 = fieldsFor(plan, 'k1');
@@ -127,7 +127,7 @@ describe('planUniverseNormalization', () => {
       keywords,
       enrichment: new Map(),
       brief: BRIEF,
-      ruleset: CLUSTER_RULESET_V1,
+      ruleset: CLUSTER_RULESET_V2,
     });
 
     expect(fieldsFor(plan, 'k1').excludedReason).toBe('excluded_topic');
@@ -140,8 +140,8 @@ describe('planUniverseNormalization', () => {
 
   it('caps retention at ruleset.universe.maxRetained by relevance rank, exempting user-seed keywords', () => {
     const ruleset = {
-      ...CLUSTER_RULESET_V1,
-      universe: { ...CLUSTER_RULESET_V1.universe, maxRetained: 1 },
+      ...CLUSTER_RULESET_V2,
+      universe: { ...CLUSTER_RULESET_V2.universe, maxRetained: 1 },
     } as unknown as ClusterRuleset;
     const keywords: KeywordRowLite[] = [
       // Exact user-seed string (buildSeedQueries emits "<service> <primary area city>"
@@ -170,7 +170,7 @@ describe('planUniverseNormalization', () => {
       keywords,
       enrichment: new Map(),
       brief: BRIEF,
-      ruleset: CLUSTER_RULESET_V1,
+      ruleset: CLUSTER_RULESET_V2,
     });
     expect(plan.serviceLinks).toContainEqual(['k1', 's1']);
     expect(plan.serviceAreaLinks).toContainEqual(['k1', 'a1']);
@@ -185,7 +185,7 @@ describe('planUniverseNormalization', () => {
     const enrichment = new Map<string, KeywordEnrichment>([
       ['drain cleaning austin', { ...EMPTY_ENRICHMENT, coreKeyword: 'drain cleaning' }],
     ]);
-    const input = { keywords, enrichment, brief: BRIEF, ruleset: CLUSTER_RULESET_V1 };
+    const input = { keywords, enrichment, brief: BRIEF, ruleset: CLUSTER_RULESET_V2 };
 
     const plan1 = planUniverseNormalization(input);
     const plan2 = planUniverseNormalization(input);
@@ -202,7 +202,7 @@ describe('planUniverseNormalization', () => {
     const enrichment = new Map<string, KeywordEnrichment>([
       ['drain cleaning austin', { ...EMPTY_ENRICHMENT, coreKeyword: 'drain cleaning' }],
     ]);
-    const plan = planUniverseNormalization({ keywords, enrichment, brief: BRIEF, ruleset: CLUSTER_RULESET_V1 });
+    const plan = planUniverseNormalization({ keywords, enrichment, brief: BRIEF, ruleset: CLUSTER_RULESET_V2 });
 
     expect(plan.counters).toEqual({
       total: 4,

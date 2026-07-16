@@ -645,7 +645,7 @@ async function seedStrongCluster(
     .bind(kid, runId, spec.nk, spec.nk, spec.volume)
     .run();
   const scoreBreakdownJson = spec.evidenceRefIds !== undefined
-    ? JSON.stringify({ rulesetVersion: 'cluster-v1', evidenceRefIds: spec.evidenceRefIds })
+    ? JSON.stringify({ rulesetVersion: 'cluster-v2', evidenceRefIds: spec.evidenceRefIds })
     : null;
   await d1
     .prepare(

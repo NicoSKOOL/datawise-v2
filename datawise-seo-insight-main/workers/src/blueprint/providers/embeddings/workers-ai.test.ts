@@ -4,7 +4,7 @@ import { newId, nowIso } from '../../db/util';
 import type { StageContext } from '../../orchestration/handlers';
 import { embedKeywordTexts } from './workers-ai';
 import type { EmbeddingInput } from '../../domain/clustering/features';
-import { CLUSTER_RULESET_V1 } from '../../domain/clustering/ruleset';
+import { CLUSTER_RULESET_V2 } from '../../domain/clustering/ruleset';
 import type { ClusterRuleset } from '../../domain/clustering/ruleset';
 
 async function seedProject(d1: D1Database): Promise<string> {
@@ -110,15 +110,15 @@ function makeInputs(n: number): EmbeddingInput[] {
   }));
 }
 
-// CLUSTER_RULESET_V1 is `as const`, so its embedding.batchSize/
+// CLUSTER_RULESET_V2 is `as const`, so its embedding.batchSize/
 // maxBatchesPerRun are pinned literal types (100/40). Tests need arbitrary
 // small numbers to exercise batching/truncation boundaries, so this helper
 // widens back to plain `number` via an explicit cast rather than fighting
 // the literal types with per-call `as const` overrides.
 function ruleset(overrides: { batchSize?: number; maxBatchesPerRun?: number }): ClusterRuleset {
   return {
-    ...CLUSTER_RULESET_V1,
-    embedding: { ...CLUSTER_RULESET_V1.embedding, ...overrides },
+    ...CLUSTER_RULESET_V2,
+    embedding: { ...CLUSTER_RULESET_V2.embedding, ...overrides },
   } as unknown as ClusterRuleset;
 }
 
@@ -138,7 +138,7 @@ describe('embedKeywordTexts', () => {
     expect(outcome.batches).toHaveLength(3);
     expect(outcome.vectorCount).toBe(7);
     expect(outcome.truncatedCount).toBe(0);
-    expect(outcome.model).toBe(CLUSTER_RULESET_V1.embedding.model);
+    expect(outcome.model).toBe(CLUSTER_RULESET_V2.embedding.model);
   });
 
   it('truncates inputs beyond maxBatchesPerRun * batchSize', async () => {
@@ -180,7 +180,7 @@ describe('embedKeywordTexts', () => {
     for (const row of rows) {
       expect(row.provider).toBe('workers_ai');
       expect(row.operation).toBe('embeddings');
-      expect(row.endpoint_or_model).toBe(CLUSTER_RULESET_V1.embedding.model);
+      expect(row.endpoint_or_model).toBe(CLUSTER_RULESET_V2.embedding.model);
       expect(row.cache_status).toBe('bypass');
       expect(row.cost_usd_micro).toBe(0);
     }
@@ -209,8 +209,8 @@ describe('embedKeywordTexts', () => {
     expect(artifactRow).toMatchObject({ id: artifactId, run_id: runId, storage_key: storageKey });
 
     const stored = JSON.parse(artifacts.store.get(storageKey)!);
-    expect(stored.model).toBe(CLUSTER_RULESET_V1.embedding.model);
-    expect(stored.template).toBe(CLUSTER_RULESET_V1.embedding.contextTemplate);
+    expect(stored.model).toBe(CLUSTER_RULESET_V2.embedding.model);
+    expect(stored.template).toBe(CLUSTER_RULESET_V2.embedding.contextTemplate);
     expect(stored.vectors).toHaveLength(5);
     void raw;
   });

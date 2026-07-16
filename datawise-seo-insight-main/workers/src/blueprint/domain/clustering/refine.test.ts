@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { refineClusters } from './refine';
 import type { RefineClusterInput, LiveSerpEvidence } from './refine';
 import type { KeywordNode } from './graph';
-import { CLUSTER_RULESET_V1 } from './ruleset';
+import { CLUSTER_RULESET_V2 } from './ruleset';
 import { canonicalize } from '../hash';
 import type { SearchIntent } from '../../contracts/enums';
 
@@ -59,7 +59,7 @@ describe('refineClusters', () => {
       ['drain cleaning services austin', live(['u1', 'u2'])],
     ]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoMerges).toBe(1);
     expect(result.stats.liveSnapshotCoverage).toBe(2);
@@ -89,7 +89,7 @@ describe('refineClusters', () => {
       ['water heater repair austin', live(['u1', 'u2', 'u3', 'u4', 'u5'])],
     ]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoMerges).toBe(0);
     expect(result.clusters).toHaveLength(2);
@@ -116,7 +116,7 @@ describe('refineClusters', () => {
     // No entries -> no cluster has a live snapshot.
     const liveByQuery = new Map<string, LiveSerpEvidence>();
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoMerges).toBe(0);
     expect(result.stats.liveSnapshotCoverage).toBe(0);
@@ -147,7 +147,7 @@ describe('refineClusters', () => {
       ['drain cleaning services austin', live([], [], [])],
     ]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoMerges).toBe(0);
     expect(result.stats.liveSnapshotCoverage).toBe(2); // both snapshots exist, just empty
@@ -177,7 +177,7 @@ describe('refineClusters', () => {
       ['affordable plumbing austin', live(['u1', 'u2'])],
     ]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoMerges).toBe(0);
     expect(result.clusters).toHaveLength(2);
@@ -201,7 +201,7 @@ describe('refineClusters', () => {
       ['how plumbing works austin', live(['u1', 'u2'])],
     ]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoMerges).toBe(0);
     expect(result.adjudications).toHaveLength(1);
@@ -227,7 +227,7 @@ describe('refineClusters', () => {
     const clusters = [cluster('c_low', ['m1', 'm2', 'm3', 'm4'], 'm1')];
     const liveByQuery = new Map<string, LiveSerpEvidence>([['drain repair austin', live(['u1', 'u2'])]]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoSplits).toBe(1);
     expect(result.clusters).toHaveLength(2);
@@ -249,7 +249,7 @@ describe('refineClusters', () => {
     const clusters = [cluster('c_low', ['m1', 'm2', 'm3'], 'm1')];
     const liveByQuery = new Map<string, LiveSerpEvidence>([['plumbing austin one', live(['u1'])]]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.stats.autoSplits).toBe(0);
     expect(result.clusters).toHaveLength(1);
@@ -272,7 +272,7 @@ describe('refineClusters', () => {
     ];
     const liveByQuery = new Map<string, LiveSerpEvidence>([['drain cleaning austin', live(['u1'])]]);
 
-    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     expect(result.clusters).toHaveLength(2);
     for (const c of result.clusters) {
@@ -305,7 +305,7 @@ describe('refineClusters', () => {
     const displayKeywords = displayMap(nodes);
 
     const run = (cs: RefineClusterInput[]) =>
-      refineClusters({ clusters: cs, nodes, displayKeywords, liveByQuery, ruleset: CLUSTER_RULESET_V1 });
+      refineClusters({ clusters: cs, nodes, displayKeywords, liveByQuery, ruleset: CLUSTER_RULESET_V2 });
 
     const forward = run(clusters);
     const reversed = run([...clusters].reverse());
@@ -314,5 +314,45 @@ describe('refineClusters', () => {
     expect(canonicalize(run(clusters))).toBe(canonicalize(run(clusters)));
     // Non-trivial: c_a and c_b auto-merge (identical vectors, full overlap).
     expect(forward.stats.autoMerges).toBe(1);
+  });
+});
+
+describe('semantic-only adjudication floor (cluster-v2)', () => {
+  it('emits NO adjudication for an unevidenced pair below the adjudication floor', () => {
+    // cosine([1,0,0,0],[0.6,0.8,0,0]) = 0.6, below
+    // semanticOnlyAdjudicationFloor (0.75). Same intent, no live evidence, no
+    // SERP urls: cluster-v1 wrote this as an insufficient_evidence row;
+    // cluster-v2 treats it as an unevidenced non-relationship and stays quiet.
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain repair austin', vector: [0.6, 0.8, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    expect(result.adjudications).toHaveLength(0);
+    expect(result.clusters).toHaveLength(2);
+  });
+
+  it('still emits insufficient_evidence for an unevidenced pair at within-service cosine (>= floor)', () => {
+    // cosine([1,0,0,0],[0.8,0.6,0,0]) = 0.8, above the 0.75 floor but below
+    // the 0.85 merge floor: worth a future adjudicator, not a merge.
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning austin', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain unclogging austin', vector: [0.8, 0.6, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    expect(result.adjudications).toHaveLength(1);
+    expect(result.adjudications[0].caseType).toBe('merge');
+    expect(result.adjudications[0].decision).toBe('insufficient_evidence');
+    expect(result.adjudications[0].scoreContext.reason).toBe('no_live_evidence');
   });
 });

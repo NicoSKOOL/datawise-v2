@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BLUEPRINT_STAGES } from '../contracts/enums';
 import type { BlueprintStage } from '../contracts/enums';
-import { CLUSTER_RULESET_V1 } from './clustering/ruleset';
+import { CLUSTER_RULESET_V2 } from './clustering/ruleset';
 import { PAGE_PLAN_RULESET_V1 } from './page-plan/ruleset';
 import { BLUEPRINT_RULESET_VERSION, BLUEPRINT_SCHEMA_VERSION, LEGACY_RULESET_VERSION, rulesetVersionForStage } from './ruleset';
 
@@ -13,9 +13,9 @@ const PAGE_PLAN_STAGES: BlueprintStage[] = [
 ];
 
 describe('rulesetVersionForStage', () => {
-  it('maps clustering stages to CLUSTER_RULESET_V1.version', () => {
+  it('maps clustering stages to CLUSTER_RULESET_V2.version', () => {
     for (const stage of CLUSTER_STAGES) {
-      expect(rulesetVersionForStage(stage)).toBe(CLUSTER_RULESET_V1.version);
+      expect(rulesetVersionForStage(stage)).toBe(CLUSTER_RULESET_V2.version);
     }
   });
 
@@ -48,7 +48,7 @@ describe('version constants', () => {
   });
 
   it('BLUEPRINT_RULESET_VERSION composes both v1 ruleset versions', () => {
-    expect(BLUEPRINT_RULESET_VERSION).toBe('cluster-v1+pp-v1');
+    expect(BLUEPRINT_RULESET_VERSION).toBe('cluster-v2+pp-v1');
   });
 
   it('BLUEPRINT_SCHEMA_VERSION is the phase4 schema tag', () => {

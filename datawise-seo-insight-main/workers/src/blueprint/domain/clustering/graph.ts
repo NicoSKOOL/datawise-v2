@@ -75,6 +75,27 @@ export function scoreEdge(
   return { score: round6(score), weightsUsed };
 }
 
+// Whether a scored, violation-free edge is allowed to drive a MERGE decision
+// (cluster assembly in clusters.ts, auto-merge eligibility in refine.ts).
+// A pair with measured SERP overlap qualifies on the combined edgeThreshold
+// alone. A pair WITHOUT measured SERP overlap is semantic-only after weight
+// renormalization (an effective bar of cosine >= ~0.55, below the measured
+// cross-service median; see the cluster-v2 note in ruleset.ts), so it must
+// additionally clear clusters.semanticOnlyMergeFloor. A pair with neither
+// SERP overlap nor a cosine (vectors missing) can never merge on intent
+// alone.
+export function edgeEligibleForMerge(
+  edge: Pick<GraphEdge, 'score' | 'components'>,
+  ruleset: ClusterRuleset,
+): boolean {
+  if (edge.score < ruleset.edgeThreshold) return false;
+  if (edge.components.serpJaccard !== null) return true;
+  return (
+    edge.components.semantic !== null &&
+    edge.components.semantic >= ruleset.clusters.semanticOnlyMergeFloor
+  );
+}
+
 export function buildKeywordSimilarityGraph(input: {
   nodes: readonly KeywordNode[];
   ruleset: ClusterRuleset;

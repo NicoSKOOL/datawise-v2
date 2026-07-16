@@ -22,7 +22,7 @@ function fnv1a(text: string): number {
 }
 
 // Fixed output width for the fake AI binding below. Real @cf/baai/bge-m3
-// returns 1024 dims (CLUSTER_RULESET_V1.embedding.dimensions); tests do not
+// returns 1024 dims (CLUSTER_RULESET_V2.embedding.dimensions); tests do not
 // need real dimensionality, only a fixed, uniform width across every fake
 // vector and full determinism (same text -> same vector, every time).
 export const FAKE_AI_DIMENSIONS = 32;

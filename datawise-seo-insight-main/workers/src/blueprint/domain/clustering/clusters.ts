@@ -2,6 +2,7 @@ import type { SearchIntent } from '../../contracts/enums';
 import type { ClusterRuleset } from './ruleset';
 import type { GraphEdge, KeywordNode } from './graph';
 import { cosineSimilarity, jaccardSerpOverlap } from './similarity';
+import { edgeEligibleForMerge } from './graph';
 
 // Deterministic cluster assembly from the similarity graph. Pure: identical
 // input produces identical output regardless of array order, because every
@@ -269,9 +270,11 @@ export function buildDeterministicClusters(input: {
   const byId = new Map<string, KeywordNode>();
   for (const n of nodes) byId.set(n.keywordId, n);
 
-  // Only violation-free edges at or above the edge threshold drive clustering.
+  // Only violation-free edges that pass the merge gate drive clustering:
+  // score >= edgeThreshold, and pairs without measured SERP overlap must
+  // additionally clear the semantic-only floor (edgeEligibleForMerge).
   const strongEdges = edges
-    .filter((e) => e.violations.length === 0 && e.score >= ruleset.edgeThreshold)
+    .filter((e) => e.violations.length === 0 && edgeEligibleForMerge(e, ruleset))
     .slice()
     .sort((x, y) => cmpStr(x.a, y.a) || cmpStr(x.b, y.b));
 

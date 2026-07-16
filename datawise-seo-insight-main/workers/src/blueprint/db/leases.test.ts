@@ -233,10 +233,10 @@ describe('completeStage ruleset_version', () => {
     });
     if (acquired.kind !== 'acquired') throw new Error('expected acquired');
 
-    await completeStage(d1, acquired.lease, '{"ok":true}', 'outhash1', { rulesetVersion: 'cluster-v1' });
+    await completeStage(d1, acquired.lease, '{"ok":true}', 'outhash1', { rulesetVersion: 'cluster-v2' });
 
     const row = await getStageRow(d1, runId);
-    expect(row?.ruleset_version).toBe('cluster-v1');
+    expect(row?.ruleset_version).toBe('cluster-v2');
   });
 
   it('omitting rulesetVersion leaves the existing column value untouched (COALESCE, same pattern as costUsdMicro)', async () => {
@@ -252,7 +252,7 @@ describe('completeStage ruleset_version', () => {
       required: true,
     });
     if (first.kind !== 'acquired') throw new Error('expected acquired');
-    await completeStage(d1, first.lease, '{"ok":true}', 'outhash1', { rulesetVersion: 'cluster-v1' });
+    await completeStage(d1, first.lease, '{"ok":true}', 'outhash1', { rulesetVersion: 'cluster-v2' });
 
     // Re-acquire and re-complete under the same input hash without passing
     // rulesetVersion this time (mirrors a caller that has no ruleset for a
@@ -273,7 +273,7 @@ describe('completeStage ruleset_version', () => {
     await completeStage(d1, second.lease, '{"ok":true}', 'outhash2');
 
     const row = await getStageRow(d1, runId);
-    expect(row?.ruleset_version).toBe('cluster-v1');
+    expect(row?.ruleset_version).toBe('cluster-v2');
   });
 });
 

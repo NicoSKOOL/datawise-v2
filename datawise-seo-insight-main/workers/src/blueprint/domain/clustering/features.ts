@@ -50,7 +50,7 @@ export function buildEmbeddingText(
       return buildKwV1Text(keyword, brief);
     default:
       // Fail loudly rather than silently falling back to some default
-      // shape: an unrecognized template id means CLUSTER_RULESET_V1 was
+      // shape: an unrecognized template id means CLUSTER_RULESET_V2 was
       // bumped to reference a template this function was never updated to
       // build, which must surface as a bug, not a quietly-wrong embedding.
       throw new Error(`buildEmbeddingText: unknown context template '${template}'`);

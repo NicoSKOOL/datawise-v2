@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildKeywordSimilarityGraph } from './graph';
 import { buildDeterministicClusters } from './clusters';
 import type { KeywordNode } from './graph';
-import { CLUSTER_RULESET_V1 } from './ruleset';
+import { CLUSTER_RULESET_V2 } from './ruleset';
 import { canonicalize } from '../hash';
 import type { SearchIntent } from '../../contracts/enums';
 
@@ -65,12 +65,12 @@ function seededShuffle<T>(arr: readonly T[], seed: number): T[] {
 
 function run(nodes: readonly KeywordNode[]) {
   const displayKeywords = new Map(nodes.map((n) => [n.keywordId, n.normalizedKeyword.toUpperCase()]));
-  const graph = buildKeywordSimilarityGraph({ nodes, ruleset: CLUSTER_RULESET_V1 });
+  const graph = buildKeywordSimilarityGraph({ nodes, ruleset: CLUSTER_RULESET_V2 });
   const clusters = buildDeterministicClusters({
     nodes,
     edges: graph.edges,
     displayKeywords,
-    ruleset: CLUSTER_RULESET_V1,
+    ruleset: CLUSTER_RULESET_V2,
   });
   return { graph, clusters };
 }

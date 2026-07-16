@@ -253,7 +253,7 @@ export async function processResearchRun(
   // Which frozen ruleset (if any) governs this stage: clustering/page-plan
   // stages get their real versioned ruleset, everything else still gets the
   // legacy stub (see domain/ruleset.ts). Re-keys those stages' input hashes
-  // whenever CLUSTER_RULESET_V1/PAGE_PLAN_RULESET_V1 bump their version.
+  // whenever CLUSTER_RULESET_V2/PAGE_PLAN_RULESET_V1 bump their version.
   const rulesetVersion = rulesetVersionForStage(stage);
 
   const stageInputHash = await buildStageInputHash({

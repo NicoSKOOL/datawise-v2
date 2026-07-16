@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { buildDeterministicClusters } from './clusters';
 import type { KeywordNode, GraphEdge } from './graph';
 import type { ConstraintViolation } from './constraints';
-import { CLUSTER_RULESET_V1 } from './ruleset';
+import { CLUSTER_RULESET_V2 } from './ruleset';
 import type { ClusterRuleset } from './ruleset';
 
-const RS = CLUSTER_RULESET_V1;
+const RS = CLUSTER_RULESET_V2;
 
 function kw(overrides: Partial<KeywordNode> & { keywordId: string }): KeywordNode {
   return {
@@ -24,15 +24,31 @@ function kw(overrides: Partial<KeywordNode> & { keywordId: string }): KeywordNod
   };
 }
 
+// Fixture edges carry a measured serpJaccard so they pass the cluster-v2
+// merge gate on edgeThreshold alone (these suites exercise assembly/recut
+// mechanics; the semantic-only gate has its own suite below).
 function edge(a: string, b: string, score: number, violations: ConstraintViolation[] = []): GraphEdge {
   const [x, y] = a < b ? [a, b] : [b, a];
   return {
     a: x,
     b: y,
     score,
-    components: { semantic: null, serpJaccard: null, intent: null },
-    weightsUsed: { semantic: 0, serpOverlap: 0, intent: 0 },
+    components: { semantic: null, serpJaccard: score, intent: null },
+    weightsUsed: { semantic: 0, serpOverlap: 1, intent: 0 },
     violations,
+  };
+}
+
+// A semantic-only edge: no measured SERP overlap, score driven by cosine.
+function semanticEdge(a: string, b: string, cosine: number): GraphEdge {
+  const [x, y] = a < b ? [a, b] : [b, a];
+  return {
+    a: x,
+    b: y,
+    score: cosine,
+    components: { semantic: cosine, serpJaccard: null, intent: null },
+    weightsUsed: { semantic: 1, serpOverlap: 0, intent: 0 },
+    violations: [],
   };
 }
 
@@ -179,5 +195,59 @@ describe('oversize recut', () => {
     expect(clusters.length).toBe(1);
     expect(clusters[0].memberIds).toEqual(['n1', 'n2', 'n3']);
     expect(clusters[0].warnings).toEqual(['weak_serp_distinction']);
+  });
+});
+
+describe('semantic-only merge gate (cluster-v2)', () => {
+  const nodes = ['s1', 's2', 's3'].map((id) => kw({ keywordId: id }));
+
+  it('does not merge a semantic-only pair below the floor even when it clears edgeThreshold', () => {
+    // 0.75 >= edgeThreshold (0.62) under cluster-v1 semantics, but with no
+    // measured SERP overlap it must clear semanticOnlyMergeFloor (0.85).
+    const { clusters } = buildDeterministicClusters({
+      nodes,
+      edges: [semanticEdge('s1', 's2', 0.75)],
+      displayKeywords: empty,
+      ruleset: RS,
+    });
+    expect(clusters.map((c) => c.memberIds)).toEqual([['s1'], ['s2'], ['s3']]);
+  });
+
+  it('merges a semantic-only pair at synonym level (>= floor)', () => {
+    const { clusters } = buildDeterministicClusters({
+      nodes,
+      edges: [semanticEdge('s1', 's2', 0.9)],
+      displayKeywords: empty,
+      ruleset: RS,
+    });
+    expect(clusters.map((c) => c.memberIds)).toEqual([['s1', 's2'], ['s3']]);
+  });
+
+  it('still merges a SERP-evidenced pair on edgeThreshold alone', () => {
+    const { clusters } = buildDeterministicClusters({
+      nodes,
+      edges: [edge('s1', 's2', 0.65)],
+      displayKeywords: empty,
+      ruleset: RS,
+    });
+    expect(clusters.map((c) => c.memberIds)).toEqual([['s1', 's2'], ['s3']]);
+  });
+
+  it('never merges on intent alone (no cosine, no SERP overlap)', () => {
+    const intentOnly: GraphEdge = {
+      a: 's1',
+      b: 's2',
+      score: 1,
+      components: { semantic: null, serpJaccard: null, intent: 1 },
+      weightsUsed: { semantic: 0, serpOverlap: 0, intent: 1 },
+      violations: [],
+    };
+    const { clusters } = buildDeterministicClusters({
+      nodes,
+      edges: [intentOnly],
+      displayKeywords: empty,
+      ruleset: RS,
+    });
+    expect(clusters.map((c) => c.memberIds)).toEqual([['s1'], ['s2'], ['s3']]);
   });
 });

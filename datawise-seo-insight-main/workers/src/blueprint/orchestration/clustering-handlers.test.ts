@@ -8,12 +8,14 @@ import { processResearchRun } from './process-run';
 import type { BlueprintProviderEnv } from './process-run';
 import type { StageHandler, StageContext } from './handlers';
 import type { BlueprintStage } from '../contracts/enums';
-import { buildProvisionalClustersHandler, refineClustersHandler } from './clustering-handlers';
+import { buildProvisionalClustersHandler, refineClustersHandler, persistAdjudications } from './clustering-handlers';
+import { CLUSTER_RULESET_V2 } from '../domain/clustering/ruleset';
+import type { AdjudicationCase } from '../domain/clustering/refine';
 
 // Same STAGE_HANDLERS-driven approach research-handlers.test.ts uses: drive
 // the real registry through processResearchRun so completeStage really
 // runs (needed to prove research_stage_runs.ruleset_version lands as
-// 'cluster-v1', which is stamped by process-run.ts itself via
+// 'cluster-v2', which is stamped by process-run.ts itself via
 // rulesetVersionForStage, not by the handler). Every stage before
 // normalize_keyword_universe is overridden with a canned/no-op handler
 // (this task does not re-test Phase 3's real evidence collection, and none
@@ -239,7 +241,7 @@ function baseOverrides(): Partial<Record<BlueprintStage, StageHandler>> {
     // Task 16: build_page_plan is now REAL and the single writer of
     // keyword_clusters.page_candidate + decision_reason. These clustering tests
     // drive the run to terminal and assert the clustering stage's OWN write to
-    // those columns (page_candidate null, decision_reason names cluster-v1), so
+    // those columns (page_candidate null, decision_reason names cluster-v2), so
     // stub build_page_plan here to keep them scoped to clustering. build_page_plan
     // has its own coverage in page-plan-handlers.test.ts / engine.test.ts.
     build_page_plan: async () => ({ output: { stage: 'build_page_plan' as const, stub: true }, status: 'succeeded' as const }),
@@ -317,7 +319,7 @@ describe('normalizeKeywordUniverseHandler (via processResearchRun)', () => {
       .first<{ status: string; output_json: string; ruleset_version: string }>();
     expect(stageRow).toBeTruthy();
     expect(stageRow!.status).toBe('succeeded');
-    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+    expect(stageRow!.ruleset_version).toBe('cluster-v2');
 
     const output = JSON.parse(stageRow!.output_json);
     expect(output).toMatchObject({
@@ -329,7 +331,7 @@ describe('normalizeKeywordUniverseHandler (via processResearchRun)', () => {
       enriched: 1,
       artifactsRead: 1,
       artifactsMissing: 0,
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
     expect(output.serviceLinksAdded).toBeGreaterThanOrEqual(2);
     expect(output.areaLinksAdded).toBeGreaterThanOrEqual(2);
@@ -460,14 +462,14 @@ describe('embedKeywordFeaturesHandler (via processResearchRun)', () => {
       .first<{ status: string; output_json: string; ruleset_version: string }>();
     expect(stageRow).toBeTruthy();
     expect(stageRow!.status).toBe('succeeded');
-    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+    expect(stageRow!.ruleset_version).toBe('cluster-v2');
 
     const output = JSON.parse(stageRow!.output_json);
     expect(output.stage).toBe('embed_keyword_features');
     expect(output.model).toBe('@cf/baai/bge-m3');
     expect(output.vectorCount).toBe(2); // kw_excluded was never sent to AI
     expect(output.truncatedCount).toBe(0);
-    expect(output.rulesetVersion).toBe('cluster-v1');
+    expect(output.rulesetVersion).toBe('cluster-v2');
     expect(Array.isArray(output.artifacts)).toBe(true);
     expect(output.artifacts.length).toBeGreaterThan(0);
 
@@ -699,7 +701,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
             inputHash: 'fake-hash',
             truncatedCount: 0,
             artifacts: [{ artifactId: 'art_fake', storageKey, count: vectors.length }],
-            rulesetVersion: 'cluster-v1',
+            rulesetVersion: 'cluster-v2',
           },
           status: 'succeeded' as const,
         };
@@ -714,7 +716,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       .first<{ status: string; output_json: string; ruleset_version: string }>();
     expect(stageRow).toBeTruthy();
     expect(stageRow!.status).toBe('succeeded');
-    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+    expect(stageRow!.ruleset_version).toBe('cluster-v2');
 
     const output = JSON.parse(stageRow!.output_json);
     expect(output).toMatchObject({
@@ -726,7 +728,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       forbiddenEdgeCount: 5,
       blockedByCap: 0,
       oversizedSplit: 0,
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
     // dims=4 in this fixture, deliberately narrower than the ruleset's
     // pinned 1024 -- proves the self-consistent-but-off-ruleset-width
@@ -760,11 +762,11 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
     for (const row of clusterRows) {
       expect(row.page_candidate).toBeNull();
       expect(row.adjudication_json).toBeNull();
-      expect(row.ruleset_version).toBe('cluster-v1');
+      expect(row.ruleset_version).toBe('cluster-v2');
       expect(['low', 'medium', 'high']).toContain(row.confidence_label);
-      expect(row.decision_reason).toContain('cluster-v1');
+      expect(row.decision_reason).toContain('cluster-v2');
       const breakdown = JSON.parse(row.score_breakdown_json);
-      expect(breakdown.rulesetVersion).toBe('cluster-v1');
+      expect(breakdown.rulesetVersion).toBe('cluster-v2');
       expect(Array.isArray(breakdown.evidenceRefIds)).toBe(true);
     }
 
@@ -830,7 +832,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 0,
       artifacts: [{ artifactId: 'art1', storageKey, count: 3 }],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
 
     const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
@@ -872,7 +874,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 1,
       artifacts: [{ artifactId: 'art1', storageKey, count: 1 }],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
 
     await seedRankingUrlArtifact(d1, r2, {
@@ -913,7 +915,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 0,
       artifacts: [],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
     const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
     const result = await buildProvisionalClustersHandler(ctx);
@@ -952,7 +954,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 0,
       artifacts: [],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
 
     const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
@@ -990,7 +992,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 0,
       artifacts: [],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
     const ctx = await buildDirectCtx(d1, fakeR2(), fakeKv(), runId, projectId, briefVersionId);
     await expect(buildProvisionalClustersHandler(ctx)).rejects.toMatchObject({ code: 'provider_invalid_response' });
@@ -1032,7 +1034,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
         { artifactId: 'a1', storageKey: `runs/${runId}/embeddings/0.json`, count: 1 },
         { artifactId: 'a2', storageKey: `runs/${runId}/embeddings/1.json`, count: 1 },
       ],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
 
     const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
@@ -1060,7 +1062,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 0,
       artifacts: [{ artifactId: 'a1', storageKey, count: 2 }],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
 
     const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId);
@@ -1144,7 +1146,7 @@ describe('buildProvisionalClustersHandler (via processResearchRun)', () => {
       inputHash: 'h',
       truncatedCount: 0,
       artifacts: [{ artifactId: 'art1', storageKey, count: 4 }],
-      rulesetVersion: 'cluster-v1',
+      rulesetVersion: 'cluster-v2',
     });
 
     const ctx = await buildDirectCtx(d1, r2, fakeKv(), runId, projectId, briefVersionId, BRAND_TOKEN_BRIEF_INPUT);
@@ -1195,7 +1197,7 @@ async function seedClusterRow(
         (id, run_id, label, service_id, service_area_id, intent, primary_keyword_id,
          semantic_cohesion, serp_overlap_cohesion, confidence_score, confidence_label,
          page_candidate, decision_reason, warnings_json, adjudication_json, ruleset_version, score_breakdown_json)
-       VALUES (?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, 0.5, 'medium', NULL, ?, '[]', NULL, 'cluster-v1', '{}')`
+       VALUES (?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, 0.5, 'medium', NULL, ?, '[]', NULL, 'cluster-v2', '{}')`
     )
     .bind(spec.id, runId, spec.label, spec.intent ?? null, spec.primaryKeywordId, spec.decisionReason ?? 'ORIGINAL')
     .run();
@@ -1271,7 +1273,7 @@ async function seedEmbeddings(
     inputHash: 'h',
     truncatedCount: 0,
     artifacts: [{ artifactId: 'art1', storageKey, count: vectors.length }],
-    rulesetVersion: 'cluster-v1',
+    rulesetVersion: 'cluster-v2',
   });
 }
 
@@ -1325,7 +1327,7 @@ describe('refineClustersHandler', () => {
       .all(runId) as Array<{ id: string; ruleset_version: string; decision_reason: string }>;
     expect(clusterRows).toHaveLength(1);
     expect(clusterRows[0].id.startsWith('kcl_')).toBe(true); // new merged identity, not c_a/c_b
-    expect(clusterRows[0].ruleset_version).toBe('cluster-v1');
+    expect(clusterRows[0].ruleset_version).toBe('cluster-v2');
     expect(clusterRows[0].decision_reason).toContain('Refined by live SERP evidence');
 
     const members = raw
@@ -1378,7 +1380,7 @@ describe('refineClustersHandler', () => {
     expect(clustersAfterRerun.n).toBe(2);
   });
 
-  it('runs end-to-end through processResearchRun and stamps ruleset_version cluster-v1', async () => {
+  it('runs end-to-end through processResearchRun and stamps ruleset_version cluster-v2', async () => {
     const { d1, runId, projectId, briefVersionId } = await seedBaseRun();
     void projectId;
     void briefVersionId;
@@ -1423,7 +1425,7 @@ describe('refineClustersHandler', () => {
             inputHash: 'h',
             truncatedCount: 0,
             artifacts: [{ artifactId: 'art1', storageKey, count: vectors.length }],
-            rulesetVersion: 'cluster-v1',
+            rulesetVersion: 'cluster-v2',
           },
           status: 'succeeded' as const,
         };
@@ -1448,10 +1450,85 @@ describe('refineClustersHandler', () => {
       .bind(runId)
       .first<{ status: string; output_json: string; ruleset_version: string }>();
     expect(stageRow).toBeTruthy();
-    expect(stageRow!.ruleset_version).toBe('cluster-v1');
+    expect(stageRow!.ruleset_version).toBe('cluster-v2');
     expect(['succeeded', 'partial']).toContain(stageRow!.status);
     const output = JSON.parse(stageRow!.output_json);
     expect(output.stage).toBe('refine_clusters');
-    expect(output.rulesetVersion).toBe('cluster-v1');
+    expect(output.rulesetVersion).toBe('cluster-v2');
+  });
+});
+
+describe('persistAdjudications cap', () => {
+  async function seedRun(d1: D1Database, runId: string): Promise<void> {
+    const now = nowIso();
+    await d1
+      .prepare(
+        `INSERT INTO projects (id, organization_id, owner_user_id, name, mode, country_iso, language_code, created_at, updated_at)
+         VALUES (?, 'org_t', 'usr_t', 'cap test', 'greenfield', 'US', 'en', ?, ?)`
+      )
+      .bind(`prj_${runId}`, now, now)
+      .run();
+    await d1
+      .prepare(
+        `INSERT INTO research_runs (id, project_id, brief_version_id, estimate_id, status, created_by, created_at)
+         VALUES (?, ?, 'bv_t', 'est_t', 'running', 'usr_t', ?)`
+      )
+      .bind(runId, `prj_${runId}`, now)
+      .run();
+  }
+
+  function fakeCase(i: number, score: number | null): AdjudicationCase {
+    return {
+      caseType: 'merge',
+      decision: 'insufficient_evidence',
+      clusterIds: [`c_${String(i).padStart(6, '0')}`, 'c_zzz'],
+      keywordIds: ['kw_a', 'kw_b'],
+      scoreContext: {
+        reason: 'no_live_evidence',
+        score,
+        semantic: score,
+        serpOverlap: null,
+        intent: null,
+        cohesion: null,
+        hasLiveEvidence: false,
+        violations: [],
+        edgeThreshold: CLUSTER_RULESET_V2.edgeThreshold,
+        ambiguousBand: CLUSTER_RULESET_V2.clusters.ambiguousBand,
+      },
+    };
+  }
+
+  it('keeps only the highest-scoring maxPersistedAdjudications cases and reports the truncation', async () => {
+    const { d1 } = createTestDb();
+    const runId = 'run_captest';
+    await seedRun(d1, runId);
+    const cap = CLUSTER_RULESET_V2.clusters.maxPersistedAdjudications;
+    // cap + 10 cases with ascending scores; the 10 lowest must be dropped.
+    const cases = Array.from({ length: cap + 10 }, (_, i) => fakeCase(i, i / (cap + 10)));
+
+    const { truncated } = await persistAdjudications(d1, runId, cases, nowIso());
+    expect(truncated).toBe(10);
+
+    const rows = await d1
+      .prepare(`SELECT COUNT(*) AS n, MIN(json_extract(score_context_json, '$.score')) AS min_score FROM cluster_adjudications WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ n: number; min_score: number }>();
+    expect(rows!.n).toBe(cap);
+    // The 10 lowest scores (i = 0..9) were dropped, so the minimum persisted
+    // score belongs to i = 10.
+    expect(rows!.min_score).toBeCloseTo(10 / (cap + 10), 10);
+  });
+
+  it('persists everything untruncated when under the cap', async () => {
+    const { d1 } = createTestDb();
+    const runId = 'run_captest2';
+    await seedRun(d1, runId);
+    const { truncated } = await persistAdjudications(d1, runId, [fakeCase(1, 0.6), fakeCase(2, null)], nowIso());
+    expect(truncated).toBe(0);
+    const rows = await d1
+      .prepare(`SELECT COUNT(*) AS n FROM cluster_adjudications WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(rows!.n).toBe(2);
   });
 });

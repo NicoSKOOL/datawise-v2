@@ -8,7 +8,7 @@ import {
 } from '../providers/dataforseo/evidence-readback';
 import { planUniverseNormalization } from '../domain/clustering/universe';
 import type { KeywordRowLite } from '../domain/clustering/universe';
-import { CLUSTER_RULESET_V1 } from '../domain/clustering/ruleset';
+import { CLUSTER_RULESET_V2 } from '../domain/clustering/ruleset';
 import { normalizeKeyword } from '../domain/keyword';
 import { chunk, runBatchedStatements, assertRowBudget } from '../db/batch';
 import { buildEmbeddingText, embeddingContentHash } from '../domain/clustering/features';
@@ -219,7 +219,7 @@ export const normalizeKeywordUniverseHandler: StageHandler = async (ctx: StageCo
     locale
   );
 
-  const plan = planUniverseNormalization({ keywords, enrichment, brief, ruleset: CLUSTER_RULESET_V1 });
+  const plan = planUniverseNormalization({ keywords, enrichment, brief, ruleset: CLUSTER_RULESET_V2 });
 
   const updateStatements = buildKeywordUpdateStatements(ctx.d1, plan.updates);
   await runBatchedStatements(ctx.d1, updateStatements);
@@ -237,7 +237,7 @@ export const normalizeKeywordUniverseHandler: StageHandler = async (ctx: StageCo
     areaLinksAdded: plan.serviceAreaLinks.length,
     artifactsRead,
     artifactsMissing,
-    rulesetVersion: CLUSTER_RULESET_V1.version,
+    rulesetVersion: CLUSTER_RULESET_V2.version,
   };
 
   return { output, status: artifactsMissing > 0 ? ('partial' as const) : ('succeeded' as const) };
@@ -268,7 +268,7 @@ export interface EmbedKeywordFeaturesOutput {
 // Workers AI, ordered by normalized_keyword so a retry's chunking lines up
 // with providers/embeddings/workers-ai.ts's deterministic per-run,
 // per-batch-index R2 keys. A run whose universe exceeds
-// CLUSTER_RULESET_V1.embedding.maxBatchesPerRun * batchSize degrades to
+// CLUSTER_RULESET_V2.embedding.maxBatchesPerRun * batchSize degrades to
 // 'partial' (truncatedCount > 0) rather than failing outright -- the
 // clustering stages downstream still get a real, just incomplete, feature
 // set for this run, matching normalize_keyword_universe's own
@@ -283,7 +283,7 @@ export const embedKeywordFeaturesHandler: StageHandler = async (ctx: StageContex
     .all<RetainedKeywordRow>();
   const retained = rows.results ?? [];
 
-  const { contextTemplate } = CLUSTER_RULESET_V1.embedding;
+  const { contextTemplate } = CLUSTER_RULESET_V2.embedding;
   const brief = { category: ctx.normalizedBrief.category };
 
   const inputs: EmbeddingInput[] = [];
@@ -293,11 +293,11 @@ export const embedKeywordFeaturesHandler: StageHandler = async (ctx: StageContex
       brief,
       contextTemplate
     );
-    const contentHash = await embeddingContentHash(CLUSTER_RULESET_V1.embedding.model, contextTemplate, text);
+    const contentHash = await embeddingContentHash(CLUSTER_RULESET_V2.embedding.model, contextTemplate, text);
     inputs.push({ keywordId: row.id, normalizedKeyword: row.normalized_keyword, text, contentHash });
   }
 
-  const result = await embedKeywordTexts(ctx, inputs, CLUSTER_RULESET_V1);
+  const result = await embedKeywordTexts(ctx, inputs, CLUSTER_RULESET_V2);
 
   const output: EmbedKeywordFeaturesOutput = {
     stage: 'embed_keyword_features',
@@ -308,7 +308,7 @@ export const embedKeywordFeaturesHandler: StageHandler = async (ctx: StageContex
     inputHash: result.inputHash,
     truncatedCount: result.truncatedCount,
     artifacts: result.batches,
-    rulesetVersion: CLUSTER_RULESET_V1.version,
+    rulesetVersion: CLUSTER_RULESET_V2.version,
   };
 
   return { output, status: result.truncatedCount > 0 ? ('partial' as const) : ('succeeded' as const) };
@@ -511,7 +511,7 @@ interface StoredEmbeddingBatchLike {
 //
 // Design decision (pre-resolved by the brief, recorded here for anyone
 // reading this later): this does NOT assert dimensions === 1024
-// (CLUSTER_RULESET_V1.embedding.dimensions) as a hard throw. Production
+// (CLUSTER_RULESET_V2.embedding.dimensions) as a hard throw. Production
 // bge-m3 output is 1024-wide, but every test in this codebase's suite runs
 // against a fake Workers AI binding that returns 32-wide vectors (see
 // test-support/env.ts's FAKE_AI_DIMENSIONS) -- asserting against the
@@ -574,7 +574,7 @@ async function loadStageVectors(
   return {
     vectorsById,
     dimensions,
-    unexpectedDimensions: dimensions !== CLUSTER_RULESET_V1.embedding.dimensions,
+    unexpectedDimensions: dimensions !== CLUSTER_RULESET_V2.embedding.dimensions,
   };
 }
 
@@ -612,9 +612,9 @@ function computeClusterConfidence(cluster: ClusterDraft, members: readonly Keywo
   const score = round6(avg);
 
   const label: ConfidenceResult['label'] =
-    score >= CLUSTER_RULESET_V1.confidenceLabels.high
+    score >= CLUSTER_RULESET_V2.confidenceLabels.high
       ? 'high'
-      : score >= CLUSTER_RULESET_V1.confidenceLabels.medium
+      : score >= CLUSTER_RULESET_V2.confidenceLabels.medium
         ? 'medium'
         : 'low';
 
@@ -696,7 +696,7 @@ async function persistClusters(
         r.decisionReason,
         r.warningsJson,
         null, // adjudication_json: refine_clusters owns it
-        CLUSTER_RULESET_V1.version,
+        CLUSTER_RULESET_V2.version,
         r.scoreBreakdownJson
       );
     }
@@ -748,7 +748,7 @@ export interface BuildProvisionalClustersOutput {
   }>;
   rulesetVersion: string;
   // Populated with 'unexpected_embedding_dimensions' when this run's vectors
-  // are internally consistent but narrower/wider than CLUSTER_RULESET_V1's
+  // are internally consistent but narrower/wider than CLUSTER_RULESET_V2's
   // pinned width (see loadStageVectors's doc comment), and/or
   // 'all_keywords_excluded' when this run's keyword universe was non-empty
   // but every keyword was excluded before clustering (see the zero-cluster
@@ -763,7 +763,7 @@ export interface BuildProvisionalClustersOutput {
   retainedKeywords: number;
 }
 
-const DECISION_REASON = `Clustered by semantic + SERP similarity under ruleset ${CLUSTER_RULESET_V1.version}`;
+const DECISION_REASON = `Clustered by semantic + SERP similarity under ruleset ${CLUSTER_RULESET_V2.version}`;
 
 interface ClusteringNodeSet {
   nodes: KeywordNode[];
@@ -885,7 +885,7 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
       blockedByCap: 0,
       oversizedSplit: 0,
       representativeQueries: [],
-      rulesetVersion: CLUSTER_RULESET_V1.version,
+      rulesetVersion: CLUSTER_RULESET_V2.version,
       warnings: allExcluded ? ['all_keywords_excluded'] : [],
       totalKeywords,
       retainedKeywords: 0,
@@ -904,12 +904,12 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
     await buildClusteringNodes(ctx, retained, stage9);
   const evidenceRefMap = await loadKeywordEvidenceRefMap(ctx.d1, ctx.runId);
 
-  const graph = buildKeywordSimilarityGraph({ nodes, ruleset: CLUSTER_RULESET_V1 });
+  const graph = buildKeywordSimilarityGraph({ nodes, ruleset: CLUSTER_RULESET_V2 });
   const clusterResult = buildDeterministicClusters({
     nodes,
     edges: graph.edges,
     displayKeywords,
-    ruleset: CLUSTER_RULESET_V1,
+    ruleset: CLUSTER_RULESET_V2,
   });
 
   const clusterIds = new Map<string, string>();
@@ -930,8 +930,8 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
       .slice(0, 50);
 
     const scoreBreakdown = {
-      rulesetVersion: CLUSTER_RULESET_V1.version,
-      edgeWeights: CLUSTER_RULESET_V1.edgeWeights,
+      rulesetVersion: CLUSTER_RULESET_V2.version,
+      edgeWeights: CLUSTER_RULESET_V2.edgeWeights,
       semanticCohesion: c.semanticCohesion,
       serpOverlapCohesion: c.serpOverlapCohesion,
       confidenceComponents: components,
@@ -996,7 +996,7 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
     blockedByCap: graph.stats.blockedByCap,
     oversizedSplit: clusterResult.stats.oversizedSplit,
     representativeQueries,
-    rulesetVersion: CLUSTER_RULESET_V1.version,
+    rulesetVersion: CLUSTER_RULESET_V2.version,
     warnings,
     totalKeywords,
     retainedKeywords: retained.length,
@@ -1019,7 +1019,7 @@ export const buildProvisionalClustersHandler: StageHandler = async (ctx: StageCo
 // 'pending' (live evidence exists) or 'insufficient_evidence' (it does not) for
 // the Phase 5 adjudicator, never guessed here.
 
-const REFINE_DECISION_REASON = `Refined by live SERP evidence under ruleset ${CLUSTER_RULESET_V1.version}`;
+const REFINE_DECISION_REASON = `Refined by live SERP evidence under ruleset ${CLUSTER_RULESET_V2.version}`;
 
 // cluster_adjudications: (id, run_id, case_type, cluster_ids_json,
 // keyword_ids_json, decision, score_context_json, ruleset_version, created_at)
@@ -1044,6 +1044,10 @@ export interface RefineClustersOutput {
   autoSplits: number;
   adjudicationsPending: number;
   adjudicationsInsufficient: number;
+  // Cases dropped by clusters.maxPersistedAdjudications (lowest-scoring
+  // first); 0 when everything fit. Non-zero adds the
+  // 'adjudications_truncated' warning.
+  adjudicationsTruncated: number;
   liveSnapshotCoverage: number;
   rulesetVersion: string;
   // 'no_live_serp_evidence' when no cluster representative query had a live
@@ -1178,7 +1182,7 @@ async function persistRefinedClusters(
         r.decisionReason,
         r.warningsJson,
         null, // adjudication_json: the cluster_adjudications table owns refine adjudications
-        CLUSTER_RULESET_V1.version,
+        CLUSTER_RULESET_V2.version,
         r.scoreBreakdownJson
       );
     }
@@ -1215,15 +1219,37 @@ async function persistRefinedClusters(
 
 // Rerun-safe: every attempt fully replaces this run's cluster_adjudications
 // (delete-then-insert), so a retry never accumulates duplicate rows alongside a
-// prior attempt's.
-async function persistAdjudications(
+// prior attempt's. Persistence is capped at
+// clusters.maxPersistedAdjudications, keeping the highest-scoring cases
+// (score DESC, nulls last, then clusterIds/caseType for a deterministic
+// order); returns how many were dropped so the handler can surface it.
+// Exported for the cap regression test only.
+export async function persistAdjudications(
   d1: D1Database,
   runId: string,
-  cases: AdjudicationCase[],
+  allCases: AdjudicationCase[],
   createdAt: string
-): Promise<void> {
+): Promise<{ truncated: number }> {
   await d1.prepare(`DELETE FROM cluster_adjudications WHERE run_id = ?`).bind(runId).run();
-  if (cases.length === 0) return;
+  if (allCases.length === 0) return { truncated: 0 };
+
+  const cap = CLUSTER_RULESET_V2.clusters.maxPersistedAdjudications;
+  let cases = allCases;
+  if (allCases.length > cap) {
+    cases = allCases
+      .slice()
+      .sort((x, y) => {
+        const sx = x.scoreContext.score;
+        const sy = y.scoreContext.score;
+        if (sx === null && sy !== null) return 1;
+        if (sy === null && sx !== null) return -1;
+        if (sx !== null && sy !== null && sx !== sy) return sy - sx;
+        const cx = x.clusterIds.join(' ');
+        const cy = y.clusterIds.join(' ');
+        return cx < cy ? -1 : cx > cy ? 1 : x.caseType < y.caseType ? -1 : x.caseType > y.caseType ? 1 : 0;
+      })
+      .slice(0, cap);
+  }
 
   const rulesetVersion = rulesetVersionForStage('refine_clusters');
   const statements: D1PreparedStatement[] = [];
@@ -1255,6 +1281,7 @@ async function persistAdjudications(
     );
   }
   await runBatchedStatements(d1, statements);
+  return { truncated: allCases.length - cases.length };
 }
 
 export const refineClustersHandler: StageHandler = async (ctx: StageContext) => {
@@ -1279,8 +1306,9 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
       autoSplits: 0,
       adjudicationsPending: 0,
       adjudicationsInsufficient: 0,
+      adjudicationsTruncated: 0,
       liveSnapshotCoverage: 0,
-      rulesetVersion: CLUSTER_RULESET_V1.version,
+      rulesetVersion: CLUSTER_RULESET_V2.version,
       warnings: [],
     };
     return { output, status: 'succeeded' as const };
@@ -1337,7 +1365,7 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
     nodes,
     displayKeywords,
     liveByQuery,
-    ruleset: CLUSTER_RULESET_V1,
+    ruleset: CLUSTER_RULESET_V2,
   });
 
   // Consumed = every input cluster whose id is NOT preserved by an unchanged
@@ -1361,7 +1389,7 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
       .slice(0, 50);
 
     const scoreBreakdown = {
-      rulesetVersion: CLUSTER_RULESET_V1.version,
+      rulesetVersion: CLUSTER_RULESET_V2.version,
       refine: c.liveBreakdown,
       semanticCohesion: c.draft.semanticCohesion,
       serpOverlapCohesion: c.draft.serpOverlapCohesion,
@@ -1396,12 +1424,13 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
   }
 
   await persistRefinedClusters(ctx.d1, ctx.runId, consumedInputIds, newClusterRows, newMemberRows);
-  await persistAdjudications(ctx.d1, ctx.runId, result.adjudications, nowIso());
+  const { truncated } = await persistAdjudications(ctx.d1, ctx.runId, result.adjudications, nowIso());
 
   const zeroCoverage = result.stats.liveSnapshotCoverage === 0;
   const warnings: string[] = [];
   if (zeroCoverage) warnings.push('no_live_serp_evidence');
   if (unexpectedDimensions) warnings.push('unexpected_embedding_dimensions');
+  if (truncated > 0) warnings.push('adjudications_truncated');
 
   const output: RefineClustersOutput = {
     stage: 'refine_clusters',
@@ -1411,8 +1440,9 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
     autoSplits: result.stats.autoSplits,
     adjudicationsPending: result.stats.adjudicationsPending,
     adjudicationsInsufficient: result.stats.adjudicationsInsufficient,
+    adjudicationsTruncated: truncated,
     liveSnapshotCoverage: result.stats.liveSnapshotCoverage,
-    rulesetVersion: CLUSTER_RULESET_V1.version,
+    rulesetVersion: CLUSTER_RULESET_V2.version,
     warnings,
   };
 
