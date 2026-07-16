@@ -52,7 +52,14 @@ export const CLUSTER_RULESET_V2 = Object.freeze({
   clusters: {
     maxClusterSize: 25,
     oversizeRecutIncrement: 0.02,
-    oversizeRecutMaxSteps: 10,
+    // 19 steps take the local recut threshold from edgeThreshold (0.62) up to
+    // 1.00. cluster-v1's 10-step ceiling (0.82) sat BELOW the minimum score a
+    // gated semantic-only edge can carry (~0.87 at the 0.85 cosine floor), so
+    // an oversized semantic-only component could never be cut. Calibration on
+    // run_3c63faa9's vectors: synonym-template chains ("24 hour X near me")
+    // percolate past cosine 0.91 and only fall under maxClusterSize around
+    // 0.95, well above the old ceiling.
+    oversizeRecutMaxSteps: 19,
     lowCohesionSplitThreshold: 0.45,
     ambiguousBand: { low: 0.52, high: 0.62 },
     // A pair with NO measured SERP overlap may only drive a merge when its
