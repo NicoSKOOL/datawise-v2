@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildSeoMetaPrompt, parseSeoMetaResponse } from './seo-meta';
+import { buildSeoMetaPrompt, parseSeoMetaResponse, resolveSeoMetaMaxTokens } from './seo-meta';
 
 describe('buildSeoMetaPrompt', () => {
   it('includes keyword, limits, and truncated body', () => {
@@ -35,5 +35,20 @@ describe('parseSeoMetaResponse', () => {
 
   it('returns null on garbage', () => {
     expect(parseSeoMetaResponse('sorry, cannot help')).toBeNull();
+  });
+
+  it('returns null on JSON truncated mid-object (max_tokens hit)', () => {
+    expect(parseSeoMetaResponse('{"title":"Winterize a Pool","meta_desc')).toBeNull();
+  });
+});
+
+describe('resolveSeoMetaMaxTokens', () => {
+  it('gives reasoning models enough budget for hidden reasoning plus the JSON', () => {
+    expect(resolveSeoMetaMaxTokens('deepseek/deepseek-v4-pro')).toBeGreaterThanOrEqual(2048);
+    expect(resolveSeoMetaMaxTokens(undefined)).toBeGreaterThanOrEqual(2048);
+  });
+
+  it('gives GPT-5.5 Pro a larger cap for its mandatory reasoning', () => {
+    expect(resolveSeoMetaMaxTokens('openai/gpt-5.5-pro')).toBeGreaterThanOrEqual(8000);
   });
 });

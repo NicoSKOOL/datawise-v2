@@ -11,6 +11,19 @@ export interface SeoMetaPromptInput {
 
 const BODY_CHAR_BUDGET = 6000;
 
+// The visible JSON reply is ~60 tokens, but reasoning models (DeepSeek V4
+// Pro is the step default) spend hidden reasoning tokens out of the same
+// max_tokens budget. 512 starved the call: content came back empty or cut
+// off mid-object, parseSeoMetaResponse returned null, and every retry
+// failed the same way ("could not parse title and meta").
+export function resolveSeoMetaMaxTokens(model: string | null | undefined): number {
+  const normalized = (model || '').toLowerCase();
+  // GPT-5.5 Pro's reasoning is mandatory on OpenRouter and can be long even
+  // for tiny outputs; mirrors the larger caps in resolvePostStepMaxTokens.
+  if (normalized === 'openai/gpt-5.5-pro') return 8000;
+  return 2048;
+}
+
 export function buildSeoMetaPrompt(input: SeoMetaPromptInput): { system: string; user: string } {
   const system = [
     'You write SEO metadata for blog posts.',
