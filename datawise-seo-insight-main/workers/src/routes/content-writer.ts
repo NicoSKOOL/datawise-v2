@@ -48,7 +48,7 @@ import {
 import { fetchAndParseHtml } from '../site-audit/html-parser';
 import { dataforseoRequestCached, extractResult } from '../dataforseo/client';
 import { safeFetch, UnsafeUrlError } from '../lib/safe-fetch';
-import { buildSeoMetaPrompt, parseSeoMetaResponse } from '../content-writer/seo-meta';
+import { buildSeoMetaPrompt, parseSeoMetaResponse, resolveSeoMetaMaxTokens } from '../content-writer/seo-meta';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -1899,7 +1899,7 @@ export async function handlePostStep(
       const metaProvider = getLLMProvider(env, metaConfig);
       const metaRes = await metaProvider.chatComplete(
         [{ role: 'system', content: metaPrompt.system }, { role: 'user', content: metaPrompt.user }],
-        env, metaConfig, 512,
+        env, metaConfig, resolveSeoMetaMaxTokens(metaConfig.model), { responseFormat: 'json' },
       );
       const parsedMeta = parseSeoMetaResponse(metaRes.text);
       if (parsedMeta) {
@@ -1950,18 +1950,26 @@ export async function handleGenerateSeoMeta(
   const stepConfig = resolveStepLLMConfig('outline', body.llm_config, env);
   const provider = getLLMProvider(env, stepConfig);
   let text: string;
+  let finishReason: string | undefined;
   try {
     const res = await provider.chatComplete(
       [{ role: 'system', content: system }, { role: 'user', content: user }],
-      env, stepConfig, 512,
+      env, stepConfig, resolveSeoMetaMaxTokens(stepConfig.model), { responseFormat: 'json' },
     );
     text = res.text;
+    finishReason = res.finishReason;
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'LLM provider error' }, 502);
   }
 
   const parsed = parseSeoMetaResponse(text);
-  if (!parsed) return json({ error: 'could not parse title and meta from the model, run it again' }, 502);
+  if (!parsed) {
+    console.warn(`[content-writer] seo-meta parse failed post=${postId} model=${stepConfig.model} finish=${finishReason || 'unknown'} text_len=${text.length}`);
+    if (finishReason === 'length') {
+      return json({ error: 'the model ran out of tokens before finishing the title and meta, run it again' }, 502);
+    }
+    return json({ error: 'could not parse title and meta from the model, run it again' }, 502);
+  }
 
   await env.DB.prepare(
     `UPDATE content_writer_posts SET seo_title = ?, seo_meta_description = ?, updated_at = datetime('now') WHERE id = ?`
