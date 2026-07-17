@@ -292,6 +292,10 @@ export default function AnswerStatusMatrix({
                   onChange={(e) => setNewQuery(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') void submit(); }}
                   placeholder='Add a query, e.g. "best rank tracking tool for small agencies"'
+                  // First-run: with nothing tracked yet this input is the only
+                  // way forward, so put the cursor in it (bug 6ba5d996: both
+                  // buttons read as "not active" and the page looked locked).
+                  autoFocus={queries.length === 0}
                 />
                 <Button variant="secondary" className="h-9" onClick={() => void submit()} disabled={!newQuery.trim()}>
                   <Plus className="mr-1 h-4 w-4" /> Add
