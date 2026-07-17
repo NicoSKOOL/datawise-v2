@@ -384,8 +384,12 @@ export default function DomainRankOverview() {
     if (domains.length > 1) setDomains(domains.filter((_, i) => i !== index));
   };
 
+  // Reduce pasted URLs to a bare domain: DataForSEO's domain endpoints
+  // reject targets with a protocol, www., path, or even a trailing slash
+  // (bug fe933c66: address-bar copies always end in "/", so every pasted
+  // competitor URL came back "no data found").
   const cleanDomainInput = (value: string): string => {
-    return value.trim().replace(/^https?:\/\//, '').replace(/^www\./, '');
+    return value.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '');
   };
 
   const updateDomain = (index: number, value: string) => {
@@ -473,7 +477,16 @@ export default function DomainRankOverview() {
                 : "Domain rank overview completed",
           });
         } else {
-          toast({ title: "No data available", description: "No ranking data found in DataForSEO's database.", variant: "destructive" });
+          // Surface the DFS task error when there is one: "no data" and
+          // "your input was rejected" need different user reactions.
+          const taskError = data.tasks.find((t: any) => t?.status_code && t.status_code !== 20000)?.status_message;
+          toast({
+            title: "No data available",
+            description: taskError
+              ? `DataForSEO rejected the request: ${taskError}`
+              : "No ranking data found in DataForSEO's database.",
+            variant: "destructive",
+          });
         }
       } else {
         toast({ title: "No results", description: "No ranking data found. The domain may be too new.", variant: "destructive" });
