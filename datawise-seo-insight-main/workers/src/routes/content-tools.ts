@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { BROWSER_UA } from '../lib/safe-fetch';
 import { getLLMProvider, type UserLLMConfig, type ChatMessage } from '../llm/provider';
+import { chatCompleteEscalating } from '../llm/length-escalation';
 import {
   getContentOutputInstruction,
   getContentOutputUserReminder,
@@ -710,7 +711,12 @@ export async function handleAnalyzePost(request: Request, env: Env): Promise<Res
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
-    let result = await provider.chatComplete(messages, env, body.llm_config, 1024);
+    // 1024 starved reasoning models (hidden reasoning spends the same
+    // max_tokens budget) and the JSON.parse fallback below silently returned
+    // a junk 'average' audit. Escalating budget keeps truncation off the
+    // parse path; see llm/length-escalation.ts.
+    const analyzeBudget = { startTokens: 4000, ceilingTokens: 8000, label: 'content-tools/analyze', responseFormat: 'json' as const };
+    let result = await chatCompleteEscalating(provider, messages, env, body.llm_config, analyzeBudget);
     let totalIn = result.usage.input_tokens;
     let totalOut = result.usage.output_tokens;
 
@@ -721,7 +727,7 @@ export async function handleAnalyzePost(request: Request, env: Env): Promise<Res
         console.warn(`[content-tools/analyze] language mismatch: expected=${expectedLangFamily} detected=${detected}`);
         messages.push({ role: 'assistant', content: result.text });
         messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
-        result = await provider.chatComplete(messages, env, body.llm_config, 1024);
+        result = await chatCompleteEscalating(provider, messages, env, body.llm_config, analyzeBudget);
         totalIn += result.usage.input_tokens;
         totalOut += result.usage.output_tokens;
       }
@@ -1286,7 +1292,10 @@ export async function handleGenerateSection(request: Request, env: Env): Promise
   const provider = getLLMProvider(env, body.llm_config);
 
   try {
-    let result = await provider.chatComplete(messages, env, body.llm_config, 2048);
+    // 2048 could truncate on reasoning models; markdown output, so no JSON
+    // response format. See llm/length-escalation.ts.
+    const sectionBudget = { startTokens: 4000, ceilingTokens: 8000, label: 'content-tools/section' };
+    let result = await chatCompleteEscalating(provider, messages, env, body.llm_config, sectionBudget);
     let totalIn = result.usage.input_tokens;
     let totalOut = result.usage.output_tokens;
 
@@ -1296,7 +1305,7 @@ export async function handleGenerateSection(request: Request, env: Env): Promise
         console.warn(`[content-tools/section] language mismatch: expected=${expectedLangFamily} detected=${detected}`);
         messages.push({ role: 'assistant', content: result.text });
         messages.push({ role: 'user', content: buildLanguageRetryPrompt(detected, languageLabel) });
-        result = await provider.chatComplete(messages, env, body.llm_config, 2048);
+        result = await chatCompleteEscalating(provider, messages, env, body.llm_config, sectionBudget);
         totalIn += result.usage.input_tokens;
         totalOut += result.usage.output_tokens;
       }

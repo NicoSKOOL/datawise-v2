@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
 import { getLLMProvider, type ChatMessage } from '../llm/provider';
+import { chatCompleteEscalating } from '../llm/length-escalation';
 
 // Server-side, platform-paid model for the gap-analysis strategic write-up.
 // Cheap "speed pick" from the approved catalog ($0.14/$0.28 per M tokens); the
@@ -373,7 +374,11 @@ export async function handleGapAnalysisAI(request: Request, env: Env): Promise<R
 
   let analysis: string;
   try {
-    const result = await getLLMProvider(env, config).chatComplete(messages, env, config, 2000);
+    // 2000 could truncate the markdown analysis on reasoning-mode outputs;
+    // escalate the budget on finish_reason=length. See llm/length-escalation.ts.
+    const result = await chatCompleteEscalating(getLLMProvider(env, config), messages, env, config, {
+      startTokens: 4000, ceilingTokens: 8000, label: 'gap-analysis-ai',
+    });
     analysis = (result.text || '').trim();
   } catch (err) {
     // Never leak platform billing/provider details (e.g. "your OpenRouter
