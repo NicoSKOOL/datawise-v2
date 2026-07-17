@@ -387,14 +387,18 @@ export default function DomainRankOverview() {
   // Reduce pasted URLs to a bare domain: DataForSEO's domain endpoints
   // reject targets with a protocol, www., path, or even a trailing slash
   // (bug fe933c66: address-bar copies always end in "/", so every pasted
-  // competitor URL came back "no data found").
+  // competitor URL came back "no data found"). Applied at submit time, not
+  // per keystroke: stripping "[/...]" on every onChange mangles hand-typed
+  // input (each "/" the user types vanishes and the path concatenates).
   const cleanDomainInput = (value: string): string => {
     return value.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '');
   };
 
   const updateDomain = (index: number, value: string) => {
     const newDomains = [...domains];
-    newDomains[index] = cleanDomainInput(value);
+    // Prefix-only cleaning is keystroke-safe (only complete "https://" /
+    // "www." prefixes ever match); the full path strip happens on submit.
+    newDomains[index] = value.trim().replace(/^https?:\/\//, '').replace(/^www\./, '');
     setDomains(newDomains);
   };
 
@@ -429,7 +433,7 @@ export default function DomainRankOverview() {
   };
 
   const handleAnalyze = async () => {
-    const activeDomains = domains.filter((d) => d.trim());
+    const activeDomains = domains.map(cleanDomainInput).filter((d) => d);
     if (activeDomains.length === 0) return;
 
     setLoading(true);
