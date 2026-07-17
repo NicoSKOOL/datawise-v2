@@ -241,7 +241,13 @@ export default function SettingsPage() {
 
     const params = new URLSearchParams(window.location.search);
     if (params.get('gsc_connected') === 'true') {
-      toast({ title: 'GSC Connected', description: 'Google Search Console connected successfully.' });
+      // New users didn't realize the next step lives in the sidebar selector
+      // (bug ad5f9478: "took me a while to realise I had to go back to the
+      // drop down and select the domain"). Say it.
+      toast({
+        title: 'GSC Connected',
+        description: 'Google Search Console connected successfully. Now pick your website in the selector at the top left of the sidebar to see its data.',
+      });
       window.history.replaceState({}, '', '/settings');
     }
     if (params.get('gsc_error')) {
