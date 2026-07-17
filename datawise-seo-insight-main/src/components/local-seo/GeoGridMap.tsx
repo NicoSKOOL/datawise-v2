@@ -82,9 +82,16 @@ export default function GeoGridMap({ center, points, businessName }: GeoGridMapP
         iconAnchor: [16, 16],
       });
 
+      // A grid point returning fewer than the requested 20 results means
+      // Google's complete local list for that spot came back and the business
+      // is not in it (proximity cutoff), so say that outright instead of
+      // hedging with "below #20" (bug 0ae96199: a #1-everywhere business
+      // cliffs straight to grey and it reads as broken).
       const tooltip = point.position != null
         ? `Position: #${point.position}<br>Results at this point: ${point.total_results}`
-        : `Not found in results<br>Results at this point: ${point.total_results}`;
+        : point.total_results < 20
+          ? `Not shown by Google at this point<br>Google's local results here don't include this business (too far from it)<br>Results at this point: ${point.total_results}`
+          : `Not in the top 20 here<br>Ranked below #20, or not shown by Google at this point<br>Results at this point: ${point.total_results}`;
 
       L.marker([point.lat, point.lng], { icon })
         .addTo(map)
@@ -122,14 +129,17 @@ export default function GeoGridMap({ center, points, businessName }: GeoGridMapP
             { color: '#22c55e', label: '1-3' },
             { color: '#eab308', label: '4-7' },
             { color: '#f97316', label: '8-10' },
-            { color: '#ef4444', label: '11+' },
-            { color: '#6b7280', label: 'Not found' },
+            { color: '#ef4444', label: '11-20' },
+            { color: '#6b7280', label: 'Not in top 20' },
           ].map(({ color, label }) => (
             <div key={label} className="flex items-center gap-1.5">
               <div className="w-3 h-3 rounded-full" style={{ background: color }} />
               <span className="text-xs text-muted-foreground">{label}</span>
             </div>
           ))}
+        </div>
+        <div className="mt-1.5 pt-1.5 border-t text-[10px] leading-snug text-muted-foreground max-w-[150px]">
+          Grey means the business is below #20 (or not shown) at that point, not necessarily absent.
         </div>
       </div>
     </div>
