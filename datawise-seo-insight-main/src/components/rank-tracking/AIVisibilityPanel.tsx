@@ -176,6 +176,16 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
   };
 
   const checkNow = useCallback(async (firstRun = false) => {
+    // Zero queries used to render the button disabled with no explanation,
+    // which read as "this feature is locked" (bug 6ba5d996). Keep it
+    // clickable and say what to do instead.
+    if (queries.length === 0) {
+      toast({
+        title: 'Track a query first',
+        description: 'Add at least one query below, phrased the way customers ask AI assistants. Your first check runs automatically once a query is added.',
+      });
+      return;
+    }
     setChecking(true);
     try {
       const summary = await runAICheck(project.id);
@@ -189,7 +199,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
     } finally {
       setChecking(false);
     }
-  }, [project.id, load, toast]);
+  }, [project.id, load, toast, queries.length]);
 
   // First-visit data push: a project with tracked queries but no checks yet
   // would otherwise show an empty report until the Monday cron. Run the first
@@ -239,7 +249,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
           )}
           {settings.enabled && (
             <>
-              <Button size="sm" className="rounded-full" onClick={() => checkNow()} disabled={checking || queries.length === 0}>
+              <Button size="sm" className="rounded-full" onClick={() => checkNow()} disabled={checking}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${checking ? 'animate-spin' : ''}`} />
                 {checking ? 'Checking…' : 'Check now · 1 credit'}
               </Button>
