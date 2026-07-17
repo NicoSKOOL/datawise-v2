@@ -269,7 +269,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3 text-center">
                   <div className="text-lg font-bold text-gray-500">{scanResult.summary.not_found_count}</div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Not Found</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Not In Top 20</div>
                 </div>
               </div>
 
