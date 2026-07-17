@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildGapAnalysisPrompt, buildTrafficHistorySeries } from './competitors';
+import { buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget } from './competitors';
 
 // The gap-analysis "AI Powered Insights" button used to call a Supabase edge
 // function (keyword-analysis-ai) whose Lovable LLM key was removed during the
@@ -114,5 +114,32 @@ describe('buildTrafficHistorySeries', () => {
       { date: '2026-01-01', organic_etv: 0, organic_count: 0, paid_etv: 0, paid_count: 0 },
     ]);
     expect(result[1].months).toEqual([]);
+  });
+});
+
+// Bug fe933c66 (ads@digitaloverlords.com): "Put in 3 competing URLs and it
+// returns data not found." DFS Labs domain endpoints reject any target that
+// is not a bare domain; pasted URLs carry protocol, www., trailing slashes,
+// or paths, the task error was swallowed, and the SPA showed a generic "no
+// data found". Every domain-target handler now normalizes through
+// sanitizeDomainTarget before calling DFS.
+describe('sanitizeDomainTarget', () => {
+  it('passes bare domains through', () => {
+    expect(sanitizeDomainTarget('ahrefs.com')).toBe('ahrefs.com');
+  });
+
+  it('strips protocol, www, trailing slash, and paths from pasted URLs', () => {
+    expect(sanitizeDomainTarget('https://www.ahrefs.com/')).toBe('ahrefs.com');
+    expect(sanitizeDomainTarget('http://digitaloverlords.com/services/?utm=x#top')).toBe('digitaloverlords.com');
+    expect(sanitizeDomainTarget('peptidebestellung.de/')).toBe('peptidebestellung.de');
+  });
+
+  it('lowercases and trims', () => {
+    expect(sanitizeDomainTarget('  Ahrefs.COM  ')).toBe('ahrefs.com');
+  });
+
+  it('returns empty string for garbage', () => {
+    expect(sanitizeDomainTarget('   ')).toBe('');
+    expect(sanitizeDomainTarget('https://')).toBe('');
   });
 });

@@ -16,13 +16,30 @@ function normalizeGapKeyword(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+// DFS Labs domain endpoints reject any target that is not a bare domain:
+// protocol, www., a trailing slash, or a path all produce a per-task error
+// (which the merged responses used to swallow, so the SPA could only say
+// "no data found" — bug fe933c66, users pasting URLs from the address bar).
+// Every handler that takes a domain target normalizes through this first.
+// Exported for tests. Backlinks routes intentionally do NOT use this: they
+// support page-URL targets.
+export function sanitizeDomainTarget(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/[/?#].*$/, '');
+}
+
 // POST /api/competitors/ranked-keywords
 export async function handleRankedKeywords(request: Request, env: Env): Promise<Response> {
   const { target, location_code = 2840, language_code = 'en', limit = 100 } = await request.json() as any;
-  if (!target) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
+  const cleanTarget = sanitizeDomainTarget(String(target || ''));
+  if (!cleanTarget) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
 
   const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
-    target,
+    target: cleanTarget,
     location_code,
     language_code,
     limit,
@@ -35,9 +52,13 @@ export async function handleRankedKeywords(request: Request, env: Env): Promise<
 export async function handleDomainRankOverview(request: Request, env: Env): Promise<Response> {
   const { target, targets, location_code = 2840, language_code = 'en' } = await request.json() as any;
 
-  // Support single domain or multiple
-  const domainTargets = targets || [target];
-  if (!domainTargets?.length) return new Response(JSON.stringify({ error: 'Target domain(s) required' }), { status: 400 });
+  // Support single domain or multiple. Sanitize in place (keeping array
+  // length and order) because the SPA maps returned tasks back to its
+  // inputs by index.
+  const domainTargets = ((targets || [target]) as unknown[]).map((t) => sanitizeDomainTarget(String(t ?? '')));
+  if (!domainTargets.length || domainTargets.every((t: string) => !t)) {
+    return new Response(JSON.stringify({ error: 'Target domain(s) required' }), { status: 400 });
+  }
 
   // Send individual requests per domain to avoid batch API quirks
   const results = await Promise.all(
@@ -63,17 +84,19 @@ export async function handleDomainRankOverview(request: Request, env: Env): Prom
 // POST /api/competitors/gap-analysis
 export async function handleKeywordGapAnalysis(request: Request, env: Env): Promise<Response> {
   const { my_domain, competitor_domain, location_code = 2840, language_code = 'en' } = await request.json() as any;
-  if (!my_domain || !competitor_domain) {
+  const cleanMyDomain = sanitizeDomainTarget(String(my_domain || ''));
+  const cleanCompetitorDomain = sanitizeDomainTarget(String(competitor_domain || ''));
+  if (!cleanMyDomain || !cleanCompetitorDomain) {
     return new Response(JSON.stringify({ error: 'Both domains are required' }), { status: 400 });
   }
 
   // Get ranked keywords for both domains in parallel
   const [myData, compData] = await Promise.all([
     dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
-      target: my_domain, location_code, language_code, limit: 1000,
+      target: cleanMyDomain, location_code, language_code, limit: 1000,
     }], { ttlSeconds: COMPETITORS_TTL_SECONDS }),
     dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
-      target: competitor_domain, location_code, language_code, limit: 1000,
+      target: cleanCompetitorDomain, location_code, language_code, limit: 1000,
     }], { ttlSeconds: COMPETITORS_TTL_SECONDS }),
   ]);
 
@@ -139,10 +162,11 @@ export async function handleKeywordGapAnalysis(request: Request, env: Env): Prom
 // POST /api/competitors/traffic
 export async function handleBulkTrafficEstimation(request: Request, env: Env): Promise<Response> {
   const { targets, location_code = 2840, language_code = 'en' } = await request.json() as any;
-  if (!targets?.length) return new Response(JSON.stringify({ error: 'Targets array is required' }), { status: 400 });
+  const cleanTargets = ((targets || []) as unknown[]).map((t) => sanitizeDomainTarget(String(t ?? ''))).filter(Boolean);
+  if (!cleanTargets.length) return new Response(JSON.stringify({ error: 'Targets array is required' }), { status: 400 });
 
   const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/bulk_traffic_estimation/live', [{
-    targets,
+    targets: cleanTargets,
     location_code,
     language_code,
   }], { ttlSeconds: COMPETITORS_TTL_SECONDS });
@@ -154,15 +178,6 @@ export async function handleBulkTrafficEstimation(request: Request, env: Env): P
 // usual 6h to halve repeat DFS spend on the same domains.
 const TRAFFIC_HISTORY_TTL_SECONDS = 86400;
 const TRAFFIC_HISTORY_MAX_TARGETS = 10;
-
-function sanitizeTrafficTarget(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/^www\./, '')
-    .replace(/[/?#].*$/, '');
-}
 
 interface DfsMonthlyMetric {
   year: number;
@@ -217,7 +232,7 @@ export async function handleTrafficHistory(request: Request, env: Env): Promise<
     return new Response(JSON.stringify({ error: 'Targets array is required' }), { status: 400 });
   }
 
-  const cleanTargets = [...new Set(targets.map((t: unknown) => sanitizeTrafficTarget(String(t))).filter(Boolean))]
+  const cleanTargets = [...new Set(targets.map((t: unknown) => sanitizeDomainTarget(String(t))).filter(Boolean))]
     .slice(0, TRAFFIC_HISTORY_MAX_TARGETS);
   if (cleanTargets.length === 0) {
     return new Response(JSON.stringify({ error: 'No valid domains in targets' }), { status: 400 });
@@ -248,10 +263,11 @@ export async function handleTrafficHistory(request: Request, env: Env): Promise<
 // POST /api/competitors/domains
 export async function handleCompetitorsDomain(request: Request, env: Env): Promise<Response> {
   const { target, location_code = 2840, language_code = 'en' } = await request.json() as any;
-  if (!target) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
+  const cleanTarget = sanitizeDomainTarget(String(target || ''));
+  if (!cleanTarget) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
 
   const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/competitors_domain/live', [{
-    target,
+    target: cleanTarget,
     location_code,
     language_code,
   }], { ttlSeconds: COMPETITORS_TTL_SECONDS });
