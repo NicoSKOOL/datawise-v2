@@ -365,6 +365,13 @@ export function AppSidebar() {
                     </span>
                   </SelectItem>
                 ))}
+                {/* The M badge's hover tooltip is undiscoverable; new users
+                    asked what "the green dot and M" mean (bug ad5f9478). */}
+                {properties.some((p) => p.is_enabled !== 0 && p.kind === 'manual') && (
+                  <div className="border-t mt-1 px-2 py-1.5 text-[10px] leading-snug text-muted-foreground">
+                    M = site added manually (no Search Console data). Dot = the site's color in charts.
+                  </div>
+                )}
               </SelectContent>
             </Select>
           )}
