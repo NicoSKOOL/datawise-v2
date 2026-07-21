@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { connectGSC, getGSCProperties, syncGSCProperty, disconnectGSC, updateGSCProperty, refreshGSCProperties, deleteManualProperty, type GSCProperty } from '@/lib/gsc';
 import { connectBWT, getBWTProperties, disconnectBWT } from '@/lib/bwt';
-import { getStoredLLMConfig, saveLLMConfig, clearLLMConfig, canPersistLLMConfig, type LLMConfig } from '@/lib/chat';
+import { getStoredLLMConfig, saveLLMConfig, clearLLMConfig, canPersistLLMConfig, syncLLMConfigToServer, deleteLLMConfigFromServer, type LLMConfig } from '@/lib/chat';
 import { DEFAULT_OPENROUTER_MODEL, OPENROUTER_MODELS, OPENROUTER_PROVIDER_GROUPS, isApprovedOpenRouterModel } from '@/lib/ai-models';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { api } from '@/lib/api';
@@ -166,11 +166,11 @@ export default function SettingsPage() {
       model: isApprovedOpenRouterModel(llmModel) ? llmModel : DEFAULT_OPENROUTER_MODEL,
     };
     const persisted = saveLLMConfig(config);
-    if (!persisted) {
-      // The write threw or was silently dropped: iOS Private Browsing, or the
-      // page is running inside an in-app browser (opened from another app).
-      // Without this branch the key just "disappears" and the user re-enters it
-      // forever (bug 702e4f26).
+    const synced = await syncLLMConfigToServer(config);
+    if (!persisted && !synced) {
+      // The write threw or was silently dropped (iOS Private Browsing, in-app
+      // browser) AND the account backup failed. Without this branch the key
+      // just "disappears" and the user re-enters it forever (bug 702e4f26).
       setStorageBlocked(true);
       setLlmSaved(false);
       setKeyCheck({ status: 'idle', message: '' });
@@ -180,7 +180,13 @@ export default function SettingsPage() {
     setStorageBlocked(false);
     setLegacyProvider(null);
     setLlmSaved(true);
-    toast({ title: 'Saved', description: 'OpenRouter configuration saved locally. Verifying key...' });
+    if (!synced) {
+      toast({ title: 'Saved on this device', description: "Couldn't sync the key to your account, so it may not survive a browser data clear. It still works here." });
+    } else if (!persisted) {
+      toast({ title: 'Saved to your account', description: 'This browser is blocking local storage, so the key will be restored from your account next time you log in.' });
+    } else {
+      toast({ title: 'Saved', description: 'OpenRouter configuration saved and backed up to your account. Verifying key...' });
+    }
 
     // Verify the key directly against OpenRouter from the browser (never sent to our servers).
     // A management/provisioning key still returns 200 here, so status alone is not enough:
@@ -228,6 +234,7 @@ export default function SettingsPage() {
 
   const handleClearLLM = () => {
     clearLLMConfig();
+    void deleteLLMConfigFromServer();
     setLlmApiKey('');
     setLlmModel(DEFAULT_OPENROUTER_MODEL);
     setLegacyProvider(null);
@@ -905,7 +912,7 @@ export default function SettingsPage() {
           <h2 className="text-lg font-semibold">OpenRouter AI Key</h2>
         </div>
         <p className="text-sm text-muted-foreground">
-          Bring your own OpenRouter key. DataWise uses tested routing: Sonar Pro for search-grounded work and your selected OpenRouter model for assistant and writer analysis.
+          Bring your own OpenRouter key. DataWise uses tested routing: Sonar Pro for search-grounded work and your selected OpenRouter model for assistant and writer analysis. Your key is stored encrypted in your account so it works across devices.
         </p>
 
         <div className="space-y-3">
