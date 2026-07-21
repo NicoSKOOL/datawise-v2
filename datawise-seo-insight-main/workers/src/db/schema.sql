@@ -672,3 +672,11 @@ CREATE INDEX IF NOT EXISTS idx_app_events_feature_created ON app_events(feature,
 CREATE INDEX IF NOT EXISTS idx_app_events_name_created ON app_events(event_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_app_events_category_created ON app_events(event_category, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_app_events_outcome_created ON app_events(outcome, created_at DESC);
+
+-- Encrypted server-side backup of each user's BYOK OpenRouter config.
+-- localStorage remains the runtime source; this survives site-data clears.
+CREATE TABLE IF NOT EXISTS user_llm_configs (
+  user_id TEXT PRIMARY KEY REFERENCES users(id),
+  config_encrypted TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

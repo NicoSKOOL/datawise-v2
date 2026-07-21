@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { api, getSessionToken, setSessionToken, clearSessionToken } from '@/lib/api';
 import { fetchPromoStatus, redeemPromoCode, type PromoStatus } from '@/lib/promo';
 import { getAttribution } from '@/lib/attribution';
+import { restoreOrBackfillLLMConfig } from '@/lib/chat';
 import { useToast } from '@/hooks/use-toast';
 
 interface User {
@@ -98,6 +99,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await api<{ user: User }>('/auth/me');
       setUser(data.user);
+      // Restore the BYOK OpenRouter key from the account backup if this
+      // browser lost it, or back up a local-only key. Fire-and-forget.
+      void restoreOrBackfillLLMConfig();
       // Load promo status after user is fetched
       await loadPromoStatus();
     } catch {
@@ -107,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const data = await api<{ user: User }>('/auth/me');
           setUser(data.user);
+          void restoreOrBackfillLLMConfig();
           await loadPromoStatus();
           return;
         } catch {

@@ -24,6 +24,12 @@ export interface LLMConfig {
 
 const LLM_CONFIG_KEY = 'datawise_llm_config';
 
+// In-memory copy of the config. First-write, last-resort-read fallback for
+// browsers where localStorage is blocked or dropped (iOS Private Browsing,
+// in-app browsers): after a server restore, the session still works even if
+// the localStorage write fails.
+let memoryLLMConfig: StoredLLMConfig | null = null;
+
 export type StoredLLMConfig = {
   provider?: 'openai' | 'claude' | 'gemini' | 'openrouter' | string;
   api_key?: string;
@@ -31,13 +37,18 @@ export type StoredLLMConfig = {
 };
 
 export function getStoredLLMConfig(): StoredLLMConfig | null {
-  const stored = localStorage.getItem(LLM_CONFIG_KEY);
-  if (!stored) return null;
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(LLM_CONFIG_KEY);
+  } catch {
+    stored = null;
+  }
+  if (!stored) return memoryLLMConfig;
   try {
     const parsed = JSON.parse(stored);
-    return typeof parsed === 'object' && parsed ? parsed : null;
+    return typeof parsed === 'object' && parsed ? parsed : memoryLLMConfig;
   } catch {
-    return null;
+    return memoryLLMConfig;
   }
 }
 
@@ -79,6 +90,7 @@ export function saveLLMConfig(config: LLMConfig): boolean {
     api_key: config.api_key,
     model: isApprovedOpenRouterModel(config.model) ? config.model : DEFAULT_OPENROUTER_MODEL,
   });
+  memoryLLMConfig = JSON.parse(payload);
   let persisted = false;
   try {
     localStorage.setItem(LLM_CONFIG_KEY, payload);
@@ -107,8 +119,63 @@ export function canPersistLLMConfig(): boolean {
 }
 
 export function clearLLMConfig(): void {
-  localStorage.removeItem(LLM_CONFIG_KEY);
+  memoryLLMConfig = null;
+  try {
+    localStorage.removeItem(LLM_CONFIG_KEY);
+  } catch {
+    // Blocked storage: the memory copy is cleared, which is what runtime reads.
+  }
   window.dispatchEvent(new Event(LLM_CONFIG_EVENT));
+}
+
+// Pushes the config to the account-level encrypted backup. Fire-and-forget
+// safe: returns false on any failure, never throws.
+export async function syncLLMConfigToServer(config: LLMConfig): Promise<boolean> {
+  try {
+    await api('/api/llm-config', {
+      method: 'PUT',
+      body: { api_key: config.api_key, model: config.model },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteLLMConfigFromServer(): Promise<void> {
+  try {
+    await api('/api/llm-config', { method: 'DELETE' });
+  } catch {
+    // Best effort: a failed delete leaves a stale encrypted backup, which the
+    // user can overwrite by saving a new key.
+  }
+}
+
+let llmConfigSyncRan = false;
+
+// Runs once per session after login. If the browser has no usable config but
+// the account does, restore it locally (no PUT back). If the browser HAS a
+// config, push it up so existing users get backfilled without any action.
+export async function restoreOrBackfillLLMConfig(): Promise<void> {
+  if (llmConfigSyncRan) return;
+  llmConfigSyncRan = true;
+  const local = getLLMConfig();
+  if (local) {
+    void syncLLMConfigToServer(local);
+    return;
+  }
+  try {
+    const res = await api<{ config: StoredLLMConfig | null }>('/api/llm-config');
+    if (res.config?.api_key) {
+      saveLLMConfig({
+        provider: 'openrouter',
+        api_key: res.config.api_key,
+        model: res.config.model,
+      });
+    }
+  } catch {
+    // No backup or request failed: behave exactly as before this feature.
+  }
 }
 
 export async function getConversations(propertyId?: string) {

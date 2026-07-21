@@ -122,6 +122,7 @@ import {
   handleListAllFeedback, handleUpdateFeedback, handleDeleteFeedback,
   handleRoadmap,
 } from './routes/feedback';
+import { handleGetLLMConfig, handlePutLLMConfig, handleDeleteLLMConfig } from './routes/llm-config';
 import {
   handleListChecklist, handleUpsertChecklist,
   handleListCustom, handleCreateCustom, handleDeleteCustom,
@@ -780,6 +781,17 @@ export default {
       }
       if (path === '/api/content-tools/generate-section' && method === 'POST') {
         return addCors(await handleGenerateSection(request, env));
+      }
+
+      // --- BYOK LLM config backup (encrypted at rest) ---
+      if (path === '/api/llm-config' && method === 'GET') {
+        return addCors(await handleGetLLMConfig(env, user));
+      }
+      if (path === '/api/llm-config' && method === 'PUT') {
+        return addCors(await handlePutLLMConfig(request, env, user));
+      }
+      if (path === '/api/llm-config' && method === 'DELETE') {
+        return addCors(await handleDeleteLLMConfig(env, user));
       }
 
       // --- Feedback ---
