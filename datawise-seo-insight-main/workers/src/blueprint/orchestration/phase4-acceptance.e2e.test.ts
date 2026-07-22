@@ -663,9 +663,9 @@ describe('Phase 4 orchestration acceptance', () => {
       expect(s.stages.get(stage)!.ruleset_version, `${stage} ruleset`).toBe('cluster-v2');
     }
     for (const stage of PAGE_PLAN_STAGES) {
-      expect(s.stages.get(stage)!.ruleset_version, `${stage} ruleset`).toBe('pp-v1');
+      expect(s.stages.get(stage)!.ruleset_version, `${stage} ruleset`).toBe('pp-v2');
     }
-    expect(s.version.ruleset_version).toBe('cluster-v2+pp-v1');
+    expect(s.version.ruleset_version).toBe('cluster-v2+pp-v2');
     expect(s.version.schema_version).toBe('p4');
 
     // ACCEPTANCE: score breakdown + evidence refs on every decision. Every

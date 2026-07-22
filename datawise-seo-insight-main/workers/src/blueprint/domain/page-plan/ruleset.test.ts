@@ -8,7 +8,7 @@ import { PAGE_PLAN_RULESET_V1 } from './ruleset';
 // pinned hash by running the test once, reading the actual value out of the
 // failure diff, and pasting it back in here. That two-step is the whole
 // point: a silent threshold edit can never ship without a version bump.
-const PINNED_HASH = '206fee1d368960af0dc7715d7570b7b1eb0fdc8ff80b9dd9f696ad92336ce8f1';
+const PINNED_HASH = '15b49a87bbb6e5648264a8bb05ff323c8001347592d4a0049da85b87f05eee37';
 
 describe('PAGE_PLAN_RULESET_V1 drift guard', () => {
   it('is frozen', () => {
@@ -16,7 +16,7 @@ describe('PAGE_PLAN_RULESET_V1 drift guard', () => {
   });
 
   it('has the expected version string', () => {
-    expect(PAGE_PLAN_RULESET_V1.version).toBe('pp-v1');
+    expect(PAGE_PLAN_RULESET_V1.version).toBe('pp-v2');
   });
 
   it('matches the pinned canonical hash (bump version + this hash together on any threshold change)', async () => {

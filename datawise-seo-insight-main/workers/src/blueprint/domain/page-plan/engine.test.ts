@@ -290,6 +290,35 @@ describe('service-location guardrail', () => {
 // Primary-keyword uniqueness + cannibalization
 // ---------------------------------------------------------------------------
 
+describe('query-shaped keyword naming', () => {
+  it('a dedicated page minted from a "near me" keyword gets a clean name everywhere but keeps the raw keyword as its SEO target', () => {
+    const { pages, placements } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Plumbing')] }),
+        clusters: [cluster({
+          clusterId: 'c1',
+          label: 'drain cleaning service near me',
+          primaryKeyword: 'drain cleaning service near me',
+          coreTokens: ['drain', 'cleaning', 'service'],
+          serviceId: 's1',
+          intent: 'transactional',
+          addressableVolume: 100,
+        })],
+      }),
+      RS, BUDGET,
+    );
+    const decision = placements.find((p) => p.clusterId === 'c1')!;
+    expect(decision.placement).toBe('dedicated_page');
+    const page = byLogicalId(pages, decision.targetLogicalId)!;
+    expect(page.title).toBe('Drain Cleaning Service | Acme Plumbing');
+    expect(page.h1).toBe('Drain Cleaning Service');
+    expect(page.slug).not.toContain('near-me');
+    expect(page.logicalId).not.toContain('near-me');
+    // The raw query remains the page's SEO target.
+    expect(page.primaryKeyword).toBe('drain cleaning service near me');
+  });
+});
+
 describe('primary-keyword uniqueness', () => {
   it('the first page claims a primary keyword; a later cluster with the same keyword folds in with a cannibalization warning', () => {
     const shared = { primaryKeyword: 'emergency plumbing', coreTokens: ['emergency', 'plumbing'] };

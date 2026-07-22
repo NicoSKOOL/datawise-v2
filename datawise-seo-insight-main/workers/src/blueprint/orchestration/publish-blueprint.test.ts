@@ -173,7 +173,7 @@ describe('publishBlueprintHandler materialization', () => {
     const version = await d1.prepare(`SELECT * FROM blueprint_versions WHERE run_id = ?`).bind(runId).first<VersionRow>();
     expect(version).toBeTruthy();
     expect(version!.schema_version).toBe('p4');
-    expect(version!.ruleset_version).toBe('cluster-v2+pp-v1');
+    expect(version!.ruleset_version).toBe('cluster-v2+pp-v2');
     expect(version!.completeness).toBe('complete');
 
     const revision = await d1.prepare(`SELECT * FROM blueprint_revisions WHERE blueprint_version_id = ?`).bind(version!.id).first<RevisionRow>();

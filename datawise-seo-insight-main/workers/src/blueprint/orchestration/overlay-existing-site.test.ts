@@ -129,7 +129,7 @@ function plannedPage(logicalId: string, slug: string, title: string, primaryKeyw
 }
 
 async function seedPagePlanArtifact(artifacts: Map<string, string>, runId: string, pages: any[]): Promise<void> {
-  artifacts.set(`runs/${runId}/page-plan.json`, JSON.stringify({ rulesetVersion: 'pp-v1', pages }));
+  artifacts.set(`runs/${runId}/page-plan.json`, JSON.stringify({ rulesetVersion: 'pp-v2', pages }));
 }
 
 function brief(overrides: Partial<NormalizedProjectBrief> = {}): NormalizedProjectBrief {
@@ -284,7 +284,7 @@ describe('overlayExistingSiteHandler', () => {
     const overlayRaw = artifacts.get(`runs/${runId}/overlay.json`)!;
     expect(overlayRaw).toBeTruthy();
     const overlay = JSON.parse(overlayRaw);
-    expect(overlay.rulesetVersion).toBe('pp-v1');
+    expect(overlay.rulesetVersion).toBe('pp-v2');
     const heater = overlay.plannedPages.find((p: any) => p.logicalId === 'lp_heater');
     expect(heater.recommendation).toBe('create');
     expect(heater.matchedUrl).toBeNull();

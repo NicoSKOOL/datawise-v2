@@ -294,7 +294,7 @@ describe('Phase 2 orchestration acceptance', () => {
     // 'phase2-stub'/'p2' stubs) and a populated summary_json whose pageCount
     // matches the number of blueprint_pages rows written under its revision.
     expect(versionRow!.schema_version).toBe('p4');
-    expect(versionRow!.ruleset_version).toBe('cluster-v2+pp-v1');
+    expect(versionRow!.ruleset_version).toBe('cluster-v2+pp-v2');
     const summary = JSON.parse(versionRow!.summary_json);
     expect(summary.pageCount).toBeGreaterThan(0);
 
@@ -331,7 +331,7 @@ describe('Phase 2 orchestration acceptance', () => {
         scores: { addressableVolume: null, confidence: null, scoreBreakdown: null, evidenceRefs: [] }, warnings: [],
       });
       const artifact = {
-        rulesetVersion: 'pp-v1',
+        rulesetVersion: 'pp-v2',
         pages: [page('home', 'dup', null, null, 'home'), page('svc', 'dup', 'home', 'svc kw')],
         placements: [],
         warnings: [],
