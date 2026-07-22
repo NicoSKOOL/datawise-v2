@@ -8,7 +8,7 @@ import {
 } from '../doorway';
 import type { PagePlanRuleset } from './ruleset';
 import { evaluateStrongSignals, presentStrongSignals, shouldFold } from './signals';
-import { buildH1, buildLogicalId, buildSlug, buildTitle, dedupeSlug } from './titles';
+import { buildH1, buildLogicalId, buildSlug, buildTitle, cleanKeywordForNaming, dedupeSlug } from './titles';
 import type {
   PagePlanBriefFacts, PagePlanCluster, PagePlanFacts, ParentCandidate,
   PlacementDecision, PlannedPage, PlannedPageSection, SignalEvaluation, StrongSignal,
@@ -612,7 +612,7 @@ function placeCluster(
   // General separate-vs-fold: >= minStrongSignals -> dedicated page; else fold
   // as the section/FAQ shouldFold picks.
   if (meetsSignalFloor) {
-    const page = createDedicatedPage(placed, pageType, parent, cluster.primaryKeyword, null, facts, state);
+    const page = createDedicatedPage(placed, pageType, parent, cleanKeywordForNaming(cluster.primaryKeyword), null, facts, state);
     reasons.push(`${fired.length} strong signals cleared the separate-page floor (${ruleset.separate.minStrongSignals}); ${fired.join(', ')}.`);
     return { clusterId: cluster.clusterId, placement: 'dedicated_page', targetLogicalId: page.logicalId, strongSignals: fired, reasons };
   }

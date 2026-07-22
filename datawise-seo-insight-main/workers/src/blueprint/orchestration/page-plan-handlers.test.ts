@@ -310,7 +310,7 @@ describe('parseCompetitorPagesHandler', () => {
     expect(status).toBe('succeeded');
     expect(output.skipped).toBe(true);
     expect(output.reason).toBe('no_clusters');
-    expect(output.rulesetVersion).toBe('pp-v1');
+    expect(output.rulesetVersion).toBe('pp-v2');
   });
 
   it('selects competitor SERP URLs by domain match in rank order, classifies parsed', async () => {
@@ -681,7 +681,7 @@ describe('buildPagePlanHandler', () => {
     expect(output.storageKey).toBe(`runs/${runId}/page-plan.json`);
     expect(artifacts.has(output.storageKey)).toBe(true);
     const stored = JSON.parse(artifacts.get(output.storageKey)!);
-    expect(stored.rulesetVersion).toBe('pp-v1');
+    expect(stored.rulesetVersion).toBe('pp-v2');
     expect(Array.isArray(stored.pages)).toBe(true);
     // evidence refs threaded from the cluster onto its dedicated page.
     const resourcePage = stored.pages.find((p: any) => p.pageType === 'resource');

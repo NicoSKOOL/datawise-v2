@@ -1,5 +1,6 @@
 import type { PageType } from '../../contracts/enums';
 import { normalizeSlug } from '../slug';
+import { PAGE_PLAN_RULESET_V1 } from './ruleset';
 
 // Deterministic naming for the page plan: logical IDs, slugs, titles, and H1s.
 // All pure over their inputs (pageType + service/area/keyword/brand parts): the
@@ -53,6 +54,61 @@ function capLength(text: string, max: number): string {
   const lastSpace = cut.lastIndexOf(' ');
   const base = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
   return base.replace(/[\s|,\-]+$/, '').trim();
+}
+
+// ---------------------------------------------------------------------------
+// Keyword-to-name cleaning
+// ---------------------------------------------------------------------------
+
+// Removes every contiguous, case-insensitive occurrence of `phraseWords` from
+// `words`. Pure and deterministic.
+function removePhraseOccurrences(words: string[], phraseWords: string[]): string[] {
+  if (phraseWords.length === 0 || words.length < phraseWords.length) return words;
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length) {
+    let matches = i + phraseWords.length <= words.length;
+    for (let j = 0; matches && j < phraseWords.length; j++) {
+      if (words[i + j].toLowerCase() !== phraseWords[j]) matches = false;
+    }
+    if (matches) {
+      i += phraseWords.length;
+    } else {
+      out.push(words[i]);
+      i++;
+    }
+  }
+  return out;
+}
+
+// Turns a search query into something usable as a page name. Strips the
+// query-shaped modifiers listed in PAGE_PLAN_RULESET_V1.naming: proximity
+// phrases ("near me") anywhere, modifier words ("best", "cheap") only when
+// leading, and trailing year tokens. The raw keyword stays the page's SEO
+// target; only the name changes. If stripping would empty the keyword, the
+// original is returned so no page ever ends up nameless.
+export function cleanKeywordForNaming(keyword: string): string {
+  const naming = PAGE_PLAN_RULESET_V1.naming;
+  const original = keyword.trim().replace(/\s+/g, ' ');
+  if (original === '') return '';
+  let words = original.split(' ');
+  for (const phrase of naming.strippedPhrases) {
+    words = removePhraseOccurrences(words, phrase.split(' '));
+  }
+  while (words.length > 0 && (naming.strippedLeadingWords as readonly string[]).includes(words[0].toLowerCase())) {
+    words = words.slice(1);
+  }
+  while (words.length > 0 && /^20\d{2}$/.test(words[words.length - 1])) {
+    words = words.slice(0, -1);
+  }
+  const cleaned = words.join(' ');
+  return cleaned === '' ? original : cleaned;
+}
+
+// The primaryKeyword title/H1 fallback always goes through the cleaner; '' when
+// absent so firstNonEmpty moves on.
+function cleanedKeyword(keyword: string | null | undefined): string {
+  return keyword === null || keyword === undefined ? '' : cleanKeywordForNaming(keyword);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +265,11 @@ function titleFor(parts: TitleParts, brand: string): string {
     case 'resource':
     case 'comparison':
     case 'faq': {
-      const topic = titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword));
+      const topic = titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword)));
       return topic ? `${topic} | ${brand}` : brand;
     }
     case 'service_location': {
-      const svc = titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword));
+      const svc = titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword)));
       const city = titleCase(firstNonEmpty(parts.cityName));
       return `${svc} in ${city} | ${brand}`;
     }
@@ -241,9 +297,9 @@ function h1For(parts: TitleParts, brand: string): string {
     case 'resource':
     case 'comparison':
     case 'faq':
-      return titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword)) || brand;
+      return titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword))) || brand;
     case 'service_location': {
-      const svc = titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword));
+      const svc = titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword)));
       const city = titleCase(firstNonEmpty(parts.cityName));
       return `${svc} in ${city}`;
     }

@@ -9,7 +9,18 @@ import type { DoorwayGuardrailRules } from '../doorway';
 // fails CI. That is Phase 4's acceptance requirement: "changing a threshold
 // records a new ruleset version".
 export const PAGE_PLAN_RULESET_V1 = Object.freeze({
-  version: 'pp-v1',
+  version: 'pp-v2',
+  // Search-query modifiers that make sense as keywords to TARGET but never as
+  // page names: "drain cleaning service near me" is a real query, but no sane
+  // site titles a page that. cleanKeywordForNaming strips these before a
+  // cluster's primary keyword becomes a title/H1/slug/logical id; the page's
+  // primaryKeyword field keeps the raw query. Phrases are removed anywhere in
+  // the keyword; leading words only when they lead (so "best practices" content
+  // topics mid-keyword survive).
+  naming: {
+    strippedPhrases: ['near me', 'near you', 'close to me', 'in my area', 'around me', 'nearby', 'open now'],
+    strippedLeadingWords: ['best', 'top', 'cheap', 'cheapest'],
+  },
   separate: {
     minStrongSignals: 2,
     lowSerpOverlapMax: 0.3,
