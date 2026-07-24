@@ -63,7 +63,7 @@ async function seedCluster(
   const scoreBreakdownJson = spec.scoreBreakdownJson !== undefined
     ? spec.scoreBreakdownJson
     : spec.evidenceRefIds !== undefined
-      ? JSON.stringify({ rulesetVersion: 'cluster-v2', evidenceRefIds: spec.evidenceRefIds })
+      ? JSON.stringify({ rulesetVersion: 'cluster-v3', evidenceRefIds: spec.evidenceRefIds })
       : null;
   await d1
     .prepare(

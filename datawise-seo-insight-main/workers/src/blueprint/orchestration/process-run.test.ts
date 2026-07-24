@@ -320,7 +320,7 @@ describe('processResearchRun', () => {
     // just baked into the input hash. Clustering/page-plan stages get their
     // real versioned ruleset; every other stage still gets the legacy stub.
     const clusterStageRow = finalStageRows.find((r) => r.stage_name === 'build_provisional_clusters');
-    expect(clusterStageRow?.ruleset_version).toBe('cluster-v2');
+    expect(clusterStageRow?.ruleset_version).toBe('cluster-v3');
     const pagePlanStageRow = finalStageRows.find((r) => r.stage_name === 'build_page_plan');
     expect(pagePlanStageRow?.ruleset_version).toBe('pp-v2');
     const legacyStageRow = finalStageRows.find((r) => r.stage_name === 'validate_intake');

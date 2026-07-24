@@ -116,32 +116,8 @@ describe('phase 4 schema', () => {
     expect(clusterKeywordIndexes).toContain('idx_cluster_keywords_kw');
   });
 
-  it('bootstraps schema_version at 4', async () => {
-    const { raw } = createTestDb();
-    const row = raw.prepare(`SELECT value FROM blueprint_meta WHERE key = 'schema_version'`).get() as { value: string };
-    expect(row.value).toBe('4');
-  });
-
-  it('numeric version guard does not re-fire for a double-digit schema_version', () => {
-    const { raw } = createTestDb();
-    const guard = `UPDATE blueprint_meta SET value = '4', updated_at = datetime('now') WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 4;`;
-    const readVersion = () =>
-      (raw.prepare(`SELECT value FROM blueprint_meta WHERE key = 'schema_version'`).get() as { value: string }).value;
-
-    // A future double-digit version must not be clobbered back to '4'
-    // ('10' < '4' is true lexicographically, false numerically -- CAST guards it).
-    raw.prepare(`UPDATE blueprint_meta SET value = '10' WHERE key = 'schema_version'`).run();
-    raw.exec(guard);
-    expect(readVersion()).toBe('10');
-
-    // Applying the guard when already exactly at '4' is a no-op (idempotent).
-    raw.prepare(`UPDATE blueprint_meta SET value = '4' WHERE key = 'schema_version'`).run();
-    raw.exec(guard);
-    expect(readVersion()).toBe('4');
-
-    // Inverse: an older version still gets bumped.
-    raw.prepare(`UPDATE blueprint_meta SET value = '3' WHERE key = 'schema_version'`).run();
-    raw.exec(guard);
-    expect(readVersion()).toBe('4');
-  });
+  // schema_version bootstrap + the CAST version guard are exercised at the
+  // current schema head (5) in db/schema-v5.test.ts; the phase-4-specific
+  // assertions that lived here would now conflict with that head, so they moved
+  // there rather than being duplicated at a stale value.
 });

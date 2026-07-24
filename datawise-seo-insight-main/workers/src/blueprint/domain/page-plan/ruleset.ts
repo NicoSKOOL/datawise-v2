@@ -1,4 +1,5 @@
 import type { DoorwayGuardrailRules } from '../doorway';
+import { NAMING_STRIPPED_PHRASES, NAMING_STRIPPED_LEADING_WORDS } from '../keyword-naming';
 
 // Frozen v1 ruleset for the page-planning engine (Phase 4:
 // parse_competitor_pages, build_page_plan, overlay_existing_site,
@@ -17,9 +18,13 @@ export const PAGE_PLAN_RULESET_V1 = Object.freeze({
   // primaryKeyword field keeps the raw query. Phrases are removed anywhere in
   // the keyword; leading words only when they lead (so "best practices" content
   // topics mid-keyword survive).
+  // The canonical lists live in domain/keyword-naming.ts (shared with the
+  // clustering engine); referenced here so this ruleset and cleanKeywordForNaming
+  // stay a single source of truth. Values are unchanged from pp-v2, so the pinned
+  // drift hash is identical.
   naming: {
-    strippedPhrases: ['near me', 'near you', 'close to me', 'in my area', 'around me', 'nearby', 'open now'],
-    strippedLeadingWords: ['best', 'top', 'cheap', 'cheapest'],
+    strippedPhrases: NAMING_STRIPPED_PHRASES,
+    strippedLeadingWords: NAMING_STRIPPED_LEADING_WORDS,
   },
   separate: {
     minStrongSignals: 2,
