@@ -18,6 +18,7 @@ function page(overrides: Partial<PlannedPage> & { logicalId: string }): PlannedP
     primaryKeyword: overrides.primaryKeyword ?? null,
     clusterIds: overrides.clusterIds ?? [],
     sections: overrides.sections ?? [],
+    supportingKeywords: overrides.supportingKeywords ?? [],
     metaDescription: overrides.metaDescription ?? null,
     recommendation: (overrides.recommendation ?? 'create') as RecommendationStatus,
     consolidateTargetLogicalId: overrides.consolidateTargetLogicalId ?? null,

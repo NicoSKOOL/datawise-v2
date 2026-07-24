@@ -48,6 +48,7 @@ function cluster(overrides: Partial<PagePlanCluster> = {}): PagePlanCluster {
     serp: { urls: null },
     competitorPages: [],
     evidenceRefIds: [],
+    memberKeywords: [],
     ...overrides,
   };
 }
@@ -144,10 +145,12 @@ function competitorDedicated() {
 describe('placement matrix', () => {
   it('>= 2 strong signals mints a dedicated page under the structural parent', () => {
     // transactional + service link (unique_conversion) + volume 100 (sufficient_demand) = 2 signals.
+    // Keyword is a distinct topic (does not name the "Plumbing" service), so the
+    // pp-v3 service-variant rule does not intercept it: it earns its own page.
     const { pages, placements } = buildPagePlan(
       facts({
         brief: brief({ services: [svc('s1', 'Plumbing')] }),
-        clusters: [cluster({ clusterId: 'c1', serviceId: 's1', intent: 'transactional', addressableVolume: 100 })],
+        clusters: [cluster({ clusterId: 'c1', primaryKeyword: 'water heater install', coreTokens: ['water', 'heater', 'install'], serviceId: 's1', intent: 'transactional', addressableVolume: 100 })],
       }),
       RS, BUDGET,
     );
@@ -157,7 +160,7 @@ describe('placement matrix', () => {
     expect(page.pageType).toBe('resource');
     // parented under the matching service page.
     expect(page.parentLogicalId).toBe('svc:plumbing');
-    expect(page.primaryKeyword).toBe('emergency plumbing');
+    expect(page.primaryKeyword).toBe('water heater install');
   });
 
   it('exactly 1 strong signal folds into the parent as a section', () => {
@@ -321,7 +324,10 @@ describe('query-shaped keyword naming', () => {
 
 describe('primary-keyword uniqueness', () => {
   it('the first page claims a primary keyword; a later cluster with the same keyword folds in with a cannibalization warning', () => {
-    const shared = { primaryKeyword: 'emergency plumbing', coreTokens: ['emergency', 'plumbing'] };
+    // A distinct topic (does not name the "Plumbing" service) so the pp-v3
+    // service-variant rule does not fold it: the mechanic under test is the
+    // exact-keyword cannibalization guard, not variant folding.
+    const shared = { primaryKeyword: 'water heater repair', coreTokens: ['water', 'heater', 'repair'] };
     const { pages, placements, warnings, stats } = buildPagePlan(
       facts({
         brief: brief({ services: [svc('s1', 'Plumbing')] }),
@@ -341,7 +347,7 @@ describe('primary-keyword uniqueness', () => {
     expect(warnings.some((w) => w.code === 'cannibalization_risk')).toBe(true);
     expect(stats.cannibalizedCount).toBe(1);
     // Only one active page carries that primary keyword.
-    const claimants = pages.filter((p) => p.primaryKeyword === 'emergency plumbing');
+    const claimants = pages.filter((p) => p.primaryKeyword === 'water heater repair');
     expect(claimants.length).toBe(1);
   });
 
@@ -361,6 +367,328 @@ describe('primary-keyword uniqueness', () => {
     const logicalIds = pages.map((p) => p.logicalId);
     expect(new Set(slugs).size).toBe(slugs.length);
     expect(new Set(logicalIds).size).toBe(logicalIds.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cleaned-name collision folds (pp-v3, spec 3.2)
+// ---------------------------------------------------------------------------
+
+describe('cleaned-name collision folds', () => {
+  it('a second cluster that cleans to the same name under the same parent folds in (no numeric suffix, cannibalization warning)', () => {
+    // Both link the "Plumbing" service (so neither is a service-name variant, and
+    // both clear the 2-signal floor via unique_conversion + sufficient_demand and
+    // reach the mint path). Different RAW keywords, identical CLEANED name.
+    const { pages, placements, warnings } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Plumbing')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'drain cleaning', coreTokens: ['drain', 'cleaning'], serviceId: 's1', intent: 'transactional', addressableVolume: 90500 }),
+          cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'drain cleaning near me', coreTokens: ['drain', 'cleaning'], serviceId: 's1', intent: 'transactional', addressableVolume: 74000 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const d1 = placements.find((p) => p.clusterId === 'c1')!;
+    const d2 = placements.find((p) => p.clusterId === 'c2')!;
+    expect(d1.placement).toBe('dedicated_page');
+    expect(d2.placement).toBe('section');
+    expect(d2.targetLogicalId).toBe(d1.targetLogicalId);
+    // No cluster page carries a numeric -2 suffix anywhere.
+    expect(pages.every((p) => !/-2\/?$/.test(p.slug))).toBe(true);
+    expect(pages.every((p) => !p.logicalId.endsWith('-2'))).toBe(true);
+    expect(warnings.some((w) => w.code === 'cannibalization_risk')).toBe(true);
+    // The warning names both raw keywords.
+    const w = warnings.find((x) => x.code === 'cannibalization_risk')!;
+    expect(w.message).toContain('drain cleaning near me');
+    expect(w.message).toContain('drain cleaning');
+    // Exactly one page owns the cleaned name under that parent.
+    const drainPages = pages.filter((p) => p.slug.includes('drain-cleaning'));
+    expect(drainPages.length).toBe(1);
+  });
+
+  it('same cleaned name under DIFFERENT parents still mints two separate pages', () => {
+    // Distinct raw keywords ("best drain guide" vs "drain guide near me") that both
+    // clean to "drain guide", linked to two different services. Same cleaned name,
+    // different parents -> the collision key differs -> both mint.
+    const { placements } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Plumbing'), svc('s2', 'Heating')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'best drain guide', coreTokens: ['drain', 'guide'], serviceId: 's1', intent: 'transactional', addressableVolume: 500 }),
+          cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'drain guide near me', coreTokens: ['drain', 'guide'], serviceId: 's2', intent: 'transactional', addressableVolume: 400 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const d1 = placements.find((p) => p.clusterId === 'c1')!;
+    const d2 = placements.find((p) => p.clusterId === 'c2')!;
+    expect(d1.placement).toBe('dedicated_page');
+    expect(d2.placement).toBe('dedicated_page');
+    expect(d1.targetLogicalId).not.toBe(d2.targetLogicalId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Service-variant folds (pp-v3, spec 3.3a)
+// ---------------------------------------------------------------------------
+
+describe('service-variant folds', () => {
+  const epBrief = brief({ services: [svc('s1', 'Emergency Plumbing')] });
+
+  function variantCluster(id: string, keyword: string, volume: number): PagePlanCluster {
+    return cluster({
+      clusterId: id, primaryKeywordId: `k-${id}`, primaryKeyword: keyword,
+      coreTokens: keyword.split(' '), serviceId: 's1', intent: 'transactional', addressableVolume: volume,
+    });
+  }
+
+  it('clean subset variants fold into the service page as sections, minting no /resources/ page and emitting no adjudication case', () => {
+    const { pages, placements, pendingVariantCases } = buildPagePlan(
+      facts({
+        brief: epBrief,
+        clusters: [
+          variantCluster('c1', 'emergency plumbing services', 900),
+          variantCluster('c2', 'emergency plumbing repair', 800),
+          variantCluster('c3', '24 7 emergency plumbing services', 700),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    for (const id of ['c1', 'c2', 'c3']) {
+      const d = placements.find((p) => p.clusterId === id)!;
+      expect(d.placement).toBe('section');
+      expect(d.targetLogicalId).toBe('svc:emergency-plumbing');
+      expect(d.reasons.some((r) => r.toLowerCase().includes('service variant'))).toBe(true);
+    }
+    // No dedicated resource page minted for any variant.
+    expect(byType(pages, 'resource').length).toBe(0);
+    expect(pendingVariantCases.length).toBe(0);
+    // All three folded onto the service page.
+    const svcPage = byLogicalId(pages, 'svc:emergency-plumbing')!;
+    expect(svcPage.sections.map((s) => s.clusterId).sort()).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('a one-extra-token borderline variant folds AND records a variant_fold adjudication case', () => {
+    const { placements, pendingVariantCases } = buildPagePlan(
+      facts({
+        brief: epBrief,
+        clusters: [
+          variantCluster('c1', 'commercial emergency plumbing service', 500),
+          variantCluster('c2', '24 hour emergency plumbing', 400),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    // Both fold as sections on the service page.
+    for (const id of ['c1', 'c2']) {
+      expect(placements.find((p) => p.clusterId === id)!.placement).toBe('section');
+      expect(placements.find((p) => p.clusterId === id)!.targetLogicalId).toBe('svc:emergency-plumbing');
+    }
+    // Each surfaces a borderline case with the single offending token.
+    expect(pendingVariantCases.map((c) => c.clusterId)).toEqual(['c1', 'c2']);
+    const c1Case = pendingVariantCases.find((c) => c.clusterId === 'c1')!;
+    expect(c1Case).toMatchObject({ serviceId: 's1', keyword: 'commercial emergency plumbing service', extraToken: 'commercial' });
+    const c2Case = pendingVariantCases.find((c) => c.clusterId === 'c2')!;
+    expect(c2Case).toMatchObject({ serviceId: 's1', keyword: '24 hour emergency plumbing', extraToken: 'hour' });
+  });
+
+  it('a genuinely distinct offering (two-plus extra tokens) does not variant-fold and follows normal placement', () => {
+    const { pages, placements, pendingVariantCases } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s2', 'Drain Cleaning')] }),
+        clusters: [
+          cluster({
+            clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'sewer drain jet cleaning service',
+            coreTokens: ['sewer', 'drain', 'jet', 'cleaning'], serviceId: 's2', intent: 'commercial', addressableVolume: 600,
+          }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const d = placements.find((p) => p.clusterId === 'c1')!;
+    // 2 strong signals (unique_conversion + sufficient_demand) -> normal dedicated page, not a variant fold.
+    expect(d.placement).toBe('dedicated_page');
+    expect(pendingVariantCases.length).toBe(0);
+    const page = byLogicalId(pages, d.targetLogicalId)!;
+    expect(page.pageType).toBe('resource');
+  });
+
+  it('area-linked clusters are untouched by the variant rule (service_location guardrail still applies)', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({
+          services: [svc('s1', 'Emergency Plumbing')],
+          serviceAreas: [area('a1', 'Austin', ['licensed in Travis County', 'local 24/7 crew'])],
+        }),
+        clusters: [cluster({
+          clusterId: 'c1', label: 'emergency plumbing austin', primaryKeyword: 'emergency plumbing austin',
+          coreTokens: ['emergency', 'plumbing'], intent: 'transactional', serviceId: 's1', serviceAreaId: 'a1',
+          hasLocalizedEvidence: true, addressableVolume: 200,
+        })],
+      }),
+      RS, BUDGET,
+    );
+    // Still mints a service_location page, not folded as a service variant.
+    expect(byType(pages, 'service_location').length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Supporting keywords (pp-v3, spec 3.7)
+// ---------------------------------------------------------------------------
+
+describe('supporting keywords', () => {
+  it('a page collects its clusters member keywords minus the primary, deduped, volume DESC, capped', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Drain Cleaning')] }),
+        clusters: [
+          cluster({
+            clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'drain cleaning', coreTokens: ['drain', 'cleaning'],
+            serviceId: 's1', intent: 'transactional', addressableVolume: 91000,
+            memberKeywords: [
+              { keyword: 'drain cleaning', volume: 90500 },
+              { keyword: 'drain cleaning cost', volume: 500 },
+              { keyword: 'clogged drain', volume: 300 },
+            ],
+          }),
+          cluster({
+            clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'drain cleaning near me', coreTokens: ['drain', 'cleaning'],
+            serviceId: 's1', intent: 'transactional', addressableVolume: 74000,
+            memberKeywords: [
+              { keyword: 'drain cleaning near me', volume: 74000 },
+              { keyword: 'clogged drain', volume: 300 },
+              { keyword: 'drain snake', volume: null },
+            ],
+          }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    // Both variant-fold onto the service page; best-fit assignment gives it "drain cleaning".
+    const svcPage = byLogicalId(pages, 'svc:drain-cleaning')!;
+    expect(svcPage.primaryKeyword).toBe('drain cleaning');
+    // Supporting = union of member keywords minus the primary, deduped (clogged
+    // drain once), volume DESC, null volume last.
+    expect(svcPage.supportingKeywords).toEqual([
+      'drain cleaning near me',
+      'drain cleaning cost',
+      'clogged drain',
+      'drain snake',
+    ]);
+  });
+
+  it('caps the supporting list at ruleset.supporting.storeCap', () => {
+    const members = Array.from({ length: 30 }, (_, i) => ({ keyword: `member ${String(i).padStart(2, '0')}`, volume: 1000 - i }));
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Plumbing')] }),
+        clusters: [cluster({
+          clusterId: 'c1', primaryKeyword: 'water heater install', coreTokens: ['water', 'heater', 'install'],
+          serviceId: 's1', intent: 'transactional', addressableVolume: 500, memberKeywords: members,
+        })],
+      }),
+      RS, BUDGET,
+    );
+    const page = pages.find((p) => p.pageType === 'resource')!;
+    expect(page.supportingKeywords.length).toBe(RS.supporting.storeCap);
+    expect(page.supportingKeywords[0]).toBe('member 00');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Best-fit skeleton keyword assignment (pp-v3, spec 3.3b)
+// ---------------------------------------------------------------------------
+
+describe('best-fit skeleton keyword assignment', () => {
+  it('a service page takes its highest-volume folded keyword that names the service, not whichever folded first', () => {
+    // "austin drain" (vol 200, informational) folds onto the service page FIRST
+    // (higher volume, processed first) but lacks the "cleaning" service token; the
+    // commercial head term "drain cleaning" (vol 100) is the best fit and wins.
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Drain Cleaning')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'austin drain', coreTokens: ['austin', 'drain'], serviceId: 's1', intent: 'informational', addressableVolume: 200 }),
+          cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'drain cleaning', coreTokens: ['drain', 'cleaning'], serviceId: 's1', intent: 'commercial', addressableVolume: 100 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const svcPage = byLogicalId(pages, 'svc:drain-cleaning')!;
+    expect(svcPage.primaryKeyword).toBe('drain cleaning');
+  });
+
+  it('the highest-volume service-token match wins even when a smaller variant folded first', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ services: [svc('s1', 'Drain Cleaning')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'drain cleaning near me', coreTokens: ['drain', 'cleaning'], serviceId: 's1', intent: 'transactional', addressableVolume: 74000 }),
+          cluster({ clusterId: 'c2', primaryKeywordId: 'k2', primaryKeyword: 'drain cleaning', coreTokens: ['drain', 'cleaning'], serviceId: 's1', intent: 'transactional', addressableVolume: 90500 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const svcPage = byLogicalId(pages, 'svc:drain-cleaning')!;
+    expect(svcPage.primaryKeyword).toBe('drain cleaning');
+  });
+
+  it('a location page never claims a folded keyword that lacks a category/service token (only the city)', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ category: 'plumber', services: [svc('s1', 'Plumbing')], serviceAreas: [area('a1', 'Austin')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'shower installation austin', coreTokens: ['shower', 'installation'], serviceId: null, serviceAreaId: 'a1', intent: 'informational', addressableVolume: 10 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const loc = byLogicalId(pages, 'loc:austin')!;
+    expect(loc.primaryKeyword).toBeNull();
+  });
+
+  it('a location page claims a folded keyword carrying both the city and a category/service token', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ category: 'plumber', services: [svc('s1', 'Plumbing')], serviceAreas: [area('a1', 'Austin')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'plumber austin', coreTokens: ['plumber', 'austin'], serviceId: null, serviceAreaId: 'a1', intent: 'informational', addressableVolume: 300 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const loc = byLogicalId(pages, 'loc:austin')!;
+    expect(loc.primaryKeyword).toBe('plumber austin');
+  });
+
+  it('home never claims a bare head term (category token but no service-area city)', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ category: 'plumber', services: [svc('s1', 'Plumbing')], serviceAreas: [area('a1', 'Austin')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'plumber', coreTokens: ['plumber'], serviceId: null, serviceAreaId: null, intent: 'informational', addressableVolume: 550000 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const home = byLogicalId(pages, 'home')!;
+    expect(home.primaryKeyword).toBeNull();
+  });
+
+  it('home claims a category-plus-city keyword when present', () => {
+    const { pages } = buildPagePlan(
+      facts({
+        brief: brief({ category: 'plumber', services: [svc('s1', 'Plumbing')], serviceAreas: [area('a1', 'Austin')] }),
+        clusters: [
+          cluster({ clusterId: 'c1', primaryKeywordId: 'k1', primaryKeyword: 'plumber austin', coreTokens: ['plumber', 'austin'], serviceId: null, serviceAreaId: null, intent: 'informational', addressableVolume: 400 }),
+        ],
+      }),
+      RS, BUDGET,
+    );
+    const home = byLogicalId(pages, 'home')!;
+    expect(home.primaryKeyword).toBe('plumber austin');
   });
 });
 

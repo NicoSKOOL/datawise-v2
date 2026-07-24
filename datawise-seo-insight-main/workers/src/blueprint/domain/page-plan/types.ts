@@ -59,6 +59,21 @@ export interface PlacementDecision {
   reasons: string[];
 }
 
+// A borderline service-variant fold the engine could not decide deterministically
+// (pp-v3, spec 3.3a): the cluster's cleaned tokens are a subset of the service
+// tokens + generic modifiers EXCEPT for exactly one extra token that is neither
+// generic nor a number. The engine folds it into the service page as a section
+// (never mints a variant page) AND surfaces this case so the orchestration layer
+// can persist a `variant_fold` cluster_adjudications row (decision 'pending') for
+// the Phase D LLM adjudicator. `extraToken` is the single token that failed the
+// subset test.
+export interface VariantFoldCase {
+  clusterId: string;
+  serviceId: string;
+  keyword: string;
+  extraToken: string;
+}
+
 // shouldFold's verdict. `as` is only meaningful when `fold` is true; it defaults
 // to 'section' otherwise.
 export interface FoldDecision {
@@ -115,6 +130,11 @@ export interface PagePlanCluster {
   // decision rests on (Phase 4 acceptance: score breakdown + evidence refs on
   // every page decision). Empty when the cluster carries no refs, never fabricated.
   evidenceRefIds: string[];
+  // The cluster's member keywords with their search volumes, volume DESC (null
+  // volumes last). Feeds each page's supportingKeywords list (pp-v3, spec 3.7):
+  // a page's supporting keywords are the member keywords of every cluster on it,
+  // minus the page's primary keyword. Empty when the cluster has no members loaded.
+  memberKeywords: Array<{ keyword: string; volume: number | null }>;
 }
 
 // The candidate parent a cluster would attach to or fold into (home, a hub, a
@@ -211,6 +231,11 @@ export interface PlannedPage {
   primaryKeyword: string | null;
   clusterIds: string[];
   sections: PlannedPageSection[];
+  // Ranked secondary keywords for this page (pp-v3, spec 3.7): the member keywords
+  // of every cluster on the page minus the primary keyword, deduped, volume DESC,
+  // capped at ruleset.supporting.storeCap. Persisted to
+  // blueprint_pages.supporting_keywords_json.
+  supportingKeywords: string[];
   metaDescription: string | null;
   recommendation: RecommendationStatus;
   consolidateTargetLogicalId: string | null;

@@ -48,7 +48,7 @@ describe('version constants', () => {
   });
 
   it('BLUEPRINT_RULESET_VERSION composes both v1 ruleset versions', () => {
-    expect(BLUEPRINT_RULESET_VERSION).toBe('cluster-v3+pp-v2');
+    expect(BLUEPRINT_RULESET_VERSION).toBe('cluster-v3+pp-v3');
   });
 
   it('BLUEPRINT_SCHEMA_VERSION is the phase4 schema tag', () => {

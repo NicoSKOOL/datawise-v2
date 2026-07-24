@@ -12,6 +12,7 @@ import { buildH1, buildLogicalId, buildSlug, buildTitle, cleanKeywordForNaming, 
 import type {
   PagePlanBriefFacts, PagePlanCluster, PagePlanFacts, ParentCandidate,
   PlacementDecision, PlannedPage, PlannedPageSection, SignalEvaluation, StrongSignal,
+  VariantFoldCase,
 } from './types';
 
 // Stage 15 `build_page_plan` pure engine. Turns clusters + brief facts + the
@@ -52,6 +53,10 @@ export interface PagePlanResult {
   placements: PlacementDecision[];
   warnings: BlueprintWarning[];
   stats: PagePlanStats;
+  // Borderline service-variant folds (spec 3.3a) the engine folded deterministically
+  // but flagged for the Phase D adjudicator. Empty on a run with no borderline cases.
+  // Deterministic: ordered by cluster id ASC.
+  pendingVariantCases: VariantFoldCase[];
 }
 
 export interface PagePlanOptions {
@@ -420,9 +425,15 @@ interface PlanState {
   pages: WorkingPage[];
   pageByLogicalId: Map<string, WorkingPage>;
   claimedPrimaryKeyword: Map<string, string>; // normalized keyword -> owning logicalId
+  // Cluster-minted pages keyed by (parentLogicalId + cleaned display name), so a
+  // later cluster that cleans to the same name under the same parent folds into
+  // the existing page instead of minting a numeric-suffixed twin (pp-v3, spec 3.2).
+  dedicatedByParentName: Map<string, WorkingPage>;
   slugRegistry: Set<string>;
   logicalIds: Set<string>;
   serviceLocationCandidates: PageCandidate[];
+  // Borderline service-variant folds surfaced for the Phase D adjudicator (spec 3.3a).
+  pendingVariantCases: VariantFoldCase[];
   // Count of clusters that carried BOTH a service and area link but were denied a
   // service_location URL by the guardrail (evaluateServiceLocationPage /
   // detectDoorwayRisk / signal floor). Distinct from cannibalization/demotion
@@ -484,9 +495,12 @@ function selectParent(cluster: PagePlanCluster, skeleton: Skeleton): WorkingPage
   return skeleton.home;
 }
 
-// Folds a cluster into an existing page as a section or FAQ entry. Promotes the
-// cluster's primary keyword onto a structural page that has none yet (and whose
-// keyword is unclaimed), so service/location pages carry a real ranking target.
+// Folds a cluster into an existing page as a section or FAQ entry. For a DEDICATED
+// page with no keyword yet (rare) it may promote the cluster's keyword, but for
+// SKELETON pages (home/hub/service/location/contact/company) it never claims the
+// primary keyword: pp-v3 (spec 3.3b) assigns those best-fit in a second pass
+// (assignSkeletonKeywords) rather than first-come-first-served, which used to hand
+// the page whichever cluster folded first regardless of fit (the D2/D4 defects).
 function foldInto(
   page: WorkingPage,
   cluster: PagePlanCluster,
@@ -501,7 +515,7 @@ function foldInto(
     keywordIds: [cluster.primaryKeywordId],
   });
   const claimedBy = state.claimedPrimaryKeyword.get(cluster.primaryKeyword);
-  if (page.primaryKeyword === null && claimedBy === undefined) {
+  if (!page.isSkeleton && page.primaryKeyword === null && claimedBy === undefined) {
     page.primaryKeyword = cluster.primaryKeyword;
     page.primaryKeywordId = cluster.primaryKeywordId;
     page.ownerClusterId = cluster.clusterId;
@@ -517,6 +531,42 @@ interface PlacedCluster {
   cluster: PagePlanCluster;
   evals: SignalEvaluation[];
   fired: StrongSignal[];
+}
+
+type VariantVerdict =
+  | { kind: 'none' }
+  | { kind: 'fold' }
+  | { kind: 'borderline'; extraToken: string };
+
+const NUMBER_TOKEN = /^\d+$/;
+
+// Service-variant classification (pp-v3, spec 3.3a). A commercial/transactional
+// cluster linked to a service (and NOT to an area: area-linked clusters follow
+// the service_location guardrail) is a "variant" of that service page when its
+// cleaned keyword tokens are covered by the service's name tokens plus the
+// ruleset's generic modifier tokens. Number tokens ("24", "7") never count as an
+// extra. Zero non-number extras -> a clean fold; exactly one -> a borderline case
+// the adjudicator resolves; two or more -> a genuinely distinct offering (none).
+function classifyServiceVariant(
+  cluster: PagePlanCluster,
+  service: PagePlanBriefFacts['services'][number],
+  ruleset: PagePlanRuleset,
+): VariantVerdict {
+  if (cluster.intent !== 'commercial' && cluster.intent !== 'transactional') return { kind: 'none' };
+  const serviceTokens = new Set<string>([...tokens(service.normalizedName), ...tokens(cleanKeywordForNaming(service.name))]);
+  const clusterTokens = tokens(cleanKeywordForNaming(cluster.primaryKeyword));
+  const clusterTokenSet = new Set(clusterTokens);
+  // The keyword must actually NAME the service (every service-name token appears
+  // in it); otherwise "drain repair" would look like a variant of "Plumbing" just
+  // because "repair" is a generic modifier. A variant is the service plus modifiers.
+  for (const t of serviceTokens) {
+    if (!clusterTokenSet.has(t)) return { kind: 'none' };
+  }
+  const allowed = new Set<string>([...ruleset.variantFold.genericTokens, ...serviceTokens]);
+  const nonNumberExtras = clusterTokens.filter((t) => !allowed.has(t) && !NUMBER_TOKEN.test(t));
+  if (nonNumberExtras.length === 0) return { kind: 'fold' };
+  if (nonNumberExtras.length === 1) return { kind: 'borderline', extraToken: nonNumberExtras[0] };
+  return { kind: 'none' };
 }
 
 // One cluster's placement decision, appended to state. Returns the
@@ -549,6 +599,35 @@ function placeCluster(
       [owner.logicalId],
     ));
     return { clusterId: cluster.clusterId, placement: 'section', targetLogicalId: owner.logicalId, strongSignals: fired, reasons };
+  }
+
+  // Service-variant fold (spec 3.3a): a commercial/transactional cluster whose
+  // cleaned tokens are covered by its service's name + generic modifiers is a
+  // variant of the service page, never a new /resources/ page. Runs before the
+  // strong-signal separate decision (folds regardless of signal count) and only
+  // for area-less service clusters (area-linked clusters follow the
+  // service_location guardrail below). A borderline verdict still folds but is
+  // surfaced to the Phase D adjudicator instead of being minted or silently kept.
+  if (cluster.serviceId !== null && cluster.serviceAreaId === null) {
+    const service = facts.brief.services.find((s) => s.id === cluster.serviceId);
+    if (service !== undefined) {
+      const verdict = classifyServiceVariant(cluster, service, ruleset);
+      if (verdict.kind === 'fold' || verdict.kind === 'borderline') {
+        foldInto(parent, cluster, 'section', evals, state);
+        if (verdict.kind === 'borderline') {
+          state.pendingVariantCases.push({
+            clusterId: cluster.clusterId,
+            serviceId: service.id,
+            keyword: cluster.primaryKeyword,
+            extraToken: verdict.extraToken,
+          });
+          reasons.push(`Service variant of "${service.name}" (borderline: extra token "${verdict.extraToken}"); folded as a section on ${parent.logicalId}, pending adjudication.`);
+        } else {
+          reasons.push(`Service variant of "${service.name}"; folded as a section on ${parent.logicalId}.`);
+        }
+        return { clusterId: cluster.clusterId, placement: 'section', targetLogicalId: parent.logicalId, strongSignals: fired, reasons };
+      }
+    }
   }
 
   const pageType = mapDedicatedPageType(cluster, ruleset);
@@ -612,7 +691,23 @@ function placeCluster(
   // General separate-vs-fold: >= minStrongSignals -> dedicated page; else fold
   // as the section/FAQ shouldFold picks.
   if (meetsSignalFloor) {
-    const page = createDedicatedPage(placed, pageType, parent, cleanKeywordForNaming(cluster.primaryKeyword), null, facts, state);
+    // Cleaned-name collision (spec 3.2): if a cluster page under this same parent
+    // already carries this cleaned name, fold in rather than mint a numeric-suffixed
+    // twin (the /resources/drain-cleaning-2/ defect). Distinct from primary-keyword
+    // cannibalization above: those keywords differ raw but clean to one name.
+    const cleanedName = cleanKeywordForNaming(cluster.primaryKeyword);
+    const twin = state.dedicatedByParentName.get(cleanedNameKey(parent.logicalId, [cleanedName]));
+    if (twin !== undefined) {
+      foldInto(twin, cluster, 'section', evals, state);
+      reasons.push(`Cleaned page name "${cleanedName}" already used by ${twin.logicalId} under the same parent; folded as a section rather than minting a duplicate.`);
+      warnings.push(warn(
+        'cannibalization_risk', 'warning',
+        `Cluster "${cluster.label}" (keyword "${cluster.primaryKeyword}") cleans to the same page name as ${twin.logicalId} (keyword "${twin.primaryKeyword ?? cleanedName}"); folded in to avoid two pages for one query intent.`,
+        [twin.logicalId],
+      ));
+      return { clusterId: cluster.clusterId, placement: 'section', targetLogicalId: twin.logicalId, strongSignals: fired, reasons };
+    }
+    const page = createDedicatedPage(placed, pageType, parent, cleanedName, null, facts, state);
     reasons.push(`${fired.length} strong signals cleared the separate-page floor (${ruleset.separate.minStrongSignals}); ${fired.join(', ')}.`);
     return { clusterId: cluster.clusterId, placement: 'dedicated_page', targetLogicalId: page.logicalId, strongSignals: fired, reasons };
   }
@@ -621,6 +716,14 @@ function placeCluster(
   foldInto(parent, cluster, fold.as, evals, state);
   reasons.push(`Below the ${ruleset.separate.minStrongSignals}-signal floor (${fired.length} fired); ${fold.reason}`);
   return { clusterId: cluster.clusterId, placement: fold.as, targetLogicalId: parent.logicalId, strongSignals: fired, reasons };
+}
+
+// Collision key for the cleaned-name fold registry (spec 3.2): a parent logical
+// id plus the lowercased cleaned display parts a page was minted from. Two
+// cluster pages collide only when they share a parent AND clean to the same
+// name, which is exactly the duplicate-intent case that must fold, never suffix.
+function cleanedNameKey(parentLogicalId: string, nameParts: string[]): string {
+  return [parentLogicalId, ...nameParts.map((p) => p.trim().toLowerCase())].join(' ');
 }
 
 // Mints a dedicated page for a cluster: unique logical id + slug by construction
@@ -671,6 +774,7 @@ function createDedicatedPage(
   state.pages.push(page);
   state.pageByLogicalId.set(logicalId, page);
   state.claimedPrimaryKeyword.set(cluster.primaryKeyword, logicalId);
+  state.dedicatedByParentName.set(cleanedNameKey(parent.logicalId, keyParts), page);
   return page;
 }
 
@@ -724,6 +828,108 @@ function applyPageBudget(
 }
 
 // ---------------------------------------------------------------------------
+// Best-fit skeleton keyword assignment (pp-v3, spec 3.3b)
+// ---------------------------------------------------------------------------
+
+// Assigns each skeleton service/location/home page its best-fit primary keyword
+// AFTER all placement + demotion, replacing pp-v2's first-come-first-served claim.
+// Rules (spec 3.3b):
+//   - service page: highest-volume folded keyword whose tokens contain every
+//     service-name token (so /services/drain-cleaning/ gets "drain cleaning");
+//   - location page: highest-volume folded keyword carrying the city token AND at
+//     least one category/service token (never bare "shower installation austin");
+//   - home: a folded keyword that token-matches the category AND a service-area
+//     city ("plumber austin"); never a bare head term like "plumber".
+// Global claim-uniqueness is preserved: dedicated pages already registered their
+// keywords in claimedPrimaryKeyword, and each assignment registers its pick so no
+// two pages claim one keyword. Deterministic: pages are processed services-by-slug,
+// then locations-by-slug, then home, and candidates break ties by volume DESC,
+// keyword ASC, cluster id ASC.
+function assignSkeletonKeywords(
+  state: PlanState,
+  skeleton: Skeleton,
+  brief: PagePlanBriefFacts,
+  clusterById: Map<string, PagePlanCluster>,
+  evalsByCluster: Map<string, SignalEvaluation[]>,
+): void {
+  const claimed = state.claimedPrimaryKeyword;
+  const categoryTokens = new Set(tokens(brief.category));
+  const allServiceTokens = new Set<string>();
+  for (const s of brief.services) {
+    for (const t of tokens(s.normalizedName)) allServiceTokens.add(t);
+    for (const t of tokens(cleanKeywordForNaming(s.name))) allServiceTokens.add(t);
+  }
+  const areaCityTokens = new Set<string>();
+  for (const a of brief.serviceAreas) for (const t of tokens(a.city)) areaCityTokens.add(t);
+
+  const pickBest = (page: WorkingPage, predicate: (c: PagePlanCluster) => boolean): PagePlanCluster | undefined => {
+    const candidates = page.clusterIds
+      .map((id) => clusterById.get(id))
+      .filter((c): c is PagePlanCluster => c !== undefined && c.primaryKeyword !== '' && !claimed.has(c.primaryKeyword) && predicate(c));
+    candidates.sort((a, b) => {
+      const va = a.addressableVolume ?? -1;
+      const vb = b.addressableVolume ?? -1;
+      if (va !== vb) return vb - va;
+      if (a.primaryKeyword !== b.primaryKeyword) return a.primaryKeyword < b.primaryKeyword ? -1 : 1;
+      return a.clusterId < b.clusterId ? -1 : 1;
+    });
+    return candidates[0];
+  };
+
+  const assign = (page: WorkingPage, cluster: PagePlanCluster): void => {
+    const evals = evalsByCluster.get(cluster.clusterId) ?? [];
+    page.primaryKeyword = cluster.primaryKeyword;
+    page.primaryKeywordId = cluster.primaryKeywordId;
+    page.ownerClusterId = cluster.clusterId;
+    page.scoreBreakdown = scoreBreakdownFrom(evals);
+    page.scoreConfidence = cluster.confidence;
+    page.firedSignalCount = presentStrongSignals(evals).length;
+    page.ownVolume = cluster.addressableVolume;
+    claimed.set(cluster.primaryKeyword, page.logicalId);
+  };
+
+  const containsAll = (keyword: string, need: Set<string>): boolean => {
+    const kt = new Set(tokens(keyword));
+    for (const t of need) if (!kt.has(t)) return false;
+    return true;
+  };
+  const containsAny = (keyword: string, options: Set<string>): boolean => {
+    for (const t of tokens(keyword)) if (options.has(t)) return true;
+    return false;
+  };
+
+  const servicePages = [...skeleton.servicePageByServiceId.entries()]
+    .map(([sid, page]) => ({ page, service: brief.services.find((s) => s.id === sid) }))
+    .filter((x): x is { page: WorkingPage; service: PagePlanBriefFacts['services'][number] } => x.service !== undefined)
+    .sort((a, b) => (a.page.slug < b.page.slug ? -1 : a.page.slug > b.page.slug ? 1 : 0));
+  for (const { page, service } of servicePages) {
+    if (page.primaryKeyword !== null) continue;
+    const svcTokens = new Set<string>([...tokens(service.normalizedName), ...tokens(cleanKeywordForNaming(service.name))]);
+    const best = pickBest(page, (c) => containsAll(c.primaryKeyword, svcTokens));
+    if (best !== undefined) assign(page, best);
+  }
+
+  const locationPages = [...skeleton.locationPageByAreaId.entries()]
+    .map(([aid, page]) => ({ page, area: brief.serviceAreas.find((a) => a.id === aid) }))
+    .filter((x): x is { page: WorkingPage; area: PagePlanBriefFacts['serviceAreas'][number] } => x.area !== undefined)
+    .sort((a, b) => (a.page.slug < b.page.slug ? -1 : a.page.slug > b.page.slug ? 1 : 0));
+  for (const { page, area } of locationPages) {
+    if (page.primaryKeyword !== null) continue;
+    const cityTokens = new Set(tokens(area.city));
+    const best = pickBest(page, (c) =>
+      containsAny(c.primaryKeyword, cityTokens)
+      && (containsAny(c.primaryKeyword, categoryTokens) || containsAny(c.primaryKeyword, allServiceTokens)));
+    if (best !== undefined) assign(page, best);
+  }
+
+  if (skeleton.home.primaryKeyword === null) {
+    const best = pickBest(skeleton.home, (c) =>
+      containsAny(c.primaryKeyword, categoryTokens) && containsAny(c.primaryKeyword, areaCityTokens));
+    if (best !== undefined) assign(skeleton.home, best);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Freeze: WorkingPage[] -> PlannedPage[]
 // ---------------------------------------------------------------------------
 
@@ -756,7 +962,39 @@ function pageEvidenceRefs(page: WorkingPage, clusterById: Map<string, PagePlanCl
   return [...refs].sort();
 }
 
-function freeze(page: WorkingPage, clusterById: Map<string, PagePlanCluster>): PlannedPage {
+// A page's ranked secondary keywords (spec 3.7): the member keywords of every
+// cluster on the page (owner + folded sections), minus the page's primary keyword,
+// deduped (keeping each keyword's highest observed volume), volume DESC then
+// keyword ASC, capped at storeCap. Deterministic.
+function pageSupportingKeywords(
+  page: WorkingPage,
+  clusterById: Map<string, PagePlanCluster>,
+  storeCap: number,
+): string[] {
+  const byKeyword = new Map<string, number | null>();
+  for (const clusterId of page.clusterIds) {
+    const cluster = clusterById.get(clusterId);
+    if (cluster === undefined) continue;
+    for (const member of cluster.memberKeywords) {
+      if (member.keyword === '' || member.keyword === page.primaryKeyword) continue;
+      const existing = byKeyword.get(member.keyword);
+      if (existing === undefined || (member.volume ?? -1) > (existing ?? -1)) {
+        byKeyword.set(member.keyword, member.volume);
+      }
+    }
+  }
+  return [...byKeyword.entries()]
+    .sort((a, b) => {
+      const va = a[1] ?? -1;
+      const vb = b[1] ?? -1;
+      if (va !== vb) return vb - va;
+      return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+    })
+    .slice(0, storeCap)
+    .map(([keyword]) => keyword);
+}
+
+function freeze(page: WorkingPage, clusterById: Map<string, PagePlanCluster>, ruleset: PagePlanRuleset): PlannedPage {
   return {
     logicalId: page.logicalId,
     pageType: page.pageType,
@@ -768,6 +1006,7 @@ function freeze(page: WorkingPage, clusterById: Map<string, PagePlanCluster>): P
     primaryKeyword: page.primaryKeyword,
     clusterIds: page.clusterIds.slice(),
     sections: page.sections.slice(),
+    supportingKeywords: pageSupportingKeywords(page, clusterById, ruleset.supporting.storeCap),
     metaDescription: null,
     recommendation: 'create',
     // build_page_plan only ever proposes new pages; overlay_existing_site (stage 16)
@@ -801,9 +1040,11 @@ export function buildPagePlan(
     pages: skeleton.pages.slice(),
     pageByLogicalId: new Map(skeleton.pages.map((p) => [p.logicalId, p])),
     claimedPrimaryKeyword: new Map(),
+    dedicatedByParentName: new Map(),
     slugRegistry,
     logicalIds,
     serviceLocationCandidates: [],
+    pendingVariantCases: [],
     serviceLocationBlocked: 0,
   };
 
@@ -822,11 +1063,15 @@ export function buildPagePlan(
 
   const demotedPageCount = applyPageBudget(state, clusterById, evalsByCluster, options.pageBudget, warnings);
 
+  // Best-fit primary keyword for each skeleton service/location/home page, over
+  // the final (post-demotion) page membership (pp-v3, spec 3.3b).
+  assignSkeletonKeywords(state, skeleton, facts.brief, clusterById, evalsByCluster);
+
   if (facts.clusters.length === 0) {
     warnings.push(warn('partial_evidence', 'info', 'No clusters available; emitted the brief-derived skeleton only.'));
   }
 
-  const pages = state.pages.map((p) => freeze(p, clusterById));
+  const pages = state.pages.map((p) => freeze(p, clusterById, ruleset));
 
   // Plan-wide addressable demand: each cluster counted once (it lands on exactly
   // one page), summing only non-null volumes. null when nothing carried a volume.
@@ -862,5 +1107,9 @@ export function buildPagePlan(
     pageBudget: options.pageBudget,
   };
 
-  return { pages, placements, warnings, stats };
+  const pendingVariantCases = state.pendingVariantCases
+    .slice()
+    .sort((a, b) => (a.clusterId < b.clusterId ? -1 : a.clusterId > b.clusterId ? 1 : 0));
+
+  return { pages, placements, warnings, stats, pendingVariantCases };
 }

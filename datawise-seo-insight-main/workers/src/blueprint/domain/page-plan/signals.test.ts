@@ -23,6 +23,7 @@ function cluster(overrides: Partial<PagePlanCluster> = {}): PagePlanCluster {
     serp: { urls: null },
     competitorPages: [],
     evidenceRefIds: [],
+    memberKeywords: [],
     ...overrides,
   };
 }

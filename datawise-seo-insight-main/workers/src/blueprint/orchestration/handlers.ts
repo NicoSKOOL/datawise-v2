@@ -131,7 +131,7 @@ interface RunPublishRow {
 // runBatchedStatements group them, the same one-statement-per-row pattern
 // page-plan-handlers.ts's persistPageCandidates uses. assertRowBudget fails at
 // module load if a column addition ever pushes a single row past the limit.
-const BLUEPRINT_PAGE_PARAMS_PER_ROW = 14;
+const BLUEPRINT_PAGE_PARAMS_PER_ROW = 15;
 assertRowBudget(1, BLUEPRINT_PAGE_PARAMS_PER_ROW, 'blueprint_pages materialization');
 
 // Real persistence, not a stub: this is the only stage that writes outside
@@ -289,8 +289,9 @@ export async function publishBlueprintHandler(ctx: StageContext) {
         `INSERT OR IGNORE INTO blueprint_pages
           (row_id, blueprint_revision_id, logical_page_id, parent_logical_page_id, page_type,
            title, slug, primary_keyword_normalized, recommendation, approval,
-           consolidate_target_logical_page_id, priority, confidence_label, page_json)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, NULL, ?, ?)`
+           consolidate_target_logical_page_id, priority, confidence_label, page_json,
+           supporting_keywords_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, NULL, ?, ?, ?)`
       )
       .bind(
         newId('bppage'),
@@ -304,7 +305,8 @@ export async function publishBlueprintHandler(ctx: StageContext) {
         c.recommendation,
         c.recommendation === 'consolidate' ? c.consolidateTargetLogicalId : null,
         c.confidence,
-        JSON.stringify(buildPageJson(p, i))
+        JSON.stringify(buildPageJson(p, i)),
+        JSON.stringify(p.planned.supportingKeywords)
       );
   });
   await runBatchedStatements(d1, pageStatements);

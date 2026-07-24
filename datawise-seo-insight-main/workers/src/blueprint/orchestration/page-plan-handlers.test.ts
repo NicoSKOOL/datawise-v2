@@ -310,7 +310,7 @@ describe('parseCompetitorPagesHandler', () => {
     expect(status).toBe('succeeded');
     expect(output.skipped).toBe(true);
     expect(output.reason).toBe('no_clusters');
-    expect(output.rulesetVersion).toBe('pp-v2');
+    expect(output.rulesetVersion).toBe('pp-v3');
   });
 
   it('selects competitor SERP URLs by domain match in rank order, classifies parsed', async () => {
@@ -670,7 +670,9 @@ describe('buildPagePlanHandler', () => {
     const { d1 } = createTestDb();
     const projectId = await seedProject(d1);
     const runId = await seedRun(d1, projectId);
-    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'drain cleaning', volume: 500, serviceId: 's1', evidenceRefIds: ['evr_1', 'evr_2'] });
+    // A distinct topic (does not name the "Drain Cleaning" service), so the pp-v3
+    // service-variant rule does not fold it: it earns its own resource page.
+    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'trenchless sewer repair', volume: 500, serviceId: 's1', evidenceRefIds: ['evr_1', 'evr_2'] });
 
     const { ctx, artifacts } = buildPlanCtx(d1, projectId, runId, planBrief());
     const result = await buildPagePlanHandler(ctx);
@@ -681,7 +683,7 @@ describe('buildPagePlanHandler', () => {
     expect(output.storageKey).toBe(`runs/${runId}/page-plan.json`);
     expect(artifacts.has(output.storageKey)).toBe(true);
     const stored = JSON.parse(artifacts.get(output.storageKey)!);
-    expect(stored.rulesetVersion).toBe('pp-v2');
+    expect(stored.rulesetVersion).toBe('pp-v3');
     expect(Array.isArray(stored.pages)).toBe(true);
     // evidence refs threaded from the cluster onto its dedicated page.
     const resourcePage = stored.pages.find((p: any) => p.pageType === 'resource');
@@ -708,6 +710,38 @@ describe('buildPagePlanHandler', () => {
       .first<{ page_candidate: string | null; decision_reason: string | null }>();
     expect(clusterRow?.page_candidate).toBeTruthy();
     expect(clusterRow?.decision_reason).toBeTruthy();
+  });
+
+  it('persists borderline service-variant folds as pending variant_fold adjudication rows (rerun-safe, no duplicates)', async () => {
+    const { d1 } = createTestDb();
+    const projectId = await seedProject(d1);
+    const runId = await seedRun(d1, projectId);
+    // "commercial drain cleaning service" names the Drain Cleaning service with a
+    // single extra token ("commercial") -> a borderline variant fold.
+    await seedStrongCluster(d1, runId, { id: 'c1', nk: 'commercial drain cleaning service', volume: 500, serviceId: 's1', intent: 'commercial' });
+
+    const { ctx } = buildPlanCtx(d1, projectId, runId, planBrief());
+    await buildPagePlanHandler(ctx);
+
+    const rows = await d1
+      .prepare(`SELECT case_type, decision, cluster_ids_json, keyword_ids_json, score_context_json, ruleset_version FROM cluster_adjudications WHERE run_id = ? AND case_type = 'variant_fold'`)
+      .bind(runId)
+      .all<{ case_type: string; decision: string; cluster_ids_json: string; keyword_ids_json: string; score_context_json: string; ruleset_version: string }>();
+    expect(rows.results?.length).toBe(1);
+    const row = rows.results![0];
+    expect(row.decision).toBe('pending');
+    expect(JSON.parse(row.cluster_ids_json)).toEqual(['c1']);
+    expect(JSON.parse(row.keyword_ids_json)).toEqual(['k-c1']);
+    expect(JSON.parse(row.score_context_json)).toMatchObject({ serviceId: 's1', extraToken: 'commercial', keyword: 'commercial drain cleaning service' });
+    expect(row.ruleset_version).toBe('pp-v3');
+
+    // Rerun does not accumulate duplicate rows.
+    await buildPagePlanHandler(ctx);
+    const after = await d1
+      .prepare(`SELECT COUNT(*) AS n FROM cluster_adjudications WHERE run_id = ? AND case_type = 'variant_fold'`)
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(after?.n).toBe(1);
   });
 
   it('rerun is safe: a second run overwrites the same artifact (no duplicate rows) and page_candidate stays consistent', async () => {

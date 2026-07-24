@@ -179,6 +179,11 @@ describe('loadPagePlanFacts', () => {
     expect(c.competitorPages[0].headingTokens).toContain('emergency');
     // evidence refs threaded from the clustering stage's score_breakdown_json.
     expect(c.evidenceRefIds).toEqual(['evr_a', 'evr_b']);
+    // member keywords for supporting-keyword lists, volume DESC.
+    expect(c.memberKeywords).toEqual([
+      { keyword: 'drain cleaning austin', volume: 200 },
+      { keyword: 'drain cleaning cost', volume: 50 },
+    ]);
   });
 
   it('threads evidence refs from score_breakdown_json and stays null-safe on missing/malformed blobs', async () => {

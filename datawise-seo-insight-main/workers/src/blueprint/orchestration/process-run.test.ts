@@ -322,7 +322,7 @@ describe('processResearchRun', () => {
     const clusterStageRow = finalStageRows.find((r) => r.stage_name === 'build_provisional_clusters');
     expect(clusterStageRow?.ruleset_version).toBe('cluster-v3');
     const pagePlanStageRow = finalStageRows.find((r) => r.stage_name === 'build_page_plan');
-    expect(pagePlanStageRow?.ruleset_version).toBe('pp-v2');
+    expect(pagePlanStageRow?.ruleset_version).toBe('pp-v3');
     const legacyStageRow = finalStageRows.find((r) => r.stage_name === 'validate_intake');
     expect(legacyStageRow?.ruleset_version).toBe(LEGACY_RULESET_VERSION);
 
