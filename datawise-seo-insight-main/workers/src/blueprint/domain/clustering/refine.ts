@@ -7,6 +7,7 @@ import type { ConstraintViolation } from './constraints';
 import { assembleClusterDraft, computeClusterCohesion } from './clusters';
 import type { ClusterDraft } from './clusters';
 import { cosineSimilarity, jaccardSerpOverlap, intentCompatibility } from './similarity';
+import { cleanKeywordForNaming } from '../keyword-naming';
 
 // Deterministic live-SERP-driven refinement of the provisional clusters from
 // stage 10. Pure: no IO, no env, no Date.now, no Math.random, no id generation.
@@ -108,6 +109,11 @@ export interface RefineResult {
     clustersIn: number;
     clustersOut: number;
     autoMerges: number;
+    // Merges applied by the deterministic cleaned-name / near-name pass
+    // (cluster-v3), counted separately from autoMerges (which stays SERP/
+    // evidence-driven). A merged component is attributed to nameMerges when it
+    // contains at least one name-merge edge; the two counters are disjoint.
+    nameMerges: number;
     autoSplits: number;
     adjudicationsPending: number;
     adjudicationsInsufficient: number;
@@ -284,6 +290,35 @@ function hasHardBlock(violations: ReadonlySet<ConstraintViolation>): boolean {
   return false;
 }
 
+// Cleaned page-name key for the deterministic name-based dedupe (cluster-v3):
+// cleanKeywordForNaming (strips "near me" etc.) then strips any trailing
+// near-name suffix tokens (service/services/company/companies), so "drain
+// cleaning", "drain cleaning near me" and "drain cleaning services" all collapse
+// to one key while a genuinely distinct offering keeps its own. Never strips to
+// empty (a bare suffix token like "services" keeps itself). Lowercased for a
+// case-insensitive compare.
+function canonicalNameKey(primaryKeyword: string, ruleset: ClusterRuleset): string {
+  const cleaned = cleanKeywordForNaming(primaryKeyword).trim().toLowerCase();
+  if (cleaned === '') return '';
+  let words = cleaned.split(/\s+/).filter(Boolean);
+  const suffixes = new Set<string>(ruleset.nameMerge.nearNameSuffixTokens);
+  while (words.length > 1 && suffixes.has(words[words.length - 1])) {
+    words = words.slice(0, -1);
+  }
+  return words.join(' ');
+}
+
+// A cluster's service linkage as a stable key: its primary keyword node's
+// sorted serviceIds joined, '' when unlinked. Name-merge candidates must share
+// this exactly (same service, or both unlinked) -- a deliberately stricter gate
+// than the general merge pass so a shared page name never folds two DIFFERENT
+// services together.
+function clusterServiceKey(primaryKeywordId: string, byId: ReadonlyMap<string, KeywordNode>): string {
+  const node = byId.get(primaryKeywordId);
+  if (!node) return '';
+  return [...node.serviceIds].sort(cmpStr).join(',');
+}
+
 // Blocking for cluster merge candidates: a pair is a candidate iff the two
 // clusters co-occur in at least one bucket (shared service, service area, core
 // keyword or token of the representative keyword, or a shared live organic
@@ -381,6 +416,53 @@ export function refineClusters(input: {
   const splitCandidates = clusters.filter((c) => isSplitCandidate.get(c.clusterId));
 
   const adjudications: AdjudicationCase[] = [];
+  const mergeableIds = mergeable.map((c) => c.clusterId);
+  const clusterById = new Map(clusters.map((c) => [c.clusterId, c]));
+
+  // ---- Deterministic name-based dedupe (cluster-v3), BEFORE the live-SERP pass ----
+  // Two mergeable clusters whose primary keywords clean to the same page name
+  // (exactly, or differing only by a trailing service/company suffix token) are
+  // duplicate page intent by construction -- no SERP evidence needed. Gated by
+  // ruleset.nameMerge.enabled. Each candidate pair still passes the same hard
+  // constraints the SERP pass enforces (branded/generic, cross-service,
+  // national-informational) via the pairwise hasHardBlock check; the union
+  // re-validation below is the authoritative gate for transitive cases. Merges
+  // apply through the SAME connected-components / finalSets machinery the SERP
+  // auto-merge path uses -- these edges are just added to the same edge list.
+  const nameMergeEdges: Array<{ a: string; b: string }> = [];
+  if (ruleset.nameMerge.enabled) {
+    const groups = new Map<string, string[]>();
+    for (const c of mergeable) {
+      const primaryKw =
+        displayKeywords.get(c.primaryKeywordId) ?? byId.get(c.primaryKeywordId)?.normalizedKeyword ?? '';
+      const canonical = canonicalNameKey(primaryKw, ruleset);
+      if (canonical === '') continue;
+      const key = `${clusterServiceKey(c.primaryKeywordId, byId)} ${canonical}`;
+      const list = groups.get(key);
+      if (list) list.push(c.clusterId);
+      else groups.set(key, [c.clusterId]);
+    }
+    for (const key of [...groups.keys()].sort()) {
+      const ids = groups.get(key)!.slice().sort(cmpStr);
+      if (ids.length < 2) continue;
+      for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+          const a = clusterById.get(ids[i])!;
+          const b = clusterById.get(ids[j])!;
+          if (hasHardBlock(mergeViolations(a.memberIds, b.memberIds, byId))) continue;
+          nameMergeEdges.push({ a: ids[i], b: ids[j] });
+        }
+      }
+    }
+  }
+  // Clusters that will merge by name share a component here; the SERP pass skips
+  // any pair already inside one so it never emits an adjudication contradicting
+  // a merge this pass is about to apply.
+  const nameRootOf = new Map<string, string>();
+  for (const comp of connectedComponents(mergeableIds, nameMergeEdges)) {
+    if (comp.length < 2) continue;
+    for (const cid of comp) nameRootOf.set(cid, comp[0]);
+  }
 
   // ---- Merge pass over mergeable clusters ----
   const mergeEdges: Array<{ a: string; b: string }> = [];
@@ -388,6 +470,9 @@ export function refineClusters(input: {
   for (const [i, j] of pairs) {
     const A = mergeable[i];
     const B = mergeable[j];
+    // Already merging by name: skip so no contradictory adjudication is emitted.
+    const aNameRoot = nameRootOf.get(A.clusterId);
+    if (aNameRoot !== undefined && aNameRoot === nameRootOf.get(B.clusterId)) continue;
     const edge = clusterBoundaryEdge(A, B, byId, liveByQuery, ruleset);
     if (edge.score === null) continue; // no signal at all
 
@@ -489,10 +574,13 @@ export function refineClusters(input: {
     }
   }
 
-  // Apply merges as connected components over the auto-merge edges.
-  const mergeableIds = mergeable.map((c) => c.clusterId);
-  const mergeComponents = connectedComponents(mergeableIds, mergeEdges);
-  const clusterById = new Map(clusters.map((c) => [c.clusterId, c]));
+  // Apply merges as connected components over BOTH the name-merge edges (added
+  // pre-SERP above) and the live-SERP auto-merge edges. Combining them in one
+  // component pass preserves cross-merges (a name-merged pair can still pull in
+  // a third cluster via a SERP edge) while the same union re-validation guards
+  // every result.
+  const allMergeEdges = [...nameMergeEdges, ...mergeEdges];
+  const mergeComponents = connectedComponents(mergeableIds, allMergeEdges);
   const consumed = new Set<string>();
 
   interface FinalSet {
@@ -502,6 +590,7 @@ export function refineClusters(input: {
   }
   const finalSets: FinalSet[] = [];
   let autoMerges = 0;
+  let nameMerges = 0;
 
   for (const component of mergeComponents) {
     if (component.length < 2) continue; // untouched cluster, handled as leftover
@@ -545,7 +634,12 @@ export function refineClusters(input: {
 
     for (const cid of component) consumed.add(cid);
     finalSets.push({ members: unionMembers, origin: 'merge', sourceClusterIds: [...component].sort(cmpStr) });
-    autoMerges += 1;
+    // Attribute the merge: name-driven when any name-merge edge lies inside the
+    // component, otherwise SERP/evidence-driven. Disjoint counters.
+    const componentSet = new Set(component);
+    const nameDriven = nameMergeEdges.some((e) => componentSet.has(e.a) && componentSet.has(e.b));
+    if (nameDriven) nameMerges += 1;
+    else autoMerges += 1;
   }
 
   // ---- Split pass over split-candidate clusters ----
@@ -674,6 +768,7 @@ export function refineClusters(input: {
       clustersIn: clusters.length,
       clustersOut: outClusters.length,
       autoMerges,
+      nameMerges,
       autoSplits,
       adjudicationsPending,
       adjudicationsInsufficient,

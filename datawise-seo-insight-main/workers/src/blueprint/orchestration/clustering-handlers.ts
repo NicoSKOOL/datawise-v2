@@ -179,6 +179,11 @@ export interface NormalizeKeywordUniverseOutput {
   areaLinksAdded: number;
   artifactsRead: number;
   artifactsMissing: number;
+  // cluster-v3 geo_candidate flags: keywords naming an out-of-area US state or
+  // city (NOT excluded here, only flagged). Persisted on this stage output JSON
+  // so the Phase D adjudicate_clusters stage can read it back via
+  // loadStageOutput<NormalizeKeywordUniverseOutput> and decide out_of_area.
+  geoCandidates: Array<{ keywordId: string; matchedGeoTerms: string[] }>;
   rulesetVersion: string;
 }
 
@@ -237,6 +242,7 @@ export const normalizeKeywordUniverseHandler: StageHandler = async (ctx: StageCo
     areaLinksAdded: plan.serviceAreaLinks.length,
     artifactsRead,
     artifactsMissing,
+    geoCandidates: plan.geoCandidates,
     rulesetVersion: CLUSTER_RULESET_V2.version,
   };
 
@@ -1041,6 +1047,9 @@ export interface RefineClustersOutput {
   clustersIn: number;
   clustersOut: number;
   autoMerges: number;
+  // Deterministic cleaned-name / near-name merges (cluster-v3), counted apart
+  // from the SERP-driven autoMerges.
+  nameMerges: number;
   autoSplits: number;
   adjudicationsPending: number;
   adjudicationsInsufficient: number;
@@ -1303,6 +1312,7 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
       clustersIn: 0,
       clustersOut: 0,
       autoMerges: 0,
+      nameMerges: 0,
       autoSplits: 0,
       adjudicationsPending: 0,
       adjudicationsInsufficient: 0,
@@ -1437,6 +1447,7 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
     clustersIn: result.stats.clustersIn,
     clustersOut: result.stats.clustersOut,
     autoMerges: result.stats.autoMerges,
+    nameMerges: result.stats.nameMerges,
     autoSplits: result.stats.autoSplits,
     adjudicationsPending: result.stats.adjudicationsPending,
     adjudicationsInsufficient: result.stats.adjudicationsInsufficient,

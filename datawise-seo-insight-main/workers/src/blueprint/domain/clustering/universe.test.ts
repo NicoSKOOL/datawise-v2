@@ -213,3 +213,56 @@ describe('planUniverseNormalization', () => {
     });
   });
 });
+
+describe('planUniverseNormalization geo_candidate flagging (cluster-v3)', () => {
+  // Austin-only brief with a Dallas variant for the in-area case.
+  const AUSTIN_BRIEF = BRIEF;
+  const DALLAS_BRIEF: NormalizedProjectBrief = {
+    ...BRIEF,
+    serviceAreas: [
+      { id: 'a1', city: 'Austin', region: null, countryIso: 'us', radiusKm: null, isPrimary: true, uniqueProof: [] },
+      { id: 'a2', city: 'Dallas', region: null, countryIso: 'us', radiusKm: null, isPrimary: false, uniqueProof: [] },
+    ],
+  };
+
+  const isFlagged = (plan: ReturnType<typeof planUniverseNormalization>, id: string): boolean =>
+    plan.geoCandidates.some((g) => g.keywordId === id);
+
+  function planFor(keywords: KeywordRowLite[], brief: NormalizedProjectBrief) {
+    return planUniverseNormalization({ keywords, enrichment: new Map(), brief, ruleset: CLUSTER_RULESET_V2 });
+  }
+
+  it('flags a keyword naming an out-of-area city (Dallas for an Austin-only brief)', () => {
+    const plan = planFor([row({ id: 'k1', normalizedKeyword: 'dallas emergency plumbing' })], AUSTIN_BRIEF);
+    expect(isFlagged(plan, 'k1')).toBe(true);
+    expect(plan.geoCandidates.find((g) => g.keywordId === 'k1')?.matchedGeoTerms).toContain('dallas');
+  });
+
+  it('does NOT flag a keyword naming the brief service area (Austin)', () => {
+    const plan = planFor([row({ id: 'k1', normalizedKeyword: 'austin drain cleaning' })], AUSTIN_BRIEF);
+    expect(isFlagged(plan, 'k1')).toBe(false);
+  });
+
+  it('flags via a multi-word out-of-area city (San Antonio)', () => {
+    const plan = planFor([row({ id: 'k1', normalizedKeyword: 'san antonio plumber' })], AUSTIN_BRIEF);
+    expect(isFlagged(plan, 'k1')).toBe(true);
+    expect(plan.geoCandidates.find((g) => g.keywordId === 'k1')?.matchedGeoTerms).toContain('san antonio');
+  });
+
+  it('does NOT flag a city that IS a brief service area (Dallas when Dallas is served)', () => {
+    const plan = planFor([row({ id: 'k1', normalizedKeyword: 'dallas emergency plumbing' })], DALLAS_BRIEF);
+    expect(isFlagged(plan, 'k1')).toBe(false);
+  });
+
+  it('flags a brand-word city like Plano when it is not a service area (adjudicator decides later)', () => {
+    const plan = planFor([row({ id: 'k1', normalizedKeyword: 'plano plumber' })], AUSTIN_BRIEF);
+    expect(isFlagged(plan, 'k1')).toBe(true);
+    expect(plan.geoCandidates.find((g) => g.keywordId === 'k1')?.matchedGeoTerms).toContain('plano');
+  });
+
+  it('does NOT exclude flagged keywords in stage 8 (flagging only, no excluded_reason)', () => {
+    const plan = planFor([row({ id: 'k1', normalizedKeyword: 'dallas emergency plumbing' })], AUSTIN_BRIEF);
+    expect(isFlagged(plan, 'k1')).toBe(true);
+    expect(fieldsFor(plan, 'k1').excludedReason).toBeNull();
+  });
+});
