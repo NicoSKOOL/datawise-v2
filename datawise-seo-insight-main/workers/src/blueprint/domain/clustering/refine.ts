@@ -2,7 +2,7 @@ import type { SearchIntent } from '../../contracts/enums';
 import type { ClusterRuleset } from './ruleset';
 import type { GraphEdge, KeywordNode, ScoreResult } from './graph';
 import { buildKeywordSimilarityGraph, edgeEligibleForMerge, scoreEdge } from './graph';
-import { forbiddenEdgeViolations } from './constraints';
+import { forbiddenEdgeViolations, HARD_BLOCK_VIOLATIONS } from './constraints';
 import type { ConstraintViolation } from './constraints';
 import { assembleClusterDraft, computeClusterCohesion } from './clusters';
 import type { ClusterDraft } from './clusters';
@@ -21,12 +21,6 @@ import { cleanKeywordForNaming } from '../keyword-naming';
 //
 // Everything is total-sorted so double-running produces byte-identical output
 // (the determinism suite hashes two runs and compares).
-
-const HARD_BLOCK_VIOLATIONS: ReadonlySet<ConstraintViolation> = new Set([
-  'branded_navigational_x_generic',
-  'different_services_same_city_only',
-  'service_location_x_national_informational',
-]);
 
 function cmpStr(x: string, y: string): number {
   return x < y ? -1 : x > y ? 1 : 0;

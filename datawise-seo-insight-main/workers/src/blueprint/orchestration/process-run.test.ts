@@ -308,7 +308,7 @@ describe('processResearchRun', () => {
     expect(JSON.parse(finalRun.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
 
     const finalStageRows = await getStageRows(d1, runId);
-    expect(finalStageRows.length).toBe(19);
+    expect(finalStageRows.length).toBe(20);
     for (const row of finalStageRows) {
       expect(['succeeded', 'skipped', 'partial', 'failed', 'cancelled']).toContain(row.status);
     }

@@ -32,6 +32,7 @@ import {
   loadOverlayArtifact,
 } from './page-plan-handlers';
 import type { ValidateBlueprintOutput } from './page-plan-handlers';
+import { adjudicateClustersHandler } from './adjudicate-clusters';
 import { loadStageOutput } from './stage-io';
 import { composeBlueprint } from '../domain/validate/compose';
 import {
@@ -392,6 +393,7 @@ STAGE_HANDLERS.normalize_keyword_universe = normalizeKeywordUniverseHandler;
 STAGE_HANDLERS.embed_keyword_features = embedKeywordFeaturesHandler;
 STAGE_HANDLERS.build_provisional_clusters = buildProvisionalClustersHandler;
 STAGE_HANDLERS.refine_clusters = refineClustersHandler;
+STAGE_HANDLERS.adjudicate_clusters = adjudicateClustersHandler;
 STAGE_HANDLERS.parse_competitor_pages = parseCompetitorPagesHandler;
 STAGE_HANDLERS.build_page_plan = buildPagePlanHandler;
 STAGE_HANDLERS.overlay_existing_site = overlayExistingSiteHandler;

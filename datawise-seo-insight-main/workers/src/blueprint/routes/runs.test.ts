@@ -80,13 +80,13 @@ async function seedQueuedRun(env: any): Promise<{ projectId: string; runId: stri
 }
 
 describe('GET /api/blueprint/v1/research-runs/:id', () => {
-  it('shows all 19 stages, missing ones filled in as pending', async () => {
+  it('shows all 20 stages, missing ones filled in as pending', async () => {
     const env = fakeEnv();
     const { runId } = await seedQueuedRun(env);
     const res = await call(env, `/api/blueprint/v1/research-runs/${runId}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as ApiSuccess<ResearchRunView>;
-    expect(body.data.stages).toHaveLength(19);
+    expect(body.data.stages).toHaveLength(20);
     for (const stage of body.data.stages) {
       expect(stage.status).toBe('pending');
       expect(stage.attemptCount).toBe(0);

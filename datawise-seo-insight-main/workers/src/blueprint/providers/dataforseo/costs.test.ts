@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_DFS_COST_ESTIMATES, loadDfsCostEstimates, buildCallPlan, OPERATION_STAGE } from './costs';
+import {
+  DEFAULT_DFS_COST_ESTIMATES,
+  loadDfsCostEstimates,
+  buildCallPlan,
+  OPERATION_STAGE,
+  OPENROUTER_ADJUDICATION_CALL_USD_MICRO,
+} from './costs';
 import type { CallPlan } from './costs';
 import { parseProjectBrief, normalizeProjectBrief } from '../../domain/brief';
 import { V1_LIMITS } from '../../contracts/limits';
@@ -64,8 +70,19 @@ describe('buildCallPlan', () => {
       labsTasks * DEFAULT_DFS_COST_ESTIMATES.labsTaskUsdMicro +
       1 * DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro +
       20 * DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro;
+    // totalUsdMicro is DataForSeo-only: the openrouter adjudicator line does not
+    // inflate it.
     expect(plan.totalUsdMicro).toBe(expectedTotal);
-    expect(plan.lines.every((l) => l.cacheEligible)).toBe(true);
+    // Every DataForSeo line is cache-eligible; the openrouter adjudicator line
+    // is not (an LLM classification has no cache).
+    expect(plan.lines.filter((l) => l.provider === 'dataforseo').every((l) => l.cacheEligible)).toBe(true);
+    const adjudication = findLine(plan, 'cluster_adjudication');
+    expect(adjudication?.provider).toBe('openrouter');
+    expect(adjudication?.cacheEligible).toBe(false);
+    expect(adjudication?.tasks).toBe(10);
+    expect(adjudication?.stage).toBe('adjudicate_clusters');
+    expect(adjudication?.estimatedUsdMicro).toBe(10 * OPENROUTER_ADJUDICATION_CALL_USD_MICRO);
+    expect(plan.openRouterTotalUsdMicro).toBe(10 * OPENROUTER_ADJUDICATION_CALL_USD_MICRO);
     expect(findLine(plan, 'serp_task_post')?.estimatedUsdMicro).toBe(DEFAULT_DFS_COST_ESTIMATES.serpTaskUsdMicro);
     expect(findLine(plan, 'content_parsing')?.estimatedUsdMicro).toBe(
       20 * DEFAULT_DFS_COST_ESTIMATES.contentParsingTaskUsdMicro

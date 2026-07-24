@@ -274,7 +274,7 @@ describe('Phase 2 orchestration acceptance', () => {
       .prepare(`SELECT stage_name, status, attempt_count FROM research_stage_runs WHERE run_id = ?`)
       .bind(run.data.id)
       .all<{ stage_name: string; status: string; attempt_count: number }>();
-    expect(stageRows.results.length).toBe(19);
+    expect(stageRows.results.length).toBe(20);
     for (const row of stageRows.results) {
       // Every executed stage on a clean drive (no injected failures) reaches
       // its terminal outcome on the first attempt.

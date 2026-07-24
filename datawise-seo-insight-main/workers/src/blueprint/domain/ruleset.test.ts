@@ -7,6 +7,7 @@ import { BLUEPRINT_RULESET_VERSION, BLUEPRINT_SCHEMA_VERSION, LEGACY_RULESET_VER
 
 const CLUSTER_STAGES: BlueprintStage[] = [
   'normalize_keyword_universe', 'embed_keyword_features', 'build_provisional_clusters', 'refine_clusters',
+  'adjudicate_clusters',
 ];
 const PAGE_PLAN_STAGES: BlueprintStage[] = [
   'parse_competitor_pages', 'build_page_plan', 'overlay_existing_site', 'validate_blueprint', 'publish_blueprint',
