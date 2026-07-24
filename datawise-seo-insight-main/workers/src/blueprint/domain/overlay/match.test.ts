@@ -21,6 +21,7 @@ function plannedPage(over: Partial<PlannedPage> & { logicalId: string; slug: str
     primaryKeyword: over.primaryKeyword ?? null,
     clusterIds: over.clusterIds ?? [],
     sections: over.sections ?? [],
+    supportingKeywords: over.supportingKeywords ?? [],
     metaDescription: over.metaDescription ?? null,
     recommendation: over.recommendation ?? 'create',
     consolidateTargetLogicalId: over.consolidateTargetLogicalId ?? null,

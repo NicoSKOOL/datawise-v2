@@ -13,6 +13,7 @@ import { stageMeta } from './stages';
 import { SerpTasksPendingError } from '../providers/dataforseo/serp';
 import { nextRunnableStage, deriveRunStatus, loadGapStageNames } from './run-status';
 import type { StageRowLite } from './run-status';
+import type { LLMProvider } from '../../llm/provider';
 
 export interface BlueprintQueueEnv {
   BLUEPRINT_DB: D1Database;
@@ -37,6 +38,16 @@ export interface BlueprintProviderEnv extends BlueprintQueueEnv {
   // Cloudflare's full Ai type, matching how this file already widens
   // BlueprintQueueEnv with just the fields real handlers need.
   AI: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
+  // OpenRouter key for the LLM cluster adjudicator (adjudicate_clusters stage,
+  // Phase D). Optional: when absent the adjudicator is a benign no-op skip, so
+  // every non-adjudicator code path (and the full worker Env, which always
+  // carries it) still satisfies this interface.
+  OPENROUTER_API_KEY?: string;
+  // Test seam for the adjudicator's LLM, mirroring the AI binding above: unit
+  // tests inject a scripted LLMProvider here so the real handler runs without a
+  // network call. Production leaves this undefined and the call module falls
+  // back to getLLMProvider(env, { provider: 'openrouter', ... }).
+  BLUEPRINT_LLM?: LLMProvider;
 }
 
 // Leases outlive a single Worker invocation only in spirit (Phase 2 has no

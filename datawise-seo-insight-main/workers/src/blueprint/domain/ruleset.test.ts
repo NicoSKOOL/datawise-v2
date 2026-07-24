@@ -7,6 +7,7 @@ import { BLUEPRINT_RULESET_VERSION, BLUEPRINT_SCHEMA_VERSION, LEGACY_RULESET_VER
 
 const CLUSTER_STAGES: BlueprintStage[] = [
   'normalize_keyword_universe', 'embed_keyword_features', 'build_provisional_clusters', 'refine_clusters',
+  'adjudicate_clusters',
 ];
 const PAGE_PLAN_STAGES: BlueprintStage[] = [
   'parse_competitor_pages', 'build_page_plan', 'overlay_existing_site', 'validate_blueprint', 'publish_blueprint',
@@ -48,7 +49,7 @@ describe('version constants', () => {
   });
 
   it('BLUEPRINT_RULESET_VERSION composes both v1 ruleset versions', () => {
-    expect(BLUEPRINT_RULESET_VERSION).toBe('cluster-v2+pp-v2');
+    expect(BLUEPRINT_RULESET_VERSION).toBe('cluster-v3+pp-v3');
   });
 
   it('BLUEPRINT_SCHEMA_VERSION is the phase4 schema tag', () => {

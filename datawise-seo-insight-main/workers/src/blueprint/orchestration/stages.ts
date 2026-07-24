@@ -40,12 +40,18 @@ const REQUIRED_STAGES = new Set<BlueprintStage>([
   'publish_blueprint',
 ]);
 
-// Per-stage retry overrides (see StageMeta doc comment). 30s spacing x 12
-// attempts gives ~6 minutes of polling headroom for a DataForSEO SERP batch
+// Per-stage retry overrides (see StageMeta doc comment). 60s spacing x 40
+// attempts gives ~40 minutes of polling headroom for a DataForSEO SERP batch
 // to finish before this optional stage exhausts attempts and degrades the
 // run to partial (catalog Sec 12: polling, not postbacks, in this phase).
+// pp-v3: the old 12 x 30s (~6 min) ceiling routinely expired before real SERP
+// tasks finished, so validate_serps_and_questions was marked skipped and
+// refine ran with zero live-SERP coverage. The SerpTasksPendingError polls are
+// cheap (no new DFS spend), so a longer budget just waits out slow tasks; the
+// name-based dedupe (cluster-v3) already keeps the plan correct even when SERPs
+// are late, so this only IMPROVES merges rather than being load-bearing.
 const STAGE_RETRY_OVERRIDES: Partial<Record<BlueprintStage, Pick<StageMeta, 'maxAttempts' | 'retryBackoffMs'>>> = {
-  validate_serps_and_questions: { maxAttempts: 12, retryBackoffMs: 30_000 },
+  validate_serps_and_questions: { maxAttempts: 40, retryBackoffMs: 60_000 },
 };
 
 export const STAGE_REGISTRY: readonly StageMeta[] = BLUEPRINT_STAGES.map((stage) => ({

@@ -34,6 +34,11 @@ const CLUSTER_STAGES = new Set<BlueprintStage>([
   'embed_keyword_features',
   'build_provisional_clusters',
   'refine_clusters',
+  // adjudicate_clusters operates on the clustering output (merges clusters,
+  // excludes keywords), so its input hash is keyed by the clustering ruleset
+  // version. Its adjudicator config lives in the page-plan ruleset, but the
+  // stage's cluster-mutating behavior belongs to the clustering family.
+  'adjudicate_clusters',
 ]);
 
 const PAGE_PLAN_STAGES = new Set<BlueprintStage>([

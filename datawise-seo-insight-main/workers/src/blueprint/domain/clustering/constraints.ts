@@ -92,3 +92,37 @@ export function forbiddenEdgeViolations(a: ConstraintNode, b: ConstraintNode): C
 
   return violations;
 }
+
+// The three violations that forbid a merge outright (as opposed to
+// 'incompatible_intent', which is a soft signal an adjudicator may override).
+// Single source of truth for "is this pair/union hard-blocked" shared by
+// refine.ts's auto-merge pass and the LLM adjudicator's merge rails
+// (adjudication-rails.ts), so the two can never drift on what counts as a
+// hard block.
+export const HARD_BLOCK_VIOLATIONS: ReadonlySet<ConstraintViolation> = new Set([
+  'branded_navigational_x_generic',
+  'different_services_same_city_only',
+  'service_location_x_national_informational',
+]);
+
+// Every hard-constraint violation across ALL unordered pairs of a member set.
+// Used to re-validate a proposed merge union (A-B clean and B-C clean can still
+// leave A-C forbidden, and a source cluster can already carry an internal
+// forbidden pair). Order-invariant (returned as a set).
+export function unionConstraintViolations(nodes: readonly ConstraintNode[]): Set<ConstraintViolation> {
+  const out = new Set<ConstraintViolation>();
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      for (const v of forbiddenEdgeViolations(nodes[i], nodes[j])) out.add(v);
+    }
+  }
+  return out;
+}
+
+// True when a proposed merge union carries any HARD_BLOCK_VIOLATIONS violation.
+export function unionHasHardBlock(nodes: readonly ConstraintNode[]): boolean {
+  for (const v of unionConstraintViolations(nodes)) {
+    if (HARD_BLOCK_VIOLATIONS.has(v)) return true;
+  }
+  return false;
+}

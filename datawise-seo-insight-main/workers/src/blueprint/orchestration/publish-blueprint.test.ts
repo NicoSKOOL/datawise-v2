@@ -29,6 +29,7 @@ interface PageRow {
   consolidate_target_logical_page_id: string | null;
   confidence_label: string | null;
   page_json: string;
+  supporting_keywords_json: string | null;
 }
 
 interface VersionRow {
@@ -58,6 +59,7 @@ function plannedPage(over: Partial<PlannedPage> & { logicalId: string }): Planne
     primaryKeyword: over.primaryKeyword ?? null,
     clusterIds: over.clusterIds ?? [],
     sections: over.sections ?? [],
+    supportingKeywords: over.supportingKeywords ?? [],
     metaDescription: over.metaDescription ?? null,
     recommendation: over.recommendation ?? 'create',
     consolidateTargetLogicalId: over.consolidateTargetLogicalId ?? null,
@@ -72,7 +74,7 @@ function samplePlan(): PlannedPage[] {
   return [
     plannedPage({ logicalId: 'svc-drain', pageType: 'service', slug: 'drain-cleaning', title: 'Drain Cleaning', h1: 'Drain Cleaning', primaryKeyword: 'drain cleaning', primaryKeywordId: 'kw2', clusterIds: ['c2'], scores: { addressableVolume: 300, confidence: 'medium', scoreBreakdown: null, evidenceRefs: ['ev2'] } }),
     plannedPage({ logicalId: 'home', pageType: 'home', slug: 'home', title: 'Home', h1: 'Home' }),
-    plannedPage({ logicalId: 'svc-emergency', pageType: 'service', slug: 'emergency-plumbing', title: 'Emergency Plumbing', h1: 'Emergency Plumbing', primaryKeyword: 'emergency plumbing', primaryKeywordId: 'kw1', clusterIds: ['c1'], scores: { addressableVolume: 500, confidence: 'high', scoreBreakdown: null, evidenceRefs: ['ev1'] } }),
+    plannedPage({ logicalId: 'svc-emergency', pageType: 'service', slug: 'emergency-plumbing', title: 'Emergency Plumbing', h1: 'Emergency Plumbing', primaryKeyword: 'emergency plumbing', primaryKeywordId: 'kw1', clusterIds: ['c1'], supportingKeywords: ['emergency plumber near me', '24 hour plumber'], scores: { addressableVolume: 500, confidence: 'high', scoreBreakdown: null, evidenceRefs: ['ev1'] } }),
   ];
 }
 
@@ -173,7 +175,7 @@ describe('publishBlueprintHandler materialization', () => {
     const version = await d1.prepare(`SELECT * FROM blueprint_versions WHERE run_id = ?`).bind(runId).first<VersionRow>();
     expect(version).toBeTruthy();
     expect(version!.schema_version).toBe('p4');
-    expect(version!.ruleset_version).toBe('cluster-v2+pp-v2');
+    expect(version!.ruleset_version).toBe('cluster-v3+pp-v3');
     expect(version!.completeness).toBe('complete');
 
     const revision = await d1.prepare(`SELECT * FROM blueprint_revisions WHERE blueprint_version_id = ?`).bind(version!.id).first<RevisionRow>();
@@ -199,6 +201,11 @@ describe('publishBlueprintHandler materialization', () => {
     expect(byId['home'].primary_keyword_normalized).toBeNull();
     expect(byId['svc-emergency'].primary_keyword_normalized).toBe('emergency plumbing');
     expect(byId['svc-emergency'].confidence_label).toBe('high');
+
+    // Supporting keywords (spec 3.7) persisted to their own column, ranked list.
+    expect(JSON.parse(byId['svc-emergency'].supporting_keywords_json!)).toEqual(['emergency plumber near me', '24 hour plumber']);
+    // A page with no supporting keywords persists an empty array (never null junk).
+    expect(JSON.parse(byId['home'].supporting_keywords_json!)).toEqual([]);
 
     // page_json carries the full detail + a deterministic 0-based order index:
     // skeleton first (home order 0), then dedicated by volume DESC
@@ -281,6 +288,12 @@ describe('publishBlueprintHandler materialization', () => {
     expect(revisionCount!.n).toBe(1);
     const pages = await getPages(d1, firstOut.revisionId);
     expect(pages.length).toBe(3);
+    // supporting_keywords_json is written in the same INSERT OR IGNORE statement as
+    // the rest of the row, so replay leaves it as the first write (no duplicate, no
+    // overwrite): exactly one svc-emergency row with the original ranked list.
+    const svcEmergency = pages.filter((p) => p.logical_page_id === 'svc-emergency');
+    expect(svcEmergency.length).toBe(1);
+    expect(JSON.parse(svcEmergency[0].supporting_keywords_json!)).toEqual(['emergency plumber near me', '24 hour plumber']);
   });
 
   it('revision_hash reflects the page set: stable on replay, different when the plan differs', async () => {

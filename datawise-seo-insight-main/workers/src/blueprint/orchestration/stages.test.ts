@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { stageMeta } from './stages';
 
 describe('stageMeta', () => {
-  it('gives validate_serps_and_questions a 12-attempt / 30s-backoff override', () => {
+  it('gives validate_serps_and_questions a 40-attempt / 60s-backoff override', () => {
     const meta = stageMeta('validate_serps_and_questions');
-    expect(meta.maxAttempts).toBe(12);
-    expect(meta.retryBackoffMs).toBe(30_000);
+    expect(meta.maxAttempts).toBe(40);
+    expect(meta.retryBackoffMs).toBe(60_000);
     expect(meta.required).toBe(false);
   });
 

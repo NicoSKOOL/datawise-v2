@@ -8,7 +8,7 @@ import { CLUSTER_RULESET_V2 } from './ruleset';
 // pinned hash by running the test once, reading the actual value out of the
 // failure diff, and pasting it back in here. That two-step is the whole
 // point: a silent threshold edit can never ship without a version bump.
-const PINNED_HASH = '7bfa090aa0a83fc06fe37a8fd776d3a272f375d48a52bf27336c9d4b13fb1015';
+const PINNED_HASH = '27df7beafaa0e549e713a5d7fce5099507a8448dee8ff50d55cfed1c00e8214c';
 
 describe('CLUSTER_RULESET_V2 drift guard', () => {
   it('is frozen', () => {
@@ -16,7 +16,7 @@ describe('CLUSTER_RULESET_V2 drift guard', () => {
   });
 
   it('has the expected version string', () => {
-    expect(CLUSTER_RULESET_V2.version).toBe('cluster-v2');
+    expect(CLUSTER_RULESET_V2.version).toBe('cluster-v3');
   });
 
   it('matches the pinned canonical hash (bump version + this hash together on any threshold change)', async () => {

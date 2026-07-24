@@ -400,12 +400,18 @@ describe('POST /api/blueprint/v1/projects/:id/research-estimates', () => {
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as ApiSuccess<ResearchEstimate>;
-    expect(body.data.plannedStages).toHaveLength(19);
+    expect(body.data.plannedStages).toHaveLength(20);
     expect(Number(body.data.totals.dataForSeoMinUsd)).toBeGreaterThan(0);
     expect(Number(body.data.totals.dataForSeoMaxUsd)).toBeGreaterThan(0);
     expect(Number(body.data.totals.dataForSeoMaxUsd)).toBeGreaterThanOrEqual(
       Number(body.data.totals.dataForSeoMinUsd)
     );
+    // page-plan v3: the OpenRouter adjudicator is priced separately (10 calls x
+    // $0.002 = $0.02) and never folded into the DataForSeo totals.
+    expect(Number(body.data.totals.openRouterMaxUsd)).toBeCloseTo(0.02, 6);
+    const adjudicateStage = body.data.plannedStages.find((s) => s.stage === 'adjudicate_clusters')!;
+    expect(adjudicateStage.estimatedTasks).toBe(10);
+    expect(Number(adjudicateStage.estimatedMaxUsd)).toBeCloseTo(0.02, 6);
     expect(body.data.limitations).toEqual([
       'US fan-out and clustering land in later phases; costs shown cover keyword, competitor, SERP, and content-parsing research.',
     ]);
@@ -565,7 +571,7 @@ describe('POST /api/blueprint/v1/projects/:id/research-runs', () => {
     const body = (await res.json()) as any;
     expect(body.data.status).toBe('queued');
     expect(body.data.projectId).toBe(json.data.id);
-    expect(body.data.stages).toHaveLength(19);
+    expect(body.data.stages).toHaveLength(20);
     expect(env.BLUEPRINT_QUEUE.sent).toEqual([{ runId: body.data.id }]);
 
     const projectRes = await call(env, `/api/blueprint/v1/projects/${json.data.id}`);

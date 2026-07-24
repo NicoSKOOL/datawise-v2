@@ -39,8 +39,8 @@ function makeRows(
 }
 
 describe('STAGE_REGISTRY', () => {
-  it('has 19 entries in BLUEPRINT_STAGES order', () => {
-    expect(STAGE_REGISTRY.length).toBe(19);
+  it('has 20 entries in BLUEPRINT_STAGES order', () => {
+    expect(STAGE_REGISTRY.length).toBe(20);
     expect(STAGE_REGISTRY.map((m) => m.stage)).toEqual([...BLUEPRINT_STAGES]);
   });
 
@@ -52,7 +52,7 @@ describe('STAGE_REGISTRY', () => {
 
   it('marks every other stage as not required', () => {
     const optional = STAGE_REGISTRY.filter((m) => !m.required).map((m) => m.stage);
-    expect(optional.length).toBe(10);
+    expect(optional.length).toBe(11);
     for (const stage of optional) {
       expect(REQUIRED_STAGES).not.toContain(stage);
     }

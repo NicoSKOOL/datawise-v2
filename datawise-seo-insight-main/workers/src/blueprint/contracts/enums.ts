@@ -40,7 +40,8 @@ export const BLUEPRINT_STAGES = [
   'validate_intake', 'resolve_market', 'normalize_brief', 'plan_research',
   'collect_keyword_evidence', 'discover_competitors', 'collect_competitor_evidence',
   'normalize_keyword_universe', 'embed_keyword_features', 'build_provisional_clusters',
-  'validate_serps_and_questions', 'refine_clusters', 'parse_competitor_pages',
+  'validate_serps_and_questions', 'refine_clusters', 'adjudicate_clusters',
+  'parse_competitor_pages',
   'collect_us_fanout', 'build_page_plan', 'overlay_existing_site',
   'synthesize_page_briefs', 'validate_blueprint', 'publish_blueprint',
 ] as const;

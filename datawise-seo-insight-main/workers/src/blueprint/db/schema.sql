@@ -347,6 +347,7 @@ CREATE TABLE IF NOT EXISTS blueprint_pages (
   priority TEXT,
   confidence_label TEXT,
   page_json TEXT NOT NULL DEFAULT '{}',
+  supporting_keywords_json TEXT,
   UNIQUE(blueprint_revision_id, logical_page_id),
   CHECK (parent_logical_page_id IS NULL OR parent_logical_page_id <> logical_page_id),
   CHECK (recommendation <> 'consolidate' OR consolidate_target_logical_page_id IS NOT NULL)
@@ -409,7 +410,7 @@ UPDATE blueprint_meta SET value = '3', updated_at = datetime('now') WHERE key = 
 CREATE TABLE IF NOT EXISTS cluster_adjudications (
   id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL REFERENCES research_runs(id),
-  case_type TEXT NOT NULL CHECK (case_type IN ('merge','split','intent_exception')),
+  case_type TEXT NOT NULL CHECK (case_type IN ('merge','split','intent_exception','variant_fold')),
   cluster_ids_json TEXT NOT NULL,
   keyword_ids_json TEXT NOT NULL,
   decision TEXT NOT NULL DEFAULT 'pending'
@@ -417,7 +418,8 @@ CREATE TABLE IF NOT EXISTS cluster_adjudications (
   score_context_json TEXT NOT NULL,
   ruleset_version TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  resolved_at TEXT
+  resolved_at TEXT,
+  resolved_by TEXT CHECK (resolved_by IS NULL OR resolved_by IN ('rules','llm'))
 );
 CREATE INDEX IF NOT EXISTS idx_cluster_adjudications_run ON cluster_adjudications(run_id, decision);
 
@@ -459,3 +461,12 @@ CREATE INDEX IF NOT EXISTS idx_clusters_run ON keyword_clusters(run_id);
 CREATE INDEX IF NOT EXISTS idx_cluster_keywords_kw ON cluster_keywords(keyword_id);
 
 UPDATE blueprint_meta SET value = '4', updated_at = datetime('now') WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 4;
+
+-- ===== Phase 4b: page-plan v3 schema =====
+-- The column and CHECK changes for this phase are folded into the CREATE TABLE
+-- statements above (blueprint_pages.supporting_keywords_json,
+-- cluster_adjudications.case_type +'variant_fold' and resolved_by); a fresh DB
+-- built from this file lands at v5 directly. Existing DBs migrate via
+-- db/migrations/2026-07-24-phase4b.sql. keywords.excluded_reason stays CHECK-free
+-- (consistent with its Phase 4 definition), so 'out_of_area' needs no DDL.
+UPDATE blueprint_meta SET value = '5', updated_at = datetime('now') WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 5;

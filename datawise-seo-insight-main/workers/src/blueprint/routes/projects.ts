@@ -32,14 +32,21 @@ function isCacheEligibleForEstimate(operation: string): boolean {
 // but at least one uncached provider call always executes on a fresh run, so
 // a zero min would be dishonest: floor it to the cheapest single planned task
 // across all lines instead (tasks is always > 0 for surviving lines).
-function buildEstimateTotals(plan: CallPlan): { minUsdMicro: number; maxUsdMicro: number } {
-  let minUsdMicro = plan.lines
+function buildEstimateTotals(plan: CallPlan): {
+  minUsdMicro: number;
+  maxUsdMicro: number;
+  openRouterMaxUsdMicro: number;
+} {
+  const dfsLines = plan.lines.filter((line) => line.provider === 'dataforseo');
+  let minUsdMicro = dfsLines
     .filter((line) => !isCacheEligibleForEstimate(line.operation))
     .reduce((sum, line) => sum + line.estimatedUsdMicro, 0);
   if (minUsdMicro === 0 && plan.totalUsdMicro > 0) {
-    minUsdMicro = Math.min(...plan.lines.map((line) => Math.round(line.estimatedUsdMicro / line.tasks)));
+    minUsdMicro = Math.min(...dfsLines.map((line) => Math.round(line.estimatedUsdMicro / line.tasks)));
   }
-  return { minUsdMicro, maxUsdMicro: plan.totalUsdMicro };
+  // plan.totalUsdMicro is already DataForSeo-only; openrouter is reported on its
+  // own additive field so the existing dataForSeo* fields keep their meaning.
+  return { minUsdMicro, maxUsdMicro: plan.totalUsdMicro, openRouterMaxUsdMicro: plan.openRouterTotalUsdMicro };
 }
 
 function buildPlannedStages(plan: CallPlan): ResearchEstimate['plannedStages'] {
@@ -494,7 +501,7 @@ export async function createEstimate(
   const brief = await loadNormalizedBrief(env.BLUEPRINT_DB, project.active_brief_version_id);
   const costs = await loadDfsCostEstimates(env.KV);
   const plan = buildCallPlan(brief, costs);
-  const { minUsdMicro, maxUsdMicro } = buildEstimateTotals(plan);
+  const { minUsdMicro, maxUsdMicro, openRouterMaxUsdMicro } = buildEstimateTotals(plan);
   const plannedStages = buildPlannedStages(plan);
 
   const estimateId = newId('est');
@@ -508,7 +515,7 @@ export async function createEstimate(
     totals: {
       dataForSeoMinUsd: microToUsd(minUsdMicro),
       dataForSeoMaxUsd: microToUsd(maxUsdMicro),
-      openRouterMaxUsd: '0.00',
+      openRouterMaxUsd: microToUsd(openRouterMaxUsdMicro),
       estimatedDurationSecondsMin: 60,
       estimatedDurationSecondsMax: 300,
     },

@@ -11,6 +11,9 @@ export interface LengthEscalationOpts {
   // Route tag for the truncation log line, e.g. 'content-tools/analyze'.
   label: string;
   responseFormat?: 'json';
+  // Overrides the adapter default temperature for every attempt (0 for
+  // deterministic classification callers like the blueprint adjudicator).
+  temperature?: number;
 }
 
 // Reasoning models (DeepSeek V4 Pro is the default across features) count
@@ -28,7 +31,13 @@ export async function chatCompleteEscalating(
   config: UserLLMConfig | undefined,
   opts: LengthEscalationOpts,
 ): Promise<ChatCompleteResult> {
-  const callOpts: ChatCompleteOptions | undefined = opts.responseFormat ? { responseFormat: opts.responseFormat } : undefined;
+  const callOpts: ChatCompleteOptions | undefined =
+    opts.responseFormat || typeof opts.temperature === 'number'
+      ? {
+          ...(opts.responseFormat ? { responseFormat: opts.responseFormat } : {}),
+          ...(typeof opts.temperature === 'number' ? { temperature: opts.temperature } : {}),
+        }
+      : undefined;
   let maxTokens = opts.startTokens;
   let totalIn = 0;
   let totalOut = 0;
