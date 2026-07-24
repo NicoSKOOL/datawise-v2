@@ -220,7 +220,7 @@ describe('GET /api/blueprint/v1/blueprint-revisions/:id/export', () => {
       const csv = await res.text();
       const lines = csv.split('\r\n');
       expect(lines[0]).toBe(
-        'slug,title,page_type,primary_keyword,volume,intent,parent_slug,recommendation,priority,supporting_keywords,decision_reason'
+        'slug,title,page_type,primary_keyword,volume,intent,parent_slug,recommendation,priority,supporting_keywords,decision_reason,supporting_keyword_count'
       );
       expect(lines[1]).toContain('Primary landing page for the head keyword.');
     });

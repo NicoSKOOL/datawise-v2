@@ -35,6 +35,7 @@ export interface BlueprintGraphNode {
   priority: string | null;
   confidenceLabel: string | null;
   supportingKeywordCount: number;
+  supportingKeywords: string[];
 }
 
 interface BlueprintVersionRow {
@@ -232,6 +233,7 @@ interface BlueprintPageRow {
   priority: string | null;
   confidence_label: string | null;
   page_json: string;
+  supporting_keywords_json: string | null;
 }
 
 // Shape of the `page_json` blob written by buildPageJson (domain/validate/publish.ts)
@@ -340,7 +342,21 @@ function buildGraphNode(page: BlueprintPageRow, metrics: ClusterMetricsRow | und
     priority: page.priority,
     confidenceLabel: page.confidence_label,
     supportingKeywordCount: metrics ? metrics.member_count : 0,
+    supportingKeywords: parseSupportingKeywords(page.supporting_keywords_json),
   };
+}
+
+// Persisted by the publish handler as a JSON array of keyword strings
+// (pp-v3, spec 3.7). Absent for pre-v3 revisions and skeleton pages;
+// malformed JSON degrades to an empty list rather than failing the read.
+function parseSupportingKeywords(json: string | null): string[] {
+  if (json === null || json === '') return [];
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 // Two queries total regardless of page count: all pages for the revision,
@@ -351,7 +367,8 @@ export async function loadGraph(d1: D1Database, revisionId: string, runId: strin
   const pagesResult = await d1
     .prepare(
       `SELECT row_id, logical_page_id, parent_logical_page_id, page_type, title, slug,
-              primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json
+              primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json,
+              supporting_keywords_json
        FROM blueprint_pages
        WHERE blueprint_revision_id = ?
        ORDER BY logical_page_id ASC`
@@ -409,7 +426,8 @@ async function loadPageRow(d1: D1Database, revisionId: string, logicalPageId: st
   const row = await d1
     .prepare(
       `SELECT row_id, logical_page_id, parent_logical_page_id, page_type, title, slug,
-              primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json
+              primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json,
+              supporting_keywords_json
        FROM blueprint_pages
        WHERE blueprint_revision_id = ?
          AND logical_page_id = ?`

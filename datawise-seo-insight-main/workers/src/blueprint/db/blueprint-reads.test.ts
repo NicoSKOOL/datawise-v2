@@ -74,6 +74,7 @@ interface SeedPageSpec {
   slug?: string;
   primaryKeywordNormalized?: string | null;
   pageJson?: Record<string, unknown>;
+  supportingKeywords?: string[] | null;
 }
 
 async function seedPage(d1: D1Database, revisionId: string, spec: SeedPageSpec): Promise<void> {
@@ -81,8 +82,9 @@ async function seedPage(d1: D1Database, revisionId: string, spec: SeedPageSpec):
     .prepare(
       `INSERT INTO blueprint_pages
         (row_id, blueprint_revision_id, logical_page_id, parent_logical_page_id, page_type, title, slug,
-         primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'create', 'approved', 'high', 'high', ?)`
+         primary_keyword_normalized, recommendation, approval, priority, confidence_label, page_json,
+         supporting_keywords_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'create', 'approved', 'high', 'high', ?, ?)`
     )
     .bind(
       newId('bppage'),
@@ -93,7 +95,8 @@ async function seedPage(d1: D1Database, revisionId: string, spec: SeedPageSpec):
       spec.title ?? spec.logicalPageId,
       spec.slug ?? `/${spec.logicalPageId}`,
       spec.primaryKeywordNormalized ?? null,
-      JSON.stringify(spec.pageJson ?? {})
+      JSON.stringify(spec.pageJson ?? {}),
+      spec.supportingKeywords === null || spec.supportingKeywords === undefined ? null : JSON.stringify(spec.supportingKeywords)
     )
     .run();
 }
@@ -186,6 +189,7 @@ describe('loadGraph', () => {
     await seedPage(d1, revisionId, {
       logicalPageId: 'service-drain-cleaning',
       pageJson: { clusterIds: ['kcl_1'] },
+      supportingKeywords: ['drain cleaning near me', 'clogged drain cleaning service'],
     });
     await seedPage(d1, revisionId, {
       logicalPageId: 'service-drain-cleaning-downtown',
@@ -206,12 +210,14 @@ describe('loadGraph', () => {
     expect(home.primaryVolume).toBeNull();
     expect(home.primaryIntent).toBeNull();
     expect(home.supportingKeywordCount).toBe(0);
+    expect(home.supportingKeywords).toEqual([]);
 
     const service = nodes[1];
     expect(service.primaryKeyword).toBe('drain cleaning');
     expect(service.primaryVolume).toBe(90500);
     expect(service.primaryIntent).toBe('commercial');
     expect(service.supportingKeywordCount).toBe(3);
+    expect(service.supportingKeywords).toEqual(['drain cleaning near me', 'clogged drain cleaning service']);
 
     const child = nodes[2];
     expect(child.parentLogicalPageId).toBe('service-drain-cleaning');
@@ -264,6 +270,7 @@ describe('loadPageDetail', () => {
 
     await seedPage(d1, revisionId, {
       logicalPageId: 'service-drain-cleaning',
+      supportingKeywords: ['drain cleaning near me', 'clogged drain cleaning service'],
       pageJson: {
         h1: 'Drain Cleaning Services',
         metaDescription: 'Fast, licensed drain cleaning.',
@@ -321,6 +328,7 @@ describe('loadPageDetail', () => {
     expect(detail.node.primaryKeyword).toBe('drain cleaning');
     expect(detail.node.primaryVolume).toBe(90500);
     expect(detail.node.supportingKeywordCount).toBe(3);
+    expect(detail.node.supportingKeywords).toEqual(['drain cleaning near me', 'clogged drain cleaning service']);
 
     expect(detail.page.h1).toBe('Drain Cleaning Services');
     expect(detail.page.metaDescription).toBe('Fast, licensed drain cleaning.');

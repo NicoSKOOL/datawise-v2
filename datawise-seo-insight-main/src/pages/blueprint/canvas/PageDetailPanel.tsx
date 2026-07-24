@@ -48,10 +48,18 @@ export function PageDetailPanel(props: { revisionId: string; pageId: string | nu
     }
   }
 
-  const members = data?.cluster?.members ?? [];
+  // pp-v3 revisions persist the page's authoritative supporting keyword list
+  // (union across owner + folded clusters, minus the primary). Older revisions
+  // predate it, so fall back to the primary cluster's raw members.
+  const supportingFromPlan = data?.node.supportingKeywords ?? [];
+  const members = supportingFromPlan.length > 0
+    ? supportingFromPlan.map((keyword) => ({ keyword, volume: null as number | null }))
+    : data?.cluster?.members ?? [];
   const visibleMembers = showAllKeywords ? members : members.slice(0, SUPPORTING_KEYWORDS_PREVIEW);
   const hiddenCount = members.length - visibleMembers.length;
-  const totalMembers = data?.cluster?.totalMembers ?? members.length;
+  const totalMembers = supportingFromPlan.length > 0
+    ? supportingFromPlan.length
+    : data?.cluster?.totalMembers ?? members.length;
 
   return (
     <Sheet open={pageId !== null} onOpenChange={handleOpenChange}>

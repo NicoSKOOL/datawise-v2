@@ -30,6 +30,7 @@ export interface BlueprintGraphNode {
   priority: string | null;
   confidenceLabel: string | null;
   supportingKeywordCount: number;
+  supportingKeywords?: string[];
 }
 
 export interface BlueprintGraphResponse {

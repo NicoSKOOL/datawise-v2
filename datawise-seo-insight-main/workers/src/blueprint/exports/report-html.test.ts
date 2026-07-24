@@ -33,6 +33,7 @@ function makeNode(overrides: Partial<BlueprintGraphNode> = {}): BlueprintGraphNo
     priority: 'p1',
     confidenceLabel: 'high',
     supportingKeywordCount: 4,
+    supportingKeywords: [],
     ...overrides,
   };
 }
