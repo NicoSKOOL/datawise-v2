@@ -123,9 +123,11 @@ function AuditListView() {
   }, [properties, selectedPropertyId]);
 
   const [domain, setDomain] = useState('');
+  // Sync only when the selected property changes so the user can clear or
+  // overwrite the field without it snapping back to the previous default.
   useEffect(() => {
-    if (!domain && defaultDomain) setDomain(defaultDomain);
-  }, [defaultDomain, domain]);
+    if (defaultDomain) setDomain(defaultDomain);
+  }, [defaultDomain]);
 
   const audits = useQuery({
     queryKey: ['site-audits'],
