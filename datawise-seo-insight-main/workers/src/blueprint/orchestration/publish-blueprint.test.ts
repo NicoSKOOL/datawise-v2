@@ -288,6 +288,12 @@ describe('publishBlueprintHandler materialization', () => {
     expect(revisionCount!.n).toBe(1);
     const pages = await getPages(d1, firstOut.revisionId);
     expect(pages.length).toBe(3);
+    // supporting_keywords_json is written in the same INSERT OR IGNORE statement as
+    // the rest of the row, so replay leaves it as the first write (no duplicate, no
+    // overwrite): exactly one svc-emergency row with the original ranked list.
+    const svcEmergency = pages.filter((p) => p.logical_page_id === 'svc-emergency');
+    expect(svcEmergency.length).toBe(1);
+    expect(JSON.parse(svcEmergency[0].supporting_keywords_json!)).toEqual(['emergency plumber near me', '24 hour plumber']);
   });
 
   it('revision_hash reflects the page set: stable on replay, different when the plan differs', async () => {
