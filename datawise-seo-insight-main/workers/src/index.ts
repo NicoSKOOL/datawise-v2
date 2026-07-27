@@ -21,6 +21,9 @@ export interface Env {
   // HMAC key for public unsubscribe links (src/email/suppression.ts). Set via
   // `wrangler secret put UNSUBSCRIBE_SECRET`.
   UNSUBSCRIBE_SECRET: string;
+  // Svix signing secret for Resend webhooks (`whsec_...`), from the endpoint's
+  // page in the Resend dashboard. Set via `wrangler secret put RESEND_WEBHOOK_SECRET`.
+  RESEND_WEBHOOK_SECRET: string;
   // LLM config (external providers — Workers AI is the free fallback)
   LLM_PROVIDER: string;
   LLM_MODEL: string;
@@ -154,6 +157,7 @@ import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
 import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
 import { handleSkoolMemberJoined } from './routes/webhooks';
+import { handleResendWebhook } from './routes/resend-webhook';
 import {
   handleRelatedKeywordsPublic,
   handleKeywordDifficultyPublic,
@@ -329,6 +333,11 @@ export default {
       // --- Webhooks (Bearer-token auth, no CORS needed) ---
       if (path === '/webhooks/skool-member-joined' && method === 'POST') {
         return await handleSkoolMemberJoined(request, env);
+      }
+      // Resend delivery/contact events (Svix-signed). Keeps Resend's opt-out
+      // state and our email_suppressions table in sync.
+      if (path === '/webhooks/resend' && method === 'POST') {
+        return await handleResendWebhook(request, env);
       }
       // GSC callback is a public redirect from Google (uses state param for auth)
       if (path === '/gsc/callback' && method === 'GET') {
