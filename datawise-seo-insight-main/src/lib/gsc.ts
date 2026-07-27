@@ -13,6 +13,12 @@ export interface GSCProperty {
   color: string | null;
   is_enabled: number | null;
   site_group_id?: string | null;
+  // Set by GET /gsc/properties when a property that had synced successfully no
+  // longer holds any Search Console rows (its data was destroyed after the
+  // fact). last_synced_at is reported as null alongside it, so the normal
+  // "Not synced yet" + Sync affordance comes back instead of a stale timestamp
+  // over an empty dashboard.
+  data_missing?: boolean;
 }
 
 export interface GSCOverviewData {

@@ -1,4 +1,5 @@
 import type { Env } from '../index';
+import { ACTIVITY_ERROR_CODE_HEADER } from '../activity';
 import { refreshGSCToken } from './oauth';
 
 interface SearchAnalyticsRow {
@@ -14,6 +15,119 @@ const GSC_ROW_LIMIT = 25000;
 // out of CPU/subrequests. 30 pages * 25k = 750k rows per pass.
 const GSC_MAX_PAGES = 30;
 
+// Chunk size / ceiling for the full-path wipe below. 10k matches
+// GSC_DISCONNECT_CHUNK; 200 chunks covers 2M rows, well past the largest
+// single property observed.
+const GSC_SYNC_DELETE_CHUNK = 10000;
+const GSC_SYNC_MAX_DELETE_CHUNKS = 200;
+
+// ---------------------------------------------------------------------------
+// Upstream error handling
+// ---------------------------------------------------------------------------
+// Every non-OK Search Analytics response used to collapse into the same
+// `{ error: 'Failed to fetch GSC data' }` 500, with Google's actual reason
+// reaching console.error and nowhere else. app_events therefore recorded a bare
+// status 500 and a NULL error_code, so four days of a user's failing syncs
+// (bug 536e8205) could not be told apart from a rate limit, a revoked
+// permission, or a Google outage. Keep the reason.
+
+interface GSCApiFailure {
+  status: number;  // HTTP status Google returned
+  reason: string;  // error.errors[0].reason, or error.status
+  message: string; // error.message, or the raw body for non-JSON responses
+}
+
+class GSCFetchError extends Error {
+  constructor(readonly failure: GSCApiFailure) {
+    super(`GSC_FETCH_FAILED_${failure.status}`);
+  }
+}
+
+function parseGSCFailure(status: number, body: string): GSCApiFailure {
+  let reason = '';
+  let message = '';
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { message?: string; status?: string; errors?: Array<{ reason?: string }> };
+    };
+    message = parsed.error?.message || '';
+    reason = parsed.error?.errors?.[0]?.reason || parsed.error?.status || '';
+  } catch {
+    // Google serves an HTML error page for some edge/quota failures; the status
+    // code is then the only signal, and the body is kept as the message.
+  }
+  return { status, reason, message: message || body.slice(0, 300) };
+}
+
+// Google rate-limits Search Console aggressively when several properties are
+// synced back-to-back, and signals it as 429 OR as 403 with a quota reason.
+const GSC_RATE_LIMIT_REASONS = new Set([
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'quotaExceeded',
+  'dailyLimitExceeded',
+  'RESOURCE_EXHAUSTED',
+]);
+
+function isRetryableFailure(f: GSCApiFailure): boolean {
+  return f.status === 429 || f.status >= 500 || GSC_RATE_LIMIT_REASONS.has(f.reason);
+}
+
+// One POST to Search Analytics, with a single backoff retry for the transient
+// classes. A retry is far cheaper than the user re-clicking Sync, and the
+// bursty rate limits Google applies here usually clear within a second.
+async function gscSearchAnalyticsFetch(
+  apiUrl: string,
+  headers: Record<string, string>,
+  body: Record<string, unknown>,
+): Promise<{ rows?: SearchAnalyticsRow[] }> {
+  for (let attempt = 0; ; attempt++) {
+    const resp = await fetch(apiUrl, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (resp.ok) return await resp.json() as { rows?: SearchAnalyticsRow[] };
+
+    const failure = parseGSCFailure(resp.status, await resp.text().catch(() => ''));
+    if (attempt === 0 && isRetryableFailure(failure)) {
+      console.warn('GSC searchAnalytics retryable failure, retrying:', failure.status, failure.reason);
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      continue;
+    }
+    console.error('GSC searchAnalytics API error:', failure.status, failure.reason, failure.message);
+    throw new GSCFetchError(failure);
+  }
+}
+
+// Maps an upstream failure onto a response the SPA can act on. The old generic
+// 500 told the user nothing, so they retried the same broken thing for days.
+function gscFailureResponse(failure: GSCApiFailure, siteUrl: string): Response {
+  let status = 502;
+  let code = 'gsc_upstream_error';
+  let error = `Google Search Console returned an error for ${siteUrl}.`;
+
+  if (isRetryableFailure(failure)) {
+    status = 429;
+    code = 'gsc_rate_limited';
+    error = `Google is rate-limiting Search Console requests for ${siteUrl}. Wait a minute and sync again — syncing several sites at once is the usual trigger.`;
+  } else if (failure.status === 403 || failure.status === 401) {
+    status = 403;
+    code = 'gsc_property_forbidden';
+    error = `Your Google account no longer has permission to read ${siteUrl} in Search Console. Check that the property still exists and that your account still has access, then reconnect.`;
+  } else if (failure.status === 400) {
+    code = 'gsc_bad_request';
+    error = `Google rejected the Search Console request for ${siteUrl}. The property may have been renamed or removed in Search Console; refresh your property list.`;
+  }
+
+  return new Response(
+    JSON.stringify({ error, code, google_status: failure.status, google_reason: failure.reason || null }),
+    {
+      status,
+      headers: {
+        'Content-Type': 'application/json',
+        [ACTIVITY_ERROR_CODE_HEADER]: `${code}:${failure.status}${failure.reason ? `:${failure.reason}` : ''}`,
+      },
+    },
+  );
+}
+
 // Fetch every row for a Search Analytics query by walking startRow until a
 // short page (or the safety ceiling) is hit. The GSC API caps a single
 // response at 25k rows; without this loop everything past row 25k is lost.
@@ -24,17 +138,11 @@ async function fetchAllSearchAnalyticsRows(
 ): Promise<{ rows: SearchAnalyticsRow[]; truncated: boolean }> {
   const all: SearchAnalyticsRow[] = [];
   for (let page = 0; page < GSC_MAX_PAGES; page++) {
-    const resp = await fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ...body, rowLimit: GSC_ROW_LIMIT, startRow: page * GSC_ROW_LIMIT }),
+    const data = await gscSearchAnalyticsFetch(apiUrl, headers, {
+      ...body,
+      rowLimit: GSC_ROW_LIMIT,
+      startRow: page * GSC_ROW_LIMIT,
     });
-    if (!resp.ok) {
-      const errorBody = await resp.text();
-      console.error('GSC searchAnalytics API error:', errorBody);
-      throw new Error('GSC_FETCH_FAILED');
-    }
-    const data = await resp.json() as { rows?: SearchAnalyticsRow[] };
     const rows = data.rows || [];
     all.push(...rows);
     if (rows.length < GSC_ROW_LIMIT) return { rows: all, truncated: false };
@@ -106,25 +214,20 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
 
   // --- Pass 1: Daily totals (dimensions: ['date']) ---
   // ~90 rows, never truncated, gives accurate daily click/impression totals
-  const dailyResponse = await fetch(apiUrl, {
-    method: 'POST', headers,
-    body: JSON.stringify({
+  let dailyRows: SearchAnalyticsRow[];
+  try {
+    const dailyData = await gscSearchAnalyticsFetch(apiUrl, headers, {
       startDate: formatDate(ninetyDaysAgo),
       endDate: formatDate(now),
       dimensions: ['date'],
       rowLimit: 25000,
       dataState: 'final',
-    }),
-  });
-
-  if (!dailyResponse.ok) {
-    const errorBody = await dailyResponse.text();
-    console.error('GSC daily totals API error:', errorBody);
-    return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
+    });
+    dailyRows = dailyData.rows || [];
+  } catch (err) {
+    if (err instanceof GSCFetchError) return gscFailureResponse(err.failure, siteUrl);
+    throw err;
   }
-
-  const dailyData = await dailyResponse.json() as { rows?: SearchAnalyticsRow[] };
-  const dailyRows = dailyData.rows || [];
   const totalClicks = dailyRows.reduce((sum, row) => sum + Number(row.clicks || 0), 0);
   const totalImpressions = dailyRows.reduce((sum, row) => sum + Number(row.impressions || 0), 0);
 
@@ -160,8 +263,9 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
         dimensions: ['query', 'page'],
         dataState: 'final',
       })).rows;
-    } catch {
-      return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
+    } catch (err) {
+      if (err instanceof GSCFetchError) return gscFailureResponse(err.failure, siteUrl);
+      throw err;
     }
   }
 
@@ -189,8 +293,9 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
       dimensions: ['date', 'query', 'page'],
       dataState: 'final',
     })).rows;
-  } catch {
-    return new Response(JSON.stringify({ error: 'Failed to fetch GSC data' }), { status: 500 });
+  } catch (err) {
+    if (err instanceof GSCFetchError) return gscFailureResponse(err.failure, siteUrl);
+    throw err;
   }
 
   // --- Pass 3: 7-day query breakdown (dimensions: ['query']) ---
@@ -198,22 +303,23 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   const sevenDaysAgo = new Date(now);
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-  const recent7dResponse = await fetch(apiUrl, {
-    method: 'POST', headers,
-    body: JSON.stringify({
+  // Non-fatal on purpose: this pass only feeds the "recent queries" panel, so a
+  // failure here leaves the existing 7-day rows in place rather than sinking an
+  // otherwise complete sync (query7dFetched gates the matching DELETE below).
+  let query7dRows: SearchAnalyticsRow[] = [];
+  let query7dFetched = true;
+  try {
+    const data = await gscSearchAnalyticsFetch(apiUrl, headers, {
       startDate: formatDate(sevenDaysAgo),
       endDate: formatDate(now),
       dimensions: ['query'],
       rowLimit: 25000,
       dataState: 'final',
-    }),
-  });
-
-  let query7dRows: SearchAnalyticsRow[] = [];
-  const query7dFetched = recent7dResponse.ok;
-  if (query7dFetched) {
-    const data = await recent7dResponse.json() as { rows?: SearchAnalyticsRow[] };
+    });
     query7dRows = data.rows || [];
+  } catch (err) {
+    if (!(err instanceof GSCFetchError)) throw err;
+    query7dFetched = false;
   }
 
   // All GSC fetches are done; only now is stored data mutated, so a failed
@@ -221,7 +327,21 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   if (!incremental) {
     // First sync, or legacy-format property: full wipe-and-reload converts it
     // to the two-set model. From then on syncs take the incremental path.
-    await env.DB.prepare('DELETE FROM gsc_search_data WHERE property_id = ?').bind(property_id).run();
+    //
+    // Chunked for the same reason handleGSCDisconnect is: D1 caps a single SQL
+    // statement at 30 seconds, and a one-shot DELETE of a legacy property
+    // holding hundreds of thousands of rows blows that cap and 500s the whole
+    // sync — right after the fetches succeeded, so the user pays for the work
+    // and gets nothing. Safe to interrupt: rows only shrink and nothing has
+    // been re-inserted yet.
+    for (let i = 0; i < GSC_SYNC_MAX_DELETE_CHUNKS; i++) {
+      const res = await env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE id IN (
+           SELECT id FROM gsc_search_data WHERE property_id = ? LIMIT ?
+         )`
+      ).bind(property_id, GSC_SYNC_DELETE_CHUNK).run();
+      if ((res.meta?.changes ?? 0) < GSC_SYNC_DELETE_CHUNK) break;
+    }
   } else {
     // Targeted deletes covering exactly the row sets rewritten below.
     const deletes = [

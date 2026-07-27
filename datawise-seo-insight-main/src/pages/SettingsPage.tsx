@@ -363,14 +363,21 @@ export default function SettingsPage() {
         toast({ title: 'Sync Complete', description: `${clicks.toLocaleString()} clicks · ${impressions.toLocaleString()} impressions over 90 days from ${result.property}` });
       }
       loadGSCStatus();
-    } catch {
+    } catch (err) {
       // A thrown error here is a server/API failure, not an auth problem: an
       // expired session would have redirected to login before reaching this
-      // catch. So this is almost always a temporary Google API error (often rate
-      // limits when syncing several sites back-to-back), not something a
-      // reconnect fixes. Guide the user to retry first (bug: Angela saw "Try
+      // catch. The worker now classifies the upstream Google failure and sends
+      // back a specific message (rate limited vs. permission lost vs. property
+      // renamed), so prefer it over the old one-size-fits-all guess — telling a
+      // user to "wait and retry" for four days when their account had actually
+      // lost access to the property is what produced bug 536e8205. The generic
+      // text stays as the fallback for older responses and network errors, and
+      // still leads with retry rather than "reconnect" (bug: Angela saw "Try
       // reconnecting" on a perfectly healthy connection).
-      toast({ variant: 'destructive', title: 'Sync failed', description: "Google's Search Console API returned an error. This is usually temporary (for example, rate limits when syncing several sites at once). Wait a moment and click Sync again. If it keeps failing, reconnect GSC." });
+      const message = err instanceof Error && err.message && !/^API error: /.test(err.message)
+        ? err.message
+        : "Google's Search Console API returned an error. This is usually temporary (for example, rate limits when syncing several sites at once). Wait a moment and click Sync again. If it keeps failing, reconnect GSC.";
+      toast({ variant: 'destructive', title: 'Sync failed', description: message });
     } finally {
       setSyncing(null);
     }
@@ -782,7 +789,11 @@ export default function SettingsPage() {
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {prop.last_synced_at ? `Last synced: ${new Date(prop.last_synced_at).toLocaleDateString()}` : 'Not synced yet'}
+                          {prop.data_missing
+                            ? 'Search Console data needs re-syncing — click Sync to reload it from Google'
+                            : prop.last_synced_at
+                              ? `Last synced: ${new Date(prop.last_synced_at).toLocaleDateString()}`
+                              : 'Not synced yet'}
                         </p>
                       </div>
 
