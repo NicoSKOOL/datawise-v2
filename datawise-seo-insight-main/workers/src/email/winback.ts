@@ -7,11 +7,11 @@ function firstName(name: string): string {
 }
 
 // Step 1, sent immediately after the CSV revoke run drops the user back to free.
-function getWinbackEmail1(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getWinbackEmail1(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const display = firstName(name);
   return {
     subject: "Your DataWise data is saved, here's what changes",
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: 'Your projects, rank history, and GSC connections stay put. Here is how to pick up where you left off.',
       eyebrow: 'Account update',
       issueLabel: 'Step 1 of 2',
@@ -54,11 +54,11 @@ function getWinbackEmail1(name: string, userId: string, workerUrl: string): { su
 }
 
 // Step 2, sent 14 days after step 1 if the user has not rejoined.
-function getWinbackEmail2(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getWinbackEmail2(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const display = firstName(name);
   return {
     subject: 'What unlimited DataWise costs vs. Ahrefs and Semrush',
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: '$27 vs $129+, plus what you can run any week of the year.',
       eyebrow: 'The math on rejoining',
       issueLabel: 'Step 2 of 2',
@@ -108,12 +108,11 @@ function getWinbackEmail2(name: string, userId: string, workerUrl: string): { su
 export function getWinbackEmail(
   step: number,
   name: string,
-  userId: string,
-  workerUrl: string
+  unsubscribeUrl: string
 ): { subject: string; html: string } | null {
   switch (step) {
-    case 1: return getWinbackEmail1(name, userId, workerUrl);
-    case 2: return getWinbackEmail2(name, userId, workerUrl);
+    case 1: return getWinbackEmail1(name, unsubscribeUrl);
+    case 2: return getWinbackEmail2(name, unsubscribeUrl);
     default: return null;
   }
 }

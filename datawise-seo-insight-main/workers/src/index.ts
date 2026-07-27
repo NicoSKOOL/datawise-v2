@@ -18,6 +18,9 @@ export interface Env {
   DATAFORSEO_PASSWORD: string;
   RESEND_API_KEY: string;
   SKOOL_WEBHOOK_SECRET: string;
+  // HMAC key for public unsubscribe links (src/email/suppression.ts). Set via
+  // `wrangler secret put UNSUBSCRIBE_SECRET`.
+  UNSUBSCRIBE_SECRET: string;
   // LLM config (external providers — Workers AI is the free fallback)
   LLM_PROVIDER: string;
   LLM_MODEL: string;
@@ -148,7 +151,8 @@ import {
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
 import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
-import { processEmailSequences, cancelUserSequences } from './email/sequences';
+import { processEmailSequences } from './email/sequences';
+import { handleUnsubscribe } from './email/unsubscribe';
 import { handleSkoolMemberJoined } from './routes/webhooks';
 import {
   handleRelatedKeywordsPublic,
@@ -306,16 +310,11 @@ export default {
         return addCors(await handleDevLogin(request, env));
       }
 
-      // Email unsubscribe (public, no auth)
-      if (path === '/api/unsubscribe' && method === 'GET') {
-        const uid = url.searchParams.get('uid');
-        if (uid) {
-          await cancelUserSequences(env, uid);
-        }
-        return new Response(
-          '<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>You will no longer receive emails from this sequence.</p></body></html>',
-          { status: 200, headers: { 'Content-Type': 'text/html' } }
-        );
+      // Email unsubscribe (public, no auth). GET renders a confirmation page and
+      // writes nothing; POST performs the opt-out. See src/email/unsubscribe.ts
+      // for why the GET must stay side-effect free (link scanners).
+      if (path === '/api/unsubscribe' && (method === 'GET' || method === 'POST')) {
+        return handleUnsubscribe(request, env);
       }
       if (path === '/health') {
         return addCors(json({ status: 'ok', environment: env.ENVIRONMENT }));

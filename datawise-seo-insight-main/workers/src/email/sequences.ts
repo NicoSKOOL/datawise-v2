@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { renderEmail, type EmailOptions } from './template';
 import { getWinbackEmail } from './winback';
+import { canEmail, unsubscribeUrlFor } from './suppression';
 
 // Day offsets for each step, keyed by sequence_type.
 const SCHEDULES: Record<string, Record<number, number>> = {
@@ -29,24 +30,23 @@ export function calloutBlock(title: string, bodyHtml: string): string {
 }
 
 export function buildSequenceEmail(
-  userId: string,
-  workerUrl: string,
+  unsubscribeUrl: string,
   opts: Omit<EmailOptions, 'unsubscribeUrl' | 'footerNote'>
 ): string {
   return renderEmail({
     ...opts,
-    unsubscribeUrl: `${workerUrl}/api/unsubscribe?uid=${userId}`,
+    unsubscribeUrl,
     footerNote: `You're getting this because you started using DataWise on a free plan. One note, practical stuff only — unsubscribe any time.`,
   });
 }
 
 // ── Email templates ───────────────────────────────────────────────────
 
-function getEmail1(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getEmail1(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const displayName = name ? name.split(' ')[0] : 'there';
   return {
     subject: "You've used all 5 free tools on DataWise",
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: "Here's what unlimited DataWise access looks like inside AI Ranking.",
       eyebrow: 'Your free plan · Step 1',
       issueLabel: 'Step 1 of 5',
@@ -78,11 +78,11 @@ function getEmail1(name: string, userId: string, workerUrl: string): { subject: 
   };
 }
 
-function getEmail2(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getEmail2(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const displayName = name ? name.split(' ')[0] : 'there';
   return {
     subject: 'How businesses find hidden keyword opportunities',
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: 'The long-tail map most teams never build — and the 4-step workflow to build it.',
       eyebrow: 'Playbook · 4 min read',
       issueLabel: 'Step 2 of 5',
@@ -110,11 +110,11 @@ function getEmail2(name: string, userId: string, workerUrl: string): { subject: 
   };
 }
 
-function getEmail3(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getEmail3(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const displayName = name ? name.split(' ')[0] : 'there';
   return {
     subject: 'Are you visible in AI search results?',
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: "Google AI Overviews, ChatGPT, Perplexity — your buyers are already there. Are you?",
       eyebrow: 'GEO · 4 min read',
       issueLabel: 'Step 3 of 5',
@@ -143,11 +143,11 @@ function getEmail3(name: string, userId: string, workerUrl: string): { subject: 
   };
 }
 
-function getEmail4(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getEmail4(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const displayName = name ? name.split(' ')[0] : 'there';
   return {
     subject: "What your competitors know that you don't",
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: "A member found 120+ keywords their rival ranked for that they had no content for.",
       eyebrow: 'Case study · 3 min read',
       issueLabel: 'Step 4 of 5',
@@ -175,11 +175,11 @@ function getEmail4(name: string, userId: string, workerUrl: string): { subject: 
   };
 }
 
-function getEmail5(name: string, userId: string, workerUrl: string): { subject: string; html: string } {
+function getEmail5(name: string, unsubscribeUrl: string): { subject: string; html: string } {
   const displayName = name ? name.split(' ')[0] : 'there';
   return {
     subject: 'Your DataWise account is still waiting',
-    html: buildSequenceEmail(userId, workerUrl, {
+    html: buildSequenceEmail(unsubscribeUrl, {
       preheader: "Last note from me — here's exactly what you get, in one page.",
       eyebrow: 'Last note · 2 min read',
       issueLabel: 'Step 5 of 5',
@@ -223,15 +223,14 @@ function getEmail5(name: string, userId: string, workerUrl: string): { subject: 
 function getCreditsEmail(
   step: number,
   name: string,
-  userId: string,
-  workerUrl: string
+  unsubscribeUrl: string
 ): { subject: string; html: string } | null {
   switch (step) {
-    case 1: return getEmail1(name, userId, workerUrl);
-    case 2: return getEmail2(name, userId, workerUrl);
-    case 3: return getEmail3(name, userId, workerUrl);
-    case 4: return getEmail4(name, userId, workerUrl);
-    case 5: return getEmail5(name, userId, workerUrl);
+    case 1: return getEmail1(name, unsubscribeUrl);
+    case 2: return getEmail2(name, unsubscribeUrl);
+    case 3: return getEmail3(name, unsubscribeUrl);
+    case 4: return getEmail4(name, unsubscribeUrl);
+    case 5: return getEmail5(name, unsubscribeUrl);
     default: return null;
   }
 }
@@ -240,11 +239,10 @@ function getSequenceEmailByType(
   type: string,
   step: number,
   name: string,
-  userId: string,
-  workerUrl: string
+  unsubscribeUrl: string
 ): { subject: string; html: string } | null {
-  if (type === 'credits_exhausted') return getCreditsEmail(step, name, userId, workerUrl);
-  if (type === 'winback') return getWinbackEmail(step, name, userId, workerUrl);
+  if (type === 'credits_exhausted') return getCreditsEmail(step, name, unsubscribeUrl);
+  if (type === 'winback') return getWinbackEmail(step, name, unsubscribeUrl);
   return null;
 }
 
@@ -316,10 +314,20 @@ export async function processEmailSequences(env: Env): Promise<{ sent: number; e
       continue;
     }
 
+    // Global opt-out. Cancel rather than skip, so a suppressed user is not
+    // re-checked every 6 hours forever.
+    if (!(await canEmail(env, row.email as string, 'marketing'))) {
+      await env.DB.prepare(
+        'UPDATE email_sequences SET cancelled = 1 WHERE id = ?'
+      ).bind(row.id).run();
+      continue;
+    }
+
     const nextStep = (row.current_step as number) + 1;
     const name = (row.name as string | null) ?? '';
     const seqType = (row.sequence_type as string) ?? 'credits_exhausted';
-    const emailContent = getSequenceEmailByType(seqType, nextStep, name, row.user_id as string, env.WORKER_URL);
+    const unsubscribeUrl = await unsubscribeUrlFor(env, row.email as string, row.user_id as string);
+    const emailContent = getSequenceEmailByType(seqType, nextStep, name, unsubscribeUrl);
 
     if (!emailContent) {
       await env.DB.prepare(
@@ -347,6 +355,13 @@ export async function processEmailSequences(env: Env): Promise<{ sent: number; e
           to: [row.email as string],
           subject: emailContent.subject,
           html: emailContent.html,
+          // RFC 8058 one-click unsubscribe. Required by Gmail/Yahoo bulk-sender
+          // rules and a direct input to complaint rate. Marketing only: never
+          // put these on a password reset.
+          headers: {
+            'List-Unsubscribe': `<${unsubscribeUrl}>`,
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          },
         }),
       });
 

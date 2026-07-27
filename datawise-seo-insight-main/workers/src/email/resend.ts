@@ -1,4 +1,14 @@
 import type { Env } from '../index';
+import { canEmail, unsubscribeUrlFor } from './suppression';
+
+// Send-kind classification for every function in this file. Only sends the user
+// explicitly asked for are 'transactional'; anything that promotes is
+// 'marketing' and must respect the global opt-out.
+//
+//   sendPasswordResetEmail    transactional  (user requested it)
+//   sendWelcomeEmail          transactional  (triggered by their own signup)
+//   sendInviteEmail           transactional  (admin-triggered, one-to-one)
+//   sendCreditsExhaustedEmail marketing      (it is an upsell)
 
 export async function sendPasswordResetEmail(
   env: Env,
@@ -6,6 +16,7 @@ export async function sendPasswordResetEmail(
   name: string | null,
   resetUrl: string
 ): Promise<boolean> {
+  if (!(await canEmail(env, to, 'transactional'))) return false;
   const displayName = name || 'there';
 
   const html = `
@@ -57,7 +68,9 @@ export async function sendCreditsExhaustedEmail(
   to: string,
   name: string | null
 ): Promise<boolean> {
+  if (!(await canEmail(env, to, 'marketing'))) return false;
   const displayName = name || 'there';
+  const unsubscribeUrl = await unsubscribeUrlFor(env, to);
 
   const html = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -74,6 +87,7 @@ export async function sendCreditsExhaustedEmail(
       <p style="color: #666; font-size: 14px; line-height: 1.5;">As a community member, you'll get unlimited access to keyword research, competitor analysis, AI visibility checks, rank tracking, and more.</p>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 32px 0;" />
       <p style="color: #999; font-size: 12px; text-align: center;">DataWise SEO by AI Ranking Skool</p>
+      <p style="color: #999; font-size: 12px; text-align: center;"><a href="${unsubscribeUrl}" style="color: #999;">Unsubscribe</a> from these emails. Account emails like password resets will still reach you.</p>
     </div>
   `;
 
@@ -89,6 +103,11 @@ export async function sendCreditsExhaustedEmail(
         to: [to],
         subject: "You've reached your free quota on DataWise",
         html,
+        // RFC 8058 one-click unsubscribe. Marketing sends only.
+        headers: {
+          'List-Unsubscribe': `<${unsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
       }),
     });
 
@@ -109,6 +128,7 @@ export async function sendWelcomeEmail(
   to: string,
   name: string | null
 ): Promise<boolean> {
+  if (!(await canEmail(env, to, 'transactional'))) return false;
   const displayName = name || 'there';
 
   const html = `
@@ -161,6 +181,7 @@ export async function sendInviteEmail(
   name: string | null,
   activateUrl: string
 ): Promise<boolean> {
+  if (!(await canEmail(env, to, 'transactional'))) return false;
   const displayName = name || 'there';
 
   const html = `
