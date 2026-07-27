@@ -120,8 +120,9 @@ describe('handleGSCSync upstream error classification', () => {
   const googleError = (status: number, reason: string, message = 'boom') => ({
     ok: false,
     status,
-    json: async () => ({}),
-    text: async () => JSON.stringify({ error: { code: status, message, errors: [{ reason }] } }),
+    json: async (): Promise<unknown> => ({}),
+    text: async (): Promise<string> =>
+      JSON.stringify({ error: { code: status, message, errors: [{ reason }] } }),
   });
 
   it('maps a lost-permission 403 to gsc_property_forbidden without retrying', async () => {
@@ -164,10 +165,10 @@ describe('handleGSCSync upstream error classification', () => {
       if (call === 1) return googleError(429, 'rateLimitExceeded');
       return {
         ok: true,
-        json: async () => ({
+        json: async (): Promise<unknown> => ({
           rows: [{ keys: ['2026-06-23'], clicks: 5, impressions: 100, ctr: 0.05, position: 4.2 }],
         }),
-        text: async () => '',
+        text: async (): Promise<string> => '',
       };
     }));
 
