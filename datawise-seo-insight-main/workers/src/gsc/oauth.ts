@@ -235,17 +235,21 @@ export async function handleGSCProperties(env: Env, userId: string): Promise<Res
   // normal "Sync" affordance comes back; Google retains ~16 months upstream,
   // so one click restores everything. Cheap: EXISTS is an index seek on
   // idx_gsc_search_data_property_date, one per property.
-  const syncedIds = propertyRows
-    .filter(p => p.kind !== 'manual' && p.last_synced_at)
-    .map(p => p.id as string);
+  //
+  // Scoped by user_id rather than an IN (...) over the property ids: D1 caps a
+  // query at 100 bound parameters, and accounts here run to 826 properties (16
+  // users are over 90), so the id-list form would hard-fail this endpoint for
+  // exactly the heaviest users. One parameter, same result.
   const emptyIds = new Set<string>();
-  if (syncedIds.length > 0) {
-    const placeholders = syncedIds.map(() => '?').join(',');
+  const hasSyncedProperty = propertyRows.some(p => p.kind !== 'manual' && p.last_synced_at);
+  if (hasSyncedProperty) {
     const empties = await env.DB.prepare(
       `SELECT p.id FROM gsc_properties p
-        WHERE p.id IN (${placeholders})
+        WHERE p.user_id = ?
+          AND p.kind != 'manual'
+          AND p.last_synced_at IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM gsc_search_data d WHERE d.property_id = p.id)`
-    ).bind(...syncedIds).all<{ id: string }>();
+    ).bind(userId).all<{ id: string }>();
     for (const row of empties.results || []) emptyIds.add(row.id);
   }
 
