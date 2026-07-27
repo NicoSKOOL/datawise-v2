@@ -43,25 +43,62 @@ function constantTimeEquals(a: string, b: string): boolean {
   return diff === 0;
 }
 
+export type VerifyFailure =
+  | 'ok'
+  | 'no_secret'
+  | 'missing_headers'
+  | 'bad_timestamp'
+  | 'timestamp_out_of_window'
+  | 'bad_secret_encoding'
+  | 'no_matching_signature';
+
+export interface VerifyResult {
+  ok: boolean;
+  reason: VerifyFailure;
+}
+
+/**
+ * Svix sends each signing header under two names: the legacy `svix-*` set and
+ * the standardized `webhook-*` set (RFC-style, used by the Standard Webhooks
+ * spec). Senders are free to emit either, so read both.
+ */
+export function readSignatureHeaders(h: Headers): {
+  id: string | null;
+  timestamp: string | null;
+  signature: string | null;
+} {
+  return {
+    id: h.get('svix-id') ?? h.get('webhook-id'),
+    timestamp: h.get('svix-timestamp') ?? h.get('webhook-timestamp'),
+    signature: h.get('svix-signature') ?? h.get('webhook-signature'),
+  };
+}
+
 export async function verifySvixSignature(
   secret: string,
   headers: { id: string | null; timestamp: string | null; signature: string | null },
   rawBody: string,
   nowSeconds: number
-): Promise<boolean> {
-  if (!secret) return false;
+): Promise<VerifyResult> {
+  // Secrets pasted through `wrangler secret put` can pick up stray whitespace
+  // or a trailing newline; neither should invalidate an otherwise valid key.
+  const cleanSecret = (secret ?? '').trim();
+  if (!cleanSecret) return { ok: false, reason: 'no_secret' };
+
   const { id, timestamp, signature } = headers;
-  if (!id || !timestamp || !signature) return false;
+  if (!id || !timestamp || !signature) return { ok: false, reason: 'missing_headers' };
 
   const ts = Number(timestamp);
-  if (!Number.isFinite(ts)) return false;
-  if (Math.abs(nowSeconds - ts) > TIMESTAMP_TOLERANCE_SECONDS) return false;
+  if (!Number.isFinite(ts)) return { ok: false, reason: 'bad_timestamp' };
+  if (Math.abs(nowSeconds - ts) > TIMESTAMP_TOLERANCE_SECONDS) {
+    return { ok: false, reason: 'timestamp_out_of_window' };
+  }
 
   let keyBytes: Uint8Array;
   try {
-    keyBytes = base64ToBytes(secret.replace(/^whsec_/, ''));
+    keyBytes = base64ToBytes(cleanSecret.replace(/^whsec_/, ''));
   } catch {
-    return false;
+    return { ok: false, reason: 'bad_secret_encoding' };
   }
 
   const key = await crypto.subtle.importKey(
@@ -79,12 +116,15 @@ export async function verifySvixSignature(
   const expected = bytesToBase64(new Uint8Array(mac));
 
   // The header may carry several versioned signatures; any match is enough.
-  for (const part of signature.split(' ')) {
-    const [version, sig] = part.split(',');
+  for (const part of signature.trim().split(/\s+/)) {
+    const comma = part.indexOf(',');
+    if (comma === -1) continue;
+    const version = part.slice(0, comma);
+    const sig = part.slice(comma + 1);
     if (version !== 'v1' || !sig) continue;
-    if (constantTimeEquals(expected, sig)) return true;
+    if (constantTimeEquals(expected, sig)) return { ok: true, reason: 'ok' };
   }
-  return false;
+  return { ok: false, reason: 'no_matching_signature' };
 }
 
 // ── Event payloads ────────────────────────────────────────────────────
@@ -197,17 +237,22 @@ export async function handleResendWebhook(request: Request, env: Env): Promise<R
   // so parsing and re-stringifying would invalidate it.
   const rawBody = await request.text();
 
-  const ok = await verifySvixSignature(
+  const verified = await verifySvixSignature(
     env.RESEND_WEBHOOK_SECRET,
-    {
-      id: request.headers.get('svix-id'),
-      timestamp: request.headers.get('svix-timestamp'),
-      signature: request.headers.get('svix-signature'),
-    },
+    readSignatureHeaders(request.headers),
     rawBody,
     Math.floor(Date.now() / 1000)
   );
-  if (!ok) return json({ error: 'invalid_signature' }, 401);
+  if (!verified.ok) {
+    // Log the failure class (never the secret or the signature) so a rejected
+    // delivery is diagnosable without redeploying a debug build.
+    console.error(
+      `Resend webhook rejected: ${verified.reason}; header names present: ${[...request.headers.keys()]
+        .filter((k) => k.includes('svix') || k.includes('webhook'))
+        .join(',') || 'none'}`
+    );
+    return json({ error: 'invalid_signature', reason: verified.reason }, 401);
+  }
 
   let event: ResendEvent;
   try {

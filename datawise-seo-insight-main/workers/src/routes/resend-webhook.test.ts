@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createTestDb } from '../test-support/d1';
-import { handleResendWebhook, verifySvixSignature, applyResendEvent } from './resend-webhook';
+import { handleResendWebhook, verifySvixSignature, applyResendEvent, readSignatureHeaders } from './resend-webhook';
 import { canEmail } from '../email/suppression';
 import type { Env } from '../index';
 
@@ -62,20 +62,27 @@ async function sign(id: string, timestamp: string, body: string): Promise<string
 
 async function post(
   event: unknown,
-  opts: { skewSeconds?: number; tamperBody?: boolean; badSig?: boolean; omitHeaders?: boolean } = {}
+  opts: {
+    skewSeconds?: number;
+    tamperBody?: boolean;
+    badSig?: boolean;
+    omitHeaders?: boolean;
+    standardHeaderNames?: boolean;
+  } = {}
 ): Promise<Response> {
   const body = JSON.stringify(event);
   const id = 'msg_2KWr3';
   const ts = String(Math.floor(Date.now() / 1000) + (opts.skewSeconds ?? 0));
   const sig = opts.badSig ? 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' : await sign(id, ts, body);
 
+  const prefix = opts.standardHeaderNames ? 'webhook' : 'svix';
   const headers: Record<string, string> = opts.omitHeaders
     ? { 'Content-Type': 'application/json' }
     : {
         'Content-Type': 'application/json',
-        'svix-id': id,
-        'svix-timestamp': ts,
-        'svix-signature': `v1,${sig}`,
+        [`${prefix}-id`]: id,
+        [`${prefix}-timestamp`]: ts,
+        [`${prefix}-signature`]: `v1,${sig}`,
       };
 
   return handleResendWebhook(
@@ -100,84 +107,72 @@ describe('Svix signature verification', () => {
   it('accepts a correctly signed payload', async () => {
     const body = '{"type":"contact.updated"}';
     const sig = await sign('msg_1', String(now), body);
-    expect(
-      await verifySvixSignature(
+    expect((await verifySvixSignature(
         SECRET,
         { id: 'msg_1', timestamp: String(now), signature: `v1,${sig}` },
         body,
         now
-      )
-    ).toBe(true);
+      )).ok).toBe(true);
   });
 
   it('accepts when the header carries several signatures and one matches', async () => {
     const body = '{"type":"contact.updated"}';
     const sig = await sign('msg_1', String(now), body);
-    expect(
-      await verifySvixSignature(
+    expect((await verifySvixSignature(
         SECRET,
         { id: 'msg_1', timestamp: String(now), signature: `v1,AAAA= v1,${sig}` },
         body,
         now
-      )
-    ).toBe(true);
+      )).ok).toBe(true);
   });
 
   it('rejects a tampered body', async () => {
     const body = '{"type":"contact.updated"}';
     const sig = await sign('msg_1', String(now), body);
-    expect(
-      await verifySvixSignature(
+    expect((await verifySvixSignature(
         SECRET,
         { id: 'msg_1', timestamp: String(now), signature: `v1,${sig}` },
         body + ' ',
         now
-      )
-    ).toBe(false);
+      )).ok).toBe(false);
   });
 
   it('rejects a stale timestamp (replay)', async () => {
     const stale = now - 10 * 60;
     const body = '{"type":"contact.updated"}';
     const sig = await sign('msg_1', String(stale), body);
-    expect(
-      await verifySvixSignature(
+    expect((await verifySvixSignature(
         SECRET,
         { id: 'msg_1', timestamp: String(stale), signature: `v1,${sig}` },
         body,
         now
-      )
-    ).toBe(false);
+      )).ok).toBe(false);
   });
 
   it('rejects a timestamp far in the future', async () => {
     const future = now + 10 * 60;
     const body = '{"type":"contact.updated"}';
     const sig = await sign('msg_1', String(future), body);
-    expect(
-      await verifySvixSignature(
+    expect((await verifySvixSignature(
         SECRET,
         { id: 'msg_1', timestamp: String(future), signature: `v1,${sig}` },
         body,
         now
-      )
-    ).toBe(false);
+      )).ok).toBe(false);
   });
 
   it('rejects missing headers, an unknown version, and an empty secret', async () => {
     const body = '{}';
     const sig = await sign('msg_1', String(now), body);
-    expect(await verifySvixSignature(SECRET, { id: null, timestamp: String(now), signature: `v1,${sig}` }, body, now)).toBe(false);
-    expect(await verifySvixSignature(SECRET, { id: 'msg_1', timestamp: null, signature: `v1,${sig}` }, body, now)).toBe(false);
-    expect(await verifySvixSignature(SECRET, { id: 'msg_1', timestamp: String(now), signature: null }, body, now)).toBe(false);
-    expect(await verifySvixSignature(SECRET, { id: 'msg_1', timestamp: String(now), signature: `v2,${sig}` }, body, now)).toBe(false);
-    expect(await verifySvixSignature('', { id: 'msg_1', timestamp: String(now), signature: `v1,${sig}` }, body, now)).toBe(false);
+    expect((await verifySvixSignature(SECRET, { id: null, timestamp: String(now), signature: `v1,${sig}` }, body, now)).ok).toBe(false);
+    expect((await verifySvixSignature(SECRET, { id: 'msg_1', timestamp: null, signature: `v1,${sig}` }, body, now)).ok).toBe(false);
+    expect((await verifySvixSignature(SECRET, { id: 'msg_1', timestamp: String(now), signature: null }, body, now)).ok).toBe(false);
+    expect((await verifySvixSignature(SECRET, { id: 'msg_1', timestamp: String(now), signature: `v2,${sig}` }, body, now)).ok).toBe(false);
+    expect((await verifySvixSignature('', { id: 'msg_1', timestamp: String(now), signature: `v1,${sig}` }, body, now)).ok).toBe(false);
   });
 
   it('rejects a non-numeric timestamp', async () => {
-    expect(
-      await verifySvixSignature(SECRET, { id: 'a', timestamp: 'not-a-number', signature: 'v1,x' }, '{}', now)
-    ).toBe(false);
+    expect((await verifySvixSignature(SECRET, { id: 'a', timestamp: 'not-a-number', signature: 'v1,x' }, '{}', now)).ok).toBe(false);
   });
 });
 
@@ -346,5 +341,70 @@ describe('applyResendEvent tolerates odd payloads', () => {
   it('ignores a missing type', async () => {
     const r = await applyResendEvent(env, { data: { email: 'x@example.com' } });
     expect(r.action).toBe('ignored');
+  });
+});
+
+describe('signature header naming and secret hygiene', () => {
+  const now = 1_700_000_000;
+
+  it('reads the standardized webhook-* header names as well as svix-*', () => {
+    const h = new Headers({
+      'webhook-id': 'msg_1',
+      'webhook-timestamp': '123',
+      'webhook-signature': 'v1,abc',
+    });
+    expect(readSignatureHeaders(h)).toEqual({
+      id: 'msg_1',
+      timestamp: '123',
+      signature: 'v1,abc',
+    });
+  });
+
+  it('prefers svix-* when both sets are present', () => {
+    const h = new Headers({
+      'svix-id': 'from-svix',
+      'svix-timestamp': '1',
+      'svix-signature': 'v1,a',
+      'webhook-id': 'from-standard',
+      'webhook-timestamp': '2',
+      'webhook-signature': 'v1,b',
+    });
+    expect(readSignatureHeaders(h).id).toBe('from-svix');
+  });
+
+  it('accepts a delivery signed under webhook-* names end to end', async () => {
+    const res = await post(
+      { type: 'email.complained', data: { to: ['standard@example.com'] } },
+      { standardHeaderNames: true }
+    );
+    expect(res.status).toBe(200);
+    expect(suppressionFor('standard@example.com')).toBeTruthy();
+  });
+
+  it('tolerates a secret with stray whitespace or a trailing newline', async () => {
+    const body = '{"type":"contact.updated"}';
+    const sig = await sign('msg_1', String(now), body);
+    const headers = { id: 'msg_1', timestamp: String(now), signature: `v1,${sig}` };
+    expect((await verifySvixSignature(`  ${SECRET}\n`, headers, body, now)).ok).toBe(true);
+  });
+
+  it('reports a distinct reason for each failure class', async () => {
+    const body = '{}';
+    const sig = await sign('msg_1', String(now), body);
+    const good = { id: 'msg_1', timestamp: String(now), signature: `v1,${sig}` };
+
+    expect((await verifySvixSignature('', good, body, now)).reason).toBe('no_secret');
+    expect((await verifySvixSignature(SECRET, { ...good, id: null }, body, now)).reason).toBe('missing_headers');
+    expect((await verifySvixSignature(SECRET, { ...good, timestamp: 'nope' }, body, now)).reason).toBe('bad_timestamp');
+    expect((await verifySvixSignature(SECRET, { ...good, timestamp: String(now - 9999) }, body, now)).reason).toBe('timestamp_out_of_window');
+    expect((await verifySvixSignature(SECRET, { ...good, signature: 'v1,AAAA=' }, body, now)).reason).toBe('no_matching_signature');
+    expect((await verifySvixSignature(SECRET, good, body, now)).reason).toBe('ok');
+  });
+
+  it('handles a base64 signature containing commas-free padding and extra spacing', async () => {
+    const body = '{"type":"contact.updated"}';
+    const sig = await sign('msg_1', String(now), body);
+    const headers = { id: 'msg_1', timestamp: String(now), signature: `  v1,AAAA=   v1,${sig}  ` };
+    expect((await verifySvixSignature(SECRET, headers, body, now)).ok).toBe(true);
   });
 });
