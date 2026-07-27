@@ -226,11 +226,38 @@ export async function handleGSCProperties(env: Env, userId: string): Promise<Res
   const propertyRows = properties.results || [];
   const hasOrphanProperties = !connection && propertyRows.some(p => p.kind !== 'manual');
 
+  // last_synced_at is written on the success path of handleGSCSync only, so a
+  // property carrying a timestamp but holding zero gsc_search_data rows means
+  // its data was destroyed *after* a good sync (the failed-disconnect bug
+  // above was one way in). Left alone the SPA renders "Synced <date>" over an
+  // all-zero dashboard and offers the user nothing to click, which reads as
+  // "the tool lost my client's data". Report those as never-synced so the
+  // normal "Sync" affordance comes back; Google retains ~16 months upstream,
+  // so one click restores everything. Cheap: EXISTS is an index seek on
+  // idx_gsc_search_data_property_date, one per property.
+  const syncedIds = propertyRows
+    .filter(p => p.kind !== 'manual' && p.last_synced_at)
+    .map(p => p.id as string);
+  const emptyIds = new Set<string>();
+  if (syncedIds.length > 0) {
+    const placeholders = syncedIds.map(() => '?').join(',');
+    const empties = await env.DB.prepare(
+      `SELECT p.id FROM gsc_properties p
+        WHERE p.id IN (${placeholders})
+          AND NOT EXISTS (SELECT 1 FROM gsc_search_data d WHERE d.property_id = p.id)`
+    ).bind(...syncedIds).all<{ id: string }>();
+    for (const row of empties.results || []) emptyIds.add(row.id);
+  }
+
   return new Response(JSON.stringify({
     connected: !!connection,
     needs_reconnect: !!(connection?.refresh_failed_at) || hasOrphanProperties,
     has_orphan_properties: hasOrphanProperties,
-    properties: propertyRows,
+    properties: propertyRows.map(p => (
+      emptyIds.has(p.id as string)
+        ? { ...p, last_synced_at: null, data_missing: true }
+        : p
+    )),
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 
@@ -308,6 +335,31 @@ export const GSC_DISCONNECT_CHUNK = 10000;
 
 export async function handleGSCDisconnect(env: Env, userId: string): Promise<Response> {
   try {
+    // Detach the one blocking reference BEFORE anything destructive runs.
+    //
+    // chat_conversations.property_id is the only FK to gsc_properties declared
+    // without an ON DELETE action (every other referencing table is CASCADE or
+    // SET NULL), so any user who has ever pointed the SEO Assistant at a
+    // property makes the final DELETE below fail with "FOREIGN KEY constraint
+    // failed". That threw *after* the chunk loop had already erased every
+    // Search Analytics row, leaving the user still connected, still holding
+    // properties whose last_synced_at claimed fresh data, and staring at an
+    // empty dashboard with nothing to click. Measured on 2026-07-27: 87
+    // properties across 46 users already in that state, 208 users one click
+    // away from it, and a ~18% failure rate on this endpoint (bug 536e8205,
+    // alex.rodrigueztx: "Search Console Will Not Sync").
+    //
+    // Nulling the reference first is a single indexed UPDATE and makes the
+    // closing batch unfailable, which restores the guarantee the comment above
+    // already claimed: nothing is destroyed unless the whole disconnect can
+    // actually complete.
+    await env.DB.prepare(
+      `UPDATE chat_conversations SET property_id = NULL
+        WHERE property_id IN (
+          SELECT id FROM gsc_properties WHERE user_id = ? AND kind != 'manual'
+        )`
+    ).bind(userId).run();
+
     // 1000-subrequest worker cap minus headroom; at 10k rows per chunk this
     // covers ~9M rows, ~10x the largest account seen.
     const maxChunks = 900;

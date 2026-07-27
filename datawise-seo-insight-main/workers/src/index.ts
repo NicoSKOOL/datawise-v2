@@ -42,7 +42,7 @@ import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetP
 import { handleDevLogin } from './auth/dev';
 import { isAllowedFrontendOrigin } from './auth/origins';
 import { authMiddleware } from './middleware/auth';
-import { recordRequestActivity, pruneAppEvents } from './activity';
+import { recordRequestActivity, pruneAppEvents, ACTIVITY_ERROR_CODE_HEADER } from './activity';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty, purgeDormantGSCData, resyncPurgedProperties } from './gsc/sync';
@@ -269,6 +269,8 @@ export default {
         }));
       }
       const newHeaders = new Headers(response.headers);
+      // Internal-only channel to the activity logger above; never ship it.
+      newHeaders.delete(ACTIVITY_ERROR_CODE_HEADER);
       Object.entries(corsHeaders).forEach(([k, v]) => newHeaders.set(k, v));
       return new Response(response.body, {
         status: response.status,
