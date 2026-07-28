@@ -284,6 +284,10 @@ export function sanitizeActivityMetadata(input: unknown): SanitizedMetadata {
   return out;
 }
 
+// Internal response header carrying a handler-supplied error code to the
+// activity logger. Stripped in index.ts before the response leaves the Worker.
+export const ACTIVITY_ERROR_CODE_HEADER = 'X-DataWise-Error-Code';
+
 export function retentionDaysForCategory(category: ActivityCategory): number {
   return category === 'product' ? 90 : 365;
 }
@@ -327,7 +331,15 @@ export async function recordRequestActivity(
       property_id: url.searchParams.get('property_id'),
       credit_cost: outcome === 'success' ? options.creditCost ?? 0 : 0,
       duration_ms: durationMs,
-      error_code: options.errorCode || (outcome === 'blocked' ? `http_${statusCode}` : null),
+      // ACTIVITY_ERROR_CODE_HEADER lets any handler attribute a failure without
+      // threading options through the single generic addCors wrapper. Until it
+      // existed every 5xx logged error_code = NULL, which is why four days of
+      // /gsc/sync failures (bug 536e8205) could not be diagnosed from D1 at all
+      // and the real upstream reason only ever reached console.error.
+      error_code:
+        options.errorCode
+        || response.headers.get(ACTIVITY_ERROR_CODE_HEADER)
+        || (outcome === 'blocked' ? `http_${statusCode}` : null),
       metadata_json: Object.keys(metadata).length ? JSON.stringify(metadata) : null,
     });
   } catch (err) {

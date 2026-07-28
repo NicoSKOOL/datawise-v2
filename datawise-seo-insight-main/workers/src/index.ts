@@ -18,6 +18,12 @@ export interface Env {
   DATAFORSEO_PASSWORD: string;
   RESEND_API_KEY: string;
   SKOOL_WEBHOOK_SECRET: string;
+  // HMAC key for public unsubscribe links (src/email/suppression.ts). Set via
+  // `wrangler secret put UNSUBSCRIBE_SECRET`.
+  UNSUBSCRIBE_SECRET: string;
+  // Svix signing secret for Resend webhooks (`whsec_...`), from the endpoint's
+  // page in the Resend dashboard. Set via `wrangler secret put RESEND_WEBHOOK_SECRET`.
+  RESEND_WEBHOOK_SECRET: string;
   // LLM config (external providers — Workers AI is the free fallback)
   LLM_PROVIDER: string;
   LLM_MODEL: string;
@@ -42,7 +48,7 @@ import { handleEmailSignup, handleEmailLogin, handleForgotPassword, handleResetP
 import { handleDevLogin } from './auth/dev';
 import { isAllowedFrontendOrigin } from './auth/origins';
 import { authMiddleware } from './middleware/auth';
-import { recordRequestActivity, pruneAppEvents } from './activity';
+import { recordRequestActivity, pruneAppEvents, ACTIVITY_ERROR_CODE_HEADER } from './activity';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty, purgeDormantGSCData, resyncPurgedProperties } from './gsc/sync';
@@ -148,8 +154,10 @@ import {
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
 import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
-import { processEmailSequences, cancelUserSequences } from './email/sequences';
+import { processEmailSequences } from './email/sequences';
+import { handleUnsubscribe } from './email/unsubscribe';
 import { handleSkoolMemberJoined } from './routes/webhooks';
+import { handleResendWebhook } from './routes/resend-webhook';
 import {
   handleRelatedKeywordsPublic,
   handleKeywordDifficultyPublic,
@@ -269,6 +277,8 @@ export default {
         }));
       }
       const newHeaders = new Headers(response.headers);
+      // Internal-only channel to the activity logger above; never ship it.
+      newHeaders.delete(ACTIVITY_ERROR_CODE_HEADER);
       Object.entries(corsHeaders).forEach(([k, v]) => newHeaders.set(k, v));
       return new Response(response.body, {
         status: response.status,
@@ -304,16 +314,11 @@ export default {
         return addCors(await handleDevLogin(request, env));
       }
 
-      // Email unsubscribe (public, no auth)
-      if (path === '/api/unsubscribe' && method === 'GET') {
-        const uid = url.searchParams.get('uid');
-        if (uid) {
-          await cancelUserSequences(env, uid);
-        }
-        return new Response(
-          '<html><body style="font-family:sans-serif;text-align:center;padding:60px"><h2>Unsubscribed</h2><p>You will no longer receive emails from this sequence.</p></body></html>',
-          { status: 200, headers: { 'Content-Type': 'text/html' } }
-        );
+      // Email unsubscribe (public, no auth). GET renders a confirmation page and
+      // writes nothing; POST performs the opt-out. See src/email/unsubscribe.ts
+      // for why the GET must stay side-effect free (link scanners).
+      if (path === '/api/unsubscribe' && (method === 'GET' || method === 'POST')) {
+        return handleUnsubscribe(request, env);
       }
       if (path === '/health') {
         return addCors(json({ status: 'ok', environment: env.ENVIRONMENT }));
@@ -328,6 +333,11 @@ export default {
       // --- Webhooks (Bearer-token auth, no CORS needed) ---
       if (path === '/webhooks/skool-member-joined' && method === 'POST') {
         return await handleSkoolMemberJoined(request, env);
+      }
+      // Resend delivery/contact events (Svix-signed). Keeps Resend's opt-out
+      // state and our email_suppressions table in sync.
+      if (path === '/webhooks/resend' && method === 'POST') {
+        return await handleResendWebhook(request, env);
       }
       // GSC callback is a public redirect from Google (uses state param for auth)
       if (path === '/gsc/callback' && method === 'GET') {

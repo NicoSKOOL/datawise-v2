@@ -108,3 +108,101 @@ describe('handleGSCSync empty-response protection', () => {
     expect(fake.batchCalls()).toBeGreaterThan(0);
   });
 });
+
+// Every upstream failure used to collapse into a generic 500 with Google's real
+// reason only in console.error, which made four days of a user's failing syncs
+// (bug 536e8205) undiagnosable from D1. These lock in the classification.
+describe('handleGSCSync upstream error classification', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const googleError = (status: number, reason: string, message = 'boom') => ({
+    ok: false,
+    status,
+    json: async (): Promise<unknown> => ({}),
+    text: async (): Promise<string> =>
+      JSON.stringify({ error: { code: status, message, errors: [{ reason }] } }),
+  });
+
+  it('maps a lost-permission 403 to gsc_property_forbidden without retrying', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-06-22', agg90Stamp: '2026-06-25' });
+    const fetchMock = vi.fn(async () => googleError(403, 'forbidden', 'User does not have sufficient permission'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('gsc_property_forbidden');
+    expect(body.google_reason).toBe('forbidden');
+    // Names the property so a user with 8 sites knows which one lost access.
+    expect(body.error).toContain('sc-domain:example.com');
+    // Not retryable: a second call would just burn quota.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Nothing was mutated — the failure happens before any DELETE.
+    expect(fake.deletedSomething()).toBe(false);
+  });
+
+  it('retries a rate-limit once, then reports gsc_rate_limited as 429', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-06-22', agg90Stamp: '2026-06-25' });
+    const fetchMock = vi.fn(async () => googleError(429, 'rateLimitExceeded'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    expect(res.status).toBe(429);
+    expect(body.code).toBe('gsc_rate_limited');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers when the retry succeeds', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-06-22', agg90Stamp: '2026-06-25' });
+    let call = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      call += 1;
+      if (call === 1) return googleError(429, 'rateLimitExceeded');
+      return {
+        ok: true,
+        json: async (): Promise<unknown> => ({
+          rows: [{ keys: ['2026-06-23'], clicks: 5, impressions: 100, ctr: 0.05, position: 4.2 }],
+        }),
+        text: async (): Promise<string> => '',
+      };
+    }));
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+  });
+
+  it('tags the response with an activity error code so app_events stops logging NULL', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-06-22', agg90Stamp: '2026-06-25' });
+    vi.stubGlobal('fetch', vi.fn(async () => googleError(403, 'forbidden')));
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+
+    expect(res.headers.get('X-DataWise-Error-Code')).toBe('gsc_property_forbidden:403:forbidden');
+  });
+
+  it('falls back to 502 gsc_upstream_error for an unclassified failure', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-06-22', agg90Stamp: '2026-06-25' });
+    // Non-JSON body: Google serves an HTML error page for some edge failures.
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 418,
+      json: async () => ({}),
+      text: async () => '<html>nope</html>',
+    })));
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    expect(res.status).toBe(502);
+    expect(body.code).toBe('gsc_upstream_error');
+    expect(body.google_status).toBe(418);
+  });
+});
