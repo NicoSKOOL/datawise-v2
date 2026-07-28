@@ -156,6 +156,8 @@ import { handleCreateManualProperty, handleDeleteManualProperty } from './routes
 import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
 import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
+import { syncResendContacts } from './email/resend-contacts';
+import { handleSyncContacts, handleSuppressionsOverview } from './routes/admin-email';
 import { handleSkoolMemberJoined } from './routes/webhooks';
 import { handleResendWebhook } from './routes/resend-webhook';
 import {
@@ -197,6 +199,33 @@ export default {
     // 08:00 UTC). KV key `rank-checks-paused` is the kill switch.
     if (event.cron === '0 8 * * 2,4,6') {
       await runScheduledRankChecks(env);
+      return;
+    }
+
+    // Daily Resend contact sync (04:00 UTC). Cursor-based and time-budgeted, so
+    // one tick handles a slice and the next resumes where it left off.
+    //
+    // OPT-IN, not opt-out: KV key `resend-sync-enabled` must be "1" or this does
+    // nothing. Pushing every user into Resend as a contact has a billing
+    // consequence (their marketing tier is priced per contact and the free
+    // allowance is 1,000; we have ~1,974 eligible), so it must never start on
+    // its own just because the code shipped. The admin endpoint stays available
+    // for a deliberate manual run regardless of this flag.
+    if (event.cron === '0 4 * * *') {
+      const enabled = await env.KV.get('resend-sync-enabled');
+      if (enabled !== '1') {
+        console.log('Resend contact sync skipped: resend-sync-enabled != 1');
+        return;
+      }
+      try {
+        const r = await syncResendContacts(env, { budgetMs: 25_000 });
+        console.log(
+          `Resend contact sync: scanned=${r.scanned} created=${r.created} updated=${r.updated} ` +
+            `skipped=${r.skipped} removed=${r.removed} errors=${r.errors} requests=${r.requests} done=${r.done}`
+        );
+      } catch (err) {
+        console.error('syncResendContacts failed:', err);
+      }
       return;
     }
 
@@ -874,6 +903,14 @@ export default {
       }
       if (path === '/api/admin/analytics/traffic' && method === 'GET') {
         return addCors(await handleTrafficAnalytics(request, env, user));
+      }
+      // Marketing-email admin: seed/refresh the Resend contact sync on demand,
+      // and read opt-out state without a SQL shell.
+      if (path === '/api/admin/email/sync-contacts' && method === 'POST') {
+        return addCors(await handleSyncContacts(request, env, user));
+      }
+      if (path === '/api/admin/email/suppressions' && method === 'GET') {
+        return addCors(await handleSuppressionsOverview(request, env, user));
       }
       if (path === '/api/admin/analytics/signups' && method === 'GET') {
         return addCors(await handleSignupAnalytics(request, env, user));
