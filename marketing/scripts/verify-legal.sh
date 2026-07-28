@@ -46,7 +46,7 @@ fi
 echo
 echo "Regression guards (pre-existing, must never break):"
 check "GA4 tag present on homepage"      contains_at_least "$DIST/index.html" "googletagmanager" 1
-check "CL0 Pages Function shipped"       test -d "$DIST/functions/CL0"
+check "CL0 Pages Function shipped"       test -f "$DIST/functions/CL0/[[path]].ts"
 
 echo
 echo "New pages built:"
@@ -81,6 +81,7 @@ echo
 echo "Stale contact address fully replaced:"
 check "no old email in privacy"          lacks "$DIST/privacy/index.html" "nico@airankingskool.com"
 check "no old email in terms"            lacks "$DIST/terms/index.html" "nico@airankingskool.com"
+check "no old email anywhere in dist"    bash -c '! grep -rq "nico@airankingskool.com" dist'
 
 echo
 echo "Publicly indexable:"
