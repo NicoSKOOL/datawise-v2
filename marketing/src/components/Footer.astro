@@ -1,5 +1,6 @@
 ---
 const currentYear = new Date().getFullYear();
+const supportEmail = 'support@datawiseseo.com';
 
 const footerLinks = {
   Product: [
@@ -19,12 +20,18 @@ const footerLinks = {
     { label: 'Join on Skool', href: 'https://www.skool.com/ai-ranking' },
     { label: 'Log in', href: 'https://datawiseseo.com/' },
   ],
+  Support: [
+    { label: 'Contact', href: '/contact' },
+    { label: 'Privacy Policy', href: '/privacy' },
+    { label: 'Terms of Service', href: '/terms' },
+    { label: 'Refund Policy', href: '/terms#refunds' },
+  ],
 };
 ---
 
 <footer class="border-t border-[var(--dw-border)] bg-[var(--dw-surface)]">
   <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
-    <div class="grid grid-cols-2 gap-8 md:grid-cols-4">
+    <div class="grid grid-cols-2 gap-8 md:grid-cols-5">
       <!-- Brand -->
       <div class="col-span-2 md:col-span-1">
         <a href="/" class="flex items-center gap-2.5" aria-label="DataWise SEO home">
@@ -39,6 +46,15 @@ const footerLinks = {
         </a>
         <p class="mt-4 text-sm text-[var(--dw-text-secondary)] max-w-xs">
           AI-powered SEO intelligence. Included with your AI Ranking community membership.
+        </p>
+        <p class="mt-4 text-sm text-[var(--dw-text-secondary)]">
+          Support:
+          <a
+            href={`mailto:${supportEmail}`}
+            class="text-[var(--dw-text)] hover:text-[var(--dw-primary-highlight)] transition-colors"
+          >
+            {supportEmail}
+          </a>
         </p>
         <a
           href="https://www.skool.com/ai-ranking"
@@ -70,10 +86,15 @@ const footerLinks = {
       ))}
     </div>
 
-    <div class="mt-12 pt-8 border-t border-[var(--dw-border)]">
+    <div class="mt-12 pt-8 border-t border-[var(--dw-border)] flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <p class="text-sm text-[var(--dw-text-muted)]">
         &copy; {currentYear} DataWise SEO. All rights reserved.
       </p>
+      <nav class="flex flex-wrap gap-x-6 gap-y-2" aria-label="Legal">
+        <a href="/privacy" class="text-sm text-[var(--dw-text-muted)] hover:text-[var(--dw-primary-highlight)] transition-colors">Privacy Policy</a>
+        <a href="/terms" class="text-sm text-[var(--dw-text-muted)] hover:text-[var(--dw-primary-highlight)] transition-colors">Terms of Service</a>
+        <a href="/contact" class="text-sm text-[var(--dw-text-muted)] hover:text-[var(--dw-primary-highlight)] transition-colors">Contact</a>
+      </nav>
     </div>
   </div>
 </footer>
