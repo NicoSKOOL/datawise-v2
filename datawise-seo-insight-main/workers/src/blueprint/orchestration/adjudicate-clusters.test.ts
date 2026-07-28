@@ -431,6 +431,73 @@ describe('adjudicateClustersHandler', () => {
     expect(dec.resolved_by).toBe('rules');
   });
 
+  it('keeps a flagged geo candidate the LLM explicitly rescues with keep', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    await insertKeyword(d1, runId, { id: 'kwRound', normalized: 'plumber round rock', volume: 100, intent: 'commercial' });
+    await seedCluster(d1, runId, { id: 'c1', primaryKeywordId: 'kwRound', memberIds: ['kwRound'] });
+    await seedNormalizeGeo(d1, runId, [{ keywordId: 'kwRound', matchedGeoTerms: ['round rock'] }]);
+
+    const ctx = await buildCtx(d1, runId, { hasKey: true, llm: scriptedLLM({ geoVerdict: () => 'keep' }) });
+    const out = (await adjudicateClustersHandler(ctx)).output as AdjudicateClustersOutput;
+
+    expect(out.geoExcluded).toBe(0);
+    expect(out.geoExcludedWithoutReview).toBe(0);
+    const excl = (await d1.prepare(`SELECT excluded_reason FROM keywords WHERE id = 'kwRound'`).first<{ excluded_reason: string | null }>())!;
+    expect(excl.excluded_reason).toBeNull();
+  });
+
+  it('excludes a flagged geo candidate the LLM never reviewed (no member key at all)', async () => {
+    // The defect this covers: with no usable verdict the flag used to be
+    // dropped, so an Austin-only brief still got a Nashville page.
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    await insertKeyword(d1, runId, { id: 'kwNash', normalized: 'drain cleaning nashville tn', volume: 100, intent: 'commercial' });
+    await seedCluster(d1, runId, { id: 'c1', primaryKeywordId: 'kwNash', memberIds: ['kwNash'] });
+    await seedNormalizeGeo(d1, runId, [{ keywordId: 'kwNash', matchedGeoTerms: ['nashville'] }]);
+
+    const ctx = await buildCtx(d1, runId); // no llm, no member key
+    const res = await adjudicateClustersHandler(ctx);
+    const out = res.output as AdjudicateClustersOutput;
+
+    expect(res.status).toBe('succeeded');
+    expect(out.skipped).toBe(true);
+    expect(out.llmCalls).toBe(0);
+    expect(out.geoExcluded).toBe(1);
+    expect(out.geoExcludedWithoutReview).toBe(1);
+    expect(out.warnings).toContain('geo_excluded_without_llm_review');
+    const excl = (await d1.prepare(`SELECT excluded_reason FROM keywords WHERE id = 'kwNash'`).first<{ excluded_reason: string | null }>())!;
+    expect(excl.excluded_reason).toBe('out_of_area');
+  });
+
+  it('interleaves geo and merge batches so a case-heavy run still reviews geo candidates', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    // One geo candidate plus far more merge cases than the 10-call budget can
+    // cover: appended-last geo would never have been looked at.
+    await insertKeyword(d1, runId, { id: 'kwGeo', normalized: 'plumber dallas', volume: 100, intent: 'commercial' });
+    await seedCluster(d1, runId, { id: 'cGeo', primaryKeywordId: 'kwGeo', memberIds: ['kwGeo'] });
+    await seedNormalizeGeo(d1, runId, [{ keywordId: 'kwGeo', matchedGeoTerms: ['dallas'] }]);
+    for (let i = 0; i < 600; i++) {
+      await seedAdjudication(d1, runId, {
+        id: `case${i}`,
+        caseType: 'merge',
+        clusterIds: ['c1', 'c2'],
+        keywordIds: ['k1', 'k2'],
+      });
+    }
+
+    const llm = scriptedLLM({ geoVerdict: () => 'keep' });
+    const ctx = await buildCtx(d1, runId, { hasKey: true, llm });
+    const out = (await adjudicateClustersHandler(ctx)).output as AdjudicateClustersOutput;
+
+    // The geo candidate got a real verdict rather than being capped: the LLM
+    // rescue kept it, which is only observable if it was actually reviewed.
+    expect(out.geoExcluded).toBe(0);
+    expect(out.geoExcludedWithoutReview).toBe(0);
+    expect(out.llmCalls).toBeGreaterThan(0);
+  });
+
   it('excludes only flagged out-of-area geo candidates and drops an emptied cluster', async () => {
     const { d1 } = createTestDb();
     const runId = await seedRun(d1);

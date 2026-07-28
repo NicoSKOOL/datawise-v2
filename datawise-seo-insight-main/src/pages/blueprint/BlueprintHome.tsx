@@ -462,7 +462,11 @@ export default function BlueprintHome() {
           body: {
             estimateId: estimate.estimateId,
             acceptedDataForSeoCeilingUsd: rawCeiling.trim(),
-            acceptedOpenRouterCeilingUsd: '0.00',
+            // Accept the estimate's own OpenRouter ceiling (cents, billed to the
+            // member's BYOK key). Hardcoding '0.00' predates the
+            // adjudicate_clusters stage and silently starved it: every case was
+            // capped at zero LLM calls because the run could reserve nothing.
+            acceptedOpenRouterCeilingUsd: estimate.totals.openRouterMaxUsd ?? '0.00',
           },
         }
       );
@@ -630,7 +634,7 @@ export default function BlueprintHome() {
                     <p>
                       Total DataForSEO: ${estimate.totals.dataForSeoMinUsd}&ndash;$
                       {estimate.totals.dataForSeoMaxUsd} &middot; OpenRouter: up to $
-                      {estimate.totals.openRouterMaxUsd}
+                      {estimate.totals.openRouterMaxUsd} (billed to your own OpenRouter key)
                     </p>
 
                     {estimate.limitations.length > 0 && (

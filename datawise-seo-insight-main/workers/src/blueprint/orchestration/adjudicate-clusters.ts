@@ -159,6 +159,10 @@ export interface AdjudicateClustersOutput {
   merged: number;
   mergeRejectedByRules: number;
   geoExcluded: number;
+  // Of geoExcluded, how many were excluded on stage 8's flag alone because no
+  // usable LLM verdict came back (call budget capped, malformed reply, or no
+  // member key). Audit signal: a high number means the valve never opened.
+  geoExcludedWithoutReview: number;
   clustersDropped: number;
   capped: number;
   insufficient: number;
@@ -179,6 +183,7 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
     merged: 0,
     mergeRejectedByRules: 0,
     geoExcluded: 0,
+    geoExcludedWithoutReview: 0,
     clustersDropped: 0,
     capped: 0,
     insufficient: 0,
@@ -257,18 +262,12 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
   //    degrading 'skipped', so a keyless run stays clean: name-based dedupe
   //    already keeps the plan correct without the adjudicator). Resolved once
   //    per stage attempt and threaded into every call below.
+  //    A keyless run does NOT return early: the LLM half (merge/split verdicts)
+  //    is skipped, but stage 8's deterministic geo flags are still applied
+  //    below, so a member with no saved key still gets a map free of cities
+  //    they do not serve.
   const byok = await resolveRunOpenRouterKey(ctx.env, d1, runId);
-  if (!ctx.env.BLUEPRINT_LLM && !byok) {
-    return {
-      output: {
-        ...baseOutput,
-        skipped: true,
-        reason: 'no_user_openrouter_key',
-        warnings: ['adjudicator_skipped_no_user_key'],
-      },
-      status: 'succeeded' as const,
-    };
-  }
+  const noProvider = !ctx.env.BLUEPRINT_LLM && !byok;
 
   // Keyword text for the prompt (case phrases + geo keywords).
   const kwTextById = new Map<string, string>();
@@ -288,7 +287,18 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
   }
 
   // 4. Batch + call, at most maxCallsPerRun LLM calls (retries counted).
-  const batches = chunk(items, casesPerCall);
+  //    Geo and merge batches INTERLEAVE. Concatenating them (geo last) meant a
+  //    run with more merge cases than call budget spent every call on merges and
+  //    reviewed no geo candidate at all, which is how an Austin-only sample run
+  //    still proposed Nashville and San Jose pages. Alternating guarantees both
+  //    kinds get looked at whatever the mix.
+  const geoBatches = chunk(geoItems, casesPerCall);
+  const caseBatches = chunk(caseItems, casesPerCall);
+  const batches: AdjItem[][] = [];
+  for (let i = 0; i < Math.max(geoBatches.length, caseBatches.length); i++) {
+    if (geoBatches[i]) batches.push(geoBatches[i] as AdjItem[]);
+    if (caseBatches[i]) batches.push(caseBatches[i] as AdjItem[]);
+  }
   const caseVerdicts = new Map<string, Verdict>();
   const geoVerdicts = new Map<string, Verdict>();
   const cappedIds = new Set<string>();
@@ -297,7 +307,7 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
   let budgetStopped = false;
 
   for (const batch of batches) {
-    if (budgetStopped || llmCalls >= maxCallsPerRun) {
+    if (noProvider || budgetStopped || llmCalls >= maxCallsPerRun) {
       for (const it of batch) cappedIds.add(it.id);
       continue;
     }
@@ -363,15 +373,24 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
 
   const mergeOutcome = await applyAcceptedClusterMerges(ctx, acceptedMerges);
 
-  // 6. Geo: exclude only flagged candidates the LLM said 'exclude' (rail).
+  // 6. Geo: stage 8 already flagged these keywords as naming a city outside the
+  //    brief's service areas on deterministic evidence, so the flag stands
+  //    unless the LLM explicitly rescues it with 'keep'. The adjudicator is a
+  //    false-positive valve, not the sole authority: making exclusion depend on
+  //    a verdict meant an unreviewed candidate (call budget capped, malformed
+  //    reply, no key at all) silently became a page for a city the business
+  //    does not serve. The rail still gates everything: only stage-8-flagged
+  //    ids are eligible.
   const flaggedGeoIds = new Set(geoItems.map((g) => g.id));
   const geoToExclude: string[] = [];
+  let geoExcludedWithoutReview = 0;
   for (const g of geoItems) {
-    if (cappedIds.has(g.id)) continue;
+    if (!geoExclusionPassesRails(g.id, flaggedGeoIds)) continue;
     const v = geoVerdicts.get(g.id);
-    if (v && v.verdict === 'exclude' && geoExclusionPassesRails(g.id, flaggedGeoIds)) {
-      geoToExclude.push(g.id);
-    }
+    const reviewed = !!v && !fallbackIds.has(g.id) && !cappedIds.has(g.id);
+    if (reviewed && v.verdict !== 'exclude') continue; // explicit LLM rescue
+    if (!reviewed) geoExcludedWithoutReview += 1;
+    geoToExclude.push(g.id);
   }
   const geoResult = await applyGeoExclusions(ctx, geoToExclude);
 
@@ -446,13 +465,17 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
   const warnings: string[] = [];
   if (cappedIds.size > 0) warnings.push('adjudications_capped');
   if (geoResult.droppedClusterIds.length > 0) warnings.push('geo_clusters_dropped');
+  if (geoExcludedWithoutReview > 0) warnings.push('geo_excluded_without_llm_review');
+  if (noProvider) warnings.push('adjudicator_skipped_no_user_key');
 
   const output: AdjudicateClustersOutput = {
     ...baseOutput,
+    ...(noProvider ? { skipped: true, reason: 'no_user_openrouter_key' } : {}),
     llmCalls,
     merged,
     mergeRejectedByRules,
     geoExcluded: geoResult.excludedKeywordIds.length,
+    geoExcludedWithoutReview,
     clustersDropped: geoResult.droppedClusterIds.length,
     capped: cappedIds.size,
     insufficient: insufficient.size,
