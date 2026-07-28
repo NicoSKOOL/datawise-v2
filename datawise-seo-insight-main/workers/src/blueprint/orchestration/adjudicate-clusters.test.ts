@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { createTestDb } from '../test-support/d1';
 import { fakeLLMProvider, pseudoVector } from '../test-support/env';
+import { encryptToken } from '../../lib/token-crypto';
+import type { ChatMessage, UserLLMConfig } from '../../llm/provider';
 import { newId, nowIso } from '../db/util';
 import { parseProjectBrief, normalizeProjectBrief } from '../domain/brief';
 import { V1_LIMITS } from '../contracts/limits';
@@ -207,16 +209,48 @@ async function seedEmbeddings(
     .run();
 }
 
+const TEST_ENCRYPTION_KEY = 'test-encryption-key-0123456789';
+const MEMBER_KEY = 'sk-or-member-key';
+// seedRun writes created_by = 'u1'; that member's key is the one this stage spends.
+const RUN_CREATOR_ID = 'u1';
+
+// Stand-in for the MAIN datawise-db holding the member's encrypted BYOK config.
+async function mainDbWithMemberKey(userId: string, apiKey: string): Promise<D1Database> {
+  const encrypted = await encryptToken(
+    JSON.stringify({ provider: 'openrouter', api_key: apiKey }),
+    TEST_ENCRYPTION_KEY
+  );
+  const rows = new Map<string, string>([[userId, encrypted]]);
+  return {
+    prepare(_sql: string) {
+      const make = (args: unknown[]): unknown => ({
+        bind: (...a: unknown[]) => make(a),
+        first: async () => {
+          const found = rows.get(String(args[0]));
+          return found ? { config_encrypted: found } : null;
+        },
+      });
+      return make([]);
+    },
+  } as unknown as D1Database;
+}
+
 async function buildCtx(
   d1: D1Database,
   runId: string,
-  opts: { llm?: unknown; hasKey?: boolean; r2?: R2Bucket; kv?: KVNamespace } = {}
+  opts: { llm?: unknown; hasKey?: boolean; memberKey?: string; r2?: R2Bucket; kv?: KVNamespace } = {}
 ): Promise<StageContext> {
   const parsed = parseProjectBrief(SAMPLE_BRIEF_INPUT);
   const normalizedBrief = await normalizeProjectBrief(parsed, V1_LIMITS);
   const env: any = { BLUEPRINT_DB: d1, ...providerFields(opts.r2 ?? fakeR2(), opts.kv ?? fakeKv()) };
   if (opts.llm) env.BLUEPRINT_LLM = opts.llm;
-  if (opts.hasKey) env.OPENROUTER_API_KEY = 'test-key';
+  // hasKey means "the member who created this run saved a BYOK OpenRouter key",
+  // which is the only key this stage may spend: a main-DB row encrypted with
+  // ENCRYPTION_KEY, exactly as routes/llm-config.ts writes it.
+  if (opts.hasKey) {
+    env.ENCRYPTION_KEY = TEST_ENCRYPTION_KEY;
+    env.DB = await mainDbWithMemberKey(RUN_CREATOR_ID, opts.memberKey ?? MEMBER_KEY);
+  }
   return {
     env,
     d1,
@@ -262,23 +296,50 @@ async function decisionOf(d1: D1Database, caseId: string): Promise<{ decision: s
 }
 
 describe('adjudicateClustersHandler', () => {
-  it('benign skip (succeeded) with a warning when no OpenRouter key/provider is available', async () => {
+  it('benign skip (succeeded) with a warning when the member saved no OpenRouter key', async () => {
     const { d1 } = createTestDb();
     const runId = await seedRun(d1);
     await seedAdjudication(d1, runId, { id: 'case1', caseType: 'merge', clusterIds: ['c1', 'c2'], keywordIds: ['k1', 'k2'] });
 
-    const ctx = await buildCtx(d1, runId); // no llm, no key
+    const ctx = await buildCtx(d1, runId); // no llm, no member key
     const res = await adjudicateClustersHandler(ctx);
     expect(res.status).toBe('succeeded');
     const out = res.output as AdjudicateClustersOutput;
     expect(out.skipped).toBe(true);
-    expect(out.reason).toBe('no_openrouter_key');
-    expect(out.warnings).toContain('adjudicator_skipped_no_key');
+    expect(out.reason).toBe('no_user_openrouter_key');
+    expect(out.warnings).toContain('adjudicator_skipped_no_user_key');
 
     // Case untouched, no provider usage written.
     expect((await decisionOf(d1, 'case1')).decision).toBe('pending');
     const usage = await d1.prepare(`SELECT COUNT(*) AS n FROM provider_usage WHERE run_id = ?`).bind(runId).first<{ n: number }>();
     expect(usage?.n).toBe(0);
+  });
+
+  it("bills the run creator's own key: the member key reaches the provider config", async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1);
+    await seedAdjudication(d1, runId, { id: 'case1', caseType: 'merge', clusterIds: ['c1', 'c2'], keywordIds: ['k1', 'k2'] });
+
+    // Records the config the call layer resolved, which is what decides whose
+    // OpenRouter account pays.
+    const seen: (UserLLMConfig | undefined)[] = [];
+    const capturingLLM = {
+      async chat(): Promise<ReadableStream> {
+        throw new Error('not implemented');
+      },
+      async chatComplete(_messages: ChatMessage[], _env: unknown, config?: UserLLMConfig) {
+        seen.push(config);
+        return { text: '{"verdicts":[]}', usage: { input_tokens: 10, output_tokens: 20 } };
+      },
+    };
+
+    const ctx = await buildCtx(d1, runId, { hasKey: true, memberKey: 'sk-or-alice', llm: capturingLLM });
+    const res = await adjudicateClustersHandler(ctx);
+
+    expect(res.status).toBe('succeeded');
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen[0]?.api_key).toBe('sk-or-alice');
+    expect(seen[0]?.provider).toBe('openrouter');
   });
 
   it('succeeds trivially when there is nothing to adjudicate', async () => {

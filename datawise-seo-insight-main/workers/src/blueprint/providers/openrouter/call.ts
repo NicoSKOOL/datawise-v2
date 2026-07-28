@@ -29,6 +29,11 @@ export interface OpenRouterCallSpec {
   ceilingTokens: number;
   // Truncation-log route tag for chatCompleteEscalating.
   label: string;
+  // The run creator's own OpenRouter key (providers/openrouter/byok.ts).
+  // Required in production: this module refuses to call without it rather than
+  // let member inference spend fall back to a platform-managed key. Only the
+  // env.BLUEPRINT_LLM test seam may stand in for it.
+  apiKey?: string;
   responseFormat?: 'json';
   temperature?: number;
 }
@@ -54,6 +59,17 @@ export async function blueprintOpenRouterCall(
 ): Promise<OpenRouterCallResult> {
   const { d1, env, runId } = ctx;
 
+  // BYOK gate, before any budget is reserved: no member key (and no scripted
+  // test provider) means we do not call at all. Callers resolve the key once
+  // per stage and skip gracefully; reaching here without one is a programming
+  // error, and failing loud is the only way this stays impossible to bill to
+  // the platform's account by accident.
+  if (!env.BLUEPRINT_LLM && !spec.apiKey) {
+    throw new Error(
+      'blueprintOpenRouterCall: no member OpenRouter key for this run (BYOK required, no server-key fallback)'
+    );
+  }
+
   // Reserve first. Attempt-scoped operation key so a retry after a released
   // reservation reserves fresh instead of colliding with the prior attempt's
   // terminal reservation row (same convention as blueprintDfsCall).
@@ -66,8 +82,13 @@ export async function blueprintOpenRouterCall(
   );
 
   // Test seam: env.BLUEPRINT_LLM is a scripted provider in unit tests; production
-  // resolves the real OpenRouter adapter with the env-managed key fallback.
-  const config = { provider: 'openrouter' as const, model: spec.model };
+  // resolves the real OpenRouter adapter against the member's own key, which
+  // getLLMProvider prefers over any env-managed key (llm/provider.ts).
+  const config = {
+    provider: 'openrouter' as const,
+    model: spec.model,
+    ...(spec.apiKey ? { api_key: spec.apiKey } : {}),
+  };
   const provider: LLMProvider = env.BLUEPRINT_LLM ?? getLLMProvider(env as unknown as Env, config);
 
   const startedAt = Date.now();

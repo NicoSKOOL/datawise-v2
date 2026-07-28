@@ -55,6 +55,30 @@ const SPEC = {
 };
 
 describe('blueprintOpenRouterCall', () => {
+  it('refuses to call (and reserves nothing) when no member BYOK key was resolved', async () => {
+    const { d1 } = createTestDb();
+    const runId = await seedRun(d1, 1_000_000);
+    // No BLUEPRINT_LLM seam and no spec.apiKey: the only remaining way to reach
+    // OpenRouter would be a platform-managed key, which this module must never
+    // spend on a member's behalf.
+    const ctx = ctxFor(d1, runId, undefined);
+
+    await expect(
+      blueprintOpenRouterCall(ctx, { ...SPEC, messages: [{ role: 'user', content: 'hi' }] })
+    ).rejects.toThrow(/BYOK required/);
+
+    const usage = await d1
+      .prepare(`SELECT COUNT(*) AS n FROM provider_usage WHERE run_id = ?`)
+      .bind(runId)
+      .first<{ n: number }>();
+    expect(usage?.n).toBe(0);
+    const run = await d1
+      .prepare(`SELECT openrouter_reserved_usd_micro AS reserved FROM research_runs WHERE id = ?`)
+      .bind(runId)
+      .first<{ reserved: number }>();
+    expect(run?.reserved).toBe(0);
+  });
+
   it('reserves, calls, reconciles, and writes a provider_usage row tagged openrouter', async () => {
     const { d1 } = createTestDb();
     const runId = await seedRun(d1, 1_000_000);

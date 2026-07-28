@@ -4,6 +4,7 @@ import type { NormalizedProjectBrief } from '../contracts/types';
 import { PAGE_PLAN_RULESET_V1 } from '../domain/page-plan/ruleset';
 import { rulesetVersionForStage } from '../domain/ruleset';
 import { blueprintOpenRouterCall } from '../providers/openrouter/call';
+import { resolveRunOpenRouterKey } from '../providers/openrouter/byok';
 import { OPENROUTER_ADJUDICATION_CALL_USD_MICRO } from '../providers/dataforseo/costs';
 import {
   applyAcceptedClusterMerges,
@@ -251,17 +252,19 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
     return { output: baseOutput, status: 'succeeded' as const };
   }
 
-  // 3. No key + no injected provider = benign skip (succeeded, not a run-
+  // 3. The member's own OpenRouter key (BYOK) pays for this stage. No saved key
+  //    and no injected test provider = benign skip (succeeded, not a run-
   //    degrading 'skipped', so a keyless run stays clean: name-based dedupe
-  //    already keeps the plan correct without the adjudicator).
-  const providerAvailable = !!ctx.env.BLUEPRINT_LLM || !!ctx.env.OPENROUTER_API_KEY;
-  if (!providerAvailable) {
+  //    already keeps the plan correct without the adjudicator). Resolved once
+  //    per stage attempt and threaded into every call below.
+  const byok = await resolveRunOpenRouterKey(ctx.env, d1, runId);
+  if (!ctx.env.BLUEPRINT_LLM && !byok) {
     return {
       output: {
         ...baseOutput,
         skipped: true,
-        reason: 'no_openrouter_key',
-        warnings: ['adjudicator_skipped_no_key'],
+        reason: 'no_user_openrouter_key',
+        warnings: ['adjudicator_skipped_no_user_key'],
       },
       status: 'succeeded' as const,
     };
@@ -313,6 +316,7 @@ export const adjudicateClustersHandler: StageHandler = async (ctx: StageContext)
           label: 'blueprint/adjudicate-clusters',
           responseFormat: 'json',
           temperature: 0,
+          ...(byok ? { apiKey: byok.apiKey } : {}),
         });
         llmCalls += 1;
         const parsed = parseVerdicts(res.text);

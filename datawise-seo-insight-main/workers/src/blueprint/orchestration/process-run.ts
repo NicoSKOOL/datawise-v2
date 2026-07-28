@@ -38,15 +38,19 @@ export interface BlueprintProviderEnv extends BlueprintQueueEnv {
   // Cloudflare's full Ai type, matching how this file already widens
   // BlueprintQueueEnv with just the fields real handlers need.
   AI: { run(model: string, input: Record<string, unknown>): Promise<unknown> };
-  // OpenRouter key for the LLM cluster adjudicator (adjudicate_clusters stage,
-  // Phase D). Optional: when absent the adjudicator is a benign no-op skip, so
-  // every non-adjudicator code path (and the full worker Env, which always
-  // carries it) still satisfies this interface.
-  OPENROUTER_API_KEY?: string;
+  // Main datawise-db + the key its BYOK configs are encrypted with. The LLM
+  // cluster adjudicator (adjudicate_clusters, Phase D) bills every OpenRouter
+  // call to the run creator's OWN key, read from user_llm_configs via
+  // providers/openrouter/byok.ts. Deliberately no OPENROUTER_API_KEY here: a
+  // server-key fallback would move member inference spend onto the platform.
+  // Both optional so keyless envs (tests) still satisfy the interface; when
+  // either is absent the adjudicator is a benign no-op skip.
+  DB?: D1Database;
+  ENCRYPTION_KEY?: string;
   // Test seam for the adjudicator's LLM, mirroring the AI binding above: unit
   // tests inject a scripted LLMProvider here so the real handler runs without a
-  // network call. Production leaves this undefined and the call module falls
-  // back to getLLMProvider(env, { provider: 'openrouter', ... }).
+  // network call. Production leaves this undefined and the call module resolves
+  // getLLMProvider(env, { provider: 'openrouter', api_key: <member key>, ... }).
   BLUEPRINT_LLM?: LLMProvider;
 }
 
