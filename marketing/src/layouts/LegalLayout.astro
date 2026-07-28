@@ -1,0 +1,104 @@
+---
+import BaseLayout from './BaseLayout.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  lastUpdated?: string;
+}
+
+const { title, description, lastUpdated } = Astro.props;
+---
+
+<BaseLayout title={title} description={description}>
+  <article class="legal-page">
+    <div class="legal-container">
+      <header class="legal-header">
+        <h1>{title}</h1>
+        {lastUpdated && <p class="legal-meta">Last updated: {lastUpdated}</p>}
+      </header>
+
+      <div class="legal-prose">
+        <slot />
+      </div>
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .legal-page {
+    padding: 7rem 0 5rem;
+  }
+  .legal-container {
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+  @media (min-width: 640px) {
+    .legal-container { padding: 0 1.5rem; }
+  }
+  .legal-header {
+    margin-bottom: 3rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--dw-border);
+  }
+  .legal-header h1 {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--dw-text);
+    letter-spacing: -0.02em;
+  }
+  .legal-meta {
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+    color: var(--dw-text-muted);
+  }
+  .legal-prose {
+    color: var(--dw-text-secondary);
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+
+  /* Slotted content carries the child page's scope hash, not this layout's,
+     so descendants must be targeted with :global(). Anchoring every rule
+     under .legal-prose keeps them scoped to this layout's wrapper. */
+  .legal-prose :global(h2) {
+    font-family: var(--font-headline, 'Manrope', sans-serif);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--dw-text);
+    margin-top: 2.75rem;
+    margin-bottom: 1rem;
+    scroll-margin-top: 6rem;
+  }
+  .legal-prose :global(p) {
+    margin-bottom: 1.25rem;
+  }
+  .legal-prose :global(ul) {
+    list-style: disc;
+    padding-left: 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .legal-prose :global(li) {
+    margin-bottom: 0.5rem;
+  }
+  .legal-prose :global(a) {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+  .legal-prose :global(a:hover) {
+    color: var(--color-primary-light, var(--color-primary));
+  }
+  .legal-prose :global(strong) {
+    color: var(--dw-text);
+  }
+  .legal-prose :global(code) {
+    background: var(--dw-surface);
+    border: 1px solid var(--dw-border);
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    font-size: 0.9em;
+  }
+</style>

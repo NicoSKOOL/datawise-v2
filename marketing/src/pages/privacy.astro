@@ -1,0 +1,166 @@
+---
+import LegalLayout from '../layouts/LegalLayout.astro';
+
+const lastUpdated = 'July 28, 2026';
+---
+
+<LegalLayout
+  title="Privacy Policy"
+  description="How DataWise SEO collects, uses, and protects your personal information."
+  lastUpdated={lastUpdated}
+>
+  <p>
+    This Privacy Policy explains how DataWise SEO ("DataWise", "we", "us", "our") collects, uses, and protects
+    information when you use our marketing website at
+    <a href="https://www.datawiseseo.com">www.datawiseseo.com</a> and our application at
+    <a href="https://datawiseseo.com">datawiseseo.com</a> (together, the "Service").
+  </p>
+  <p>
+    DataWise SEO is operated by <strong>AI Ranking SpA</strong>, a company registered in Chile, represented by
+    Nicolas Gorrono. If you have any questions about this policy, contact us at
+    <a href="mailto:support@datawiseseo.com">support@datawiseseo.com</a>.
+  </p>
+
+  <h2>1. Information We Collect</h2>
+  <ul>
+    <li>
+      <strong>Account information.</strong> When you sign in with Google, we receive your name, email address,
+      and profile picture via Google OAuth.
+    </li>
+    <li>
+      <strong>Google Search Console data.</strong> If you connect a GSC property, we read (never write) your
+      search queries, impressions, clicks, pages, and country data to power our analytics features.
+    </li>
+    <li>
+      <strong>Research inputs.</strong> The keywords, domains, and URLs you enter into our tools.
+    </li>
+    <li>
+      <strong>Billing information.</strong> If you subscribe to a paid plan, our payment provider Creem collects
+      your payment details and billing address. We receive only a customer reference, your billing email, the plan
+      you chose, and the status and history of your subscription.
+    </li>
+    <li>
+      <strong>Session and technical data.</strong> Session tokens (stored in Cloudflare KV and D1), IP address,
+      browser type, and standard server logs.
+    </li>
+    <li>
+      <strong>Marketing site analytics.</strong> Google Analytics 4 (measurement ID G-5VDSWWJ021) on the
+      marketing site only, for aggregate traffic measurement.
+    </li>
+    <li>
+      <strong>Email.</strong> Your email address is used for transactional messages (welcome emails, service
+      notifications) delivered through Resend.
+    </li>
+  </ul>
+  <p>
+    We do <strong>not</strong> receive or store your full payment card number. Card details are entered directly
+    into Creem's hosted checkout and never reach DataWise servers. See Section 11.
+  </p>
+
+  <h2>2. How We Use Your Information</h2>
+  <ul>
+    <li>To authenticate you and keep you signed in.</li>
+    <li>To deliver the SEO analytics features you request (keyword research, rank tracking, AI visibility, backlinks, GSC insights, and the AI SEO assistant).</li>
+    <li>To manage your subscription, process payments through our payment provider, and issue invoices and refunds.</li>
+    <li>To send transactional emails relating to your account.</li>
+    <li>To measure and improve our marketing site.</li>
+    <li>To secure, debug, and improve the Service.</li>
+  </ul>
+  <p>
+    We do not sell or rent your personal data. We do not use your data to train AI models.
+  </p>
+
+  <h2>3. Legal Bases for Processing (GDPR)</h2>
+  <p>If you are in the European Economic Area or United Kingdom, we process personal data under the following legal bases:</p>
+  <ul>
+    <li><strong>Contract:</strong> to provide the Service you signed up for and to bill you for it.</li>
+    <li><strong>Legitimate interests:</strong> security, analytics, and service improvement.</li>
+    <li><strong>Consent:</strong> where required (e.g., analytics cookies).</li>
+    <li><strong>Legal obligation:</strong> to comply with applicable law, including accounting and tax rules.</li>
+  </ul>
+
+  <h2>4. Third-Party Processors</h2>
+  <p>We rely on the following trusted sub-processors:</p>
+  <ul>
+    <li><strong>Google:</strong> OAuth sign-in, Google Search Console API, Google Analytics 4.</li>
+    <li><strong>DataForSEO:</strong> upstream SEO data API. Your research queries (keywords, domains, URLs) are sent to DataForSEO.</li>
+    <li><strong>Cloudflare:</strong> hosting, DNS, KV storage, the D1 database, and email routing for our support address.</li>
+    <li><strong>Creem:</strong> payment processing and subscription billing for paid plans.</li>
+    <li><strong>Resend:</strong> transactional email delivery.</li>
+    <li><strong>OpenAI, Anthropic, and Google Gemini:</strong> LLM providers used by the AI SEO assistant. Prompts you send to the assistant are transmitted to these providers for inference.</li>
+    <li><strong>Skool:</strong> community membership management, and billing for members who access DataWise through the AI Ranking community.</li>
+  </ul>
+
+  <h2>5. Cookies and Tracking</h2>
+  <p>
+    The marketing site uses Google Analytics 4 cookies (<code>_ga</code>, <code>_ga_*</code>) to measure aggregate
+    traffic. You can opt out via the
+    <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener">Google Analytics opt-out browser add-on</a>.
+    The application uses essential session cookies only, with no advertising trackers.
+  </p>
+
+  <h2>6. Data Retention</h2>
+  <ul>
+    <li>Account data is retained while your account is active and deleted on request or after prolonged inactivity.</li>
+    <li>GSC data is cached to power features and purged when you disconnect your property.</li>
+    <li>Billing and transaction records are retained for as long as required by applicable accounting and tax law, even after you close your account.</li>
+    <li>Session tokens expire automatically.</li>
+    <li>Server logs are retained for a rolling period of up to 90 days.</li>
+  </ul>
+
+  <h2>7. Data Security</h2>
+  <p>
+    We protect your data with industry-standard safeguards: HTTPS/TLS in transit, encrypted OAuth tokens at rest,
+    access controls, and the principle of least privilege. No system is 100% secure; we cannot guarantee absolute
+    security but we take reasonable steps to protect your information.
+  </p>
+
+  <h2>8. International Transfers</h2>
+  <p>
+    Your data may be processed in the United States, the European Union, Australia, and other jurisdictions where
+    our sub-processors operate. Where required, we rely on Standard Contractual Clauses for international transfers.
+  </p>
+
+  <h2>9. Your Rights</h2>
+  <p><strong>If you are in the EU/UK (GDPR):</strong> you have the right to access, rectify, erase, port, restrict, and object to the processing of your personal data, to withdraw consent, and to lodge a complaint with your supervisory authority.</p>
+  <p><strong>If you are in California (CCPA/CPRA):</strong> you have the right to know, delete, correct, and opt out of the sale of your personal information. We do not sell personal information, and we will not discriminate against you for exercising your rights.</p>
+  <p><strong>If you are in Chile:</strong> you have rights of access, rectification, cancellation, and objection to the processing of your personal data under Chilean data protection law (Law 19.628, as updated by Law 21.719). You may contact us directly or lodge a complaint with the relevant supervisory authority.</p>
+  <p>
+    To exercise any of these rights, email <a href="mailto:support@datawiseseo.com">support@datawiseseo.com</a>.
+    We aim to respond within 30 days.
+  </p>
+
+  <h2>10. Children</h2>
+  <p>
+    The Service is not directed to children under 13 (or under 16 in the EU). We do not knowingly collect data
+    from minors. If you believe a minor has provided us with personal data, please contact us for removal.
+  </p>
+
+  <h2>11. Billing</h2>
+  <p>
+    If you subscribe to a paid DataWise plan, payments are processed by <strong>Creem</strong>. You enter your
+    payment details directly into Creem's hosted checkout, and Creem processes them for that purpose under its own
+    privacy policy. DataWise receives only the billing information described in Section 1 and never receives your
+    full card number. See <a href="https://www.creem.io/privacy" target="_blank" rel="noopener">Creem's Privacy Policy</a>.
+  </p>
+  <p>
+    If instead you access DataWise as a benefit of paid membership in the AI Ranking community, Skool processes
+    those payments, refunds, and cancellations under its own terms. See
+    <a href="https://www.skool.com/legal" target="_blank" rel="noopener">Skool's Privacy Policy</a>.
+  </p>
+
+  <h2>12. Changes to This Policy</h2>
+  <p>
+    We may update this Privacy Policy from time to time. Material changes will be announced by email or in-app
+    notice. Your continued use of the Service after changes become effective constitutes acceptance of the
+    revised policy.
+  </p>
+
+  <h2>13. Contact</h2>
+  <p>
+    AI Ranking SpA<br />
+    Nicolas Gorrono<br />
+    Chile<br />
+    Email: <a href="mailto:support@datawiseseo.com">support@datawiseseo.com</a>
+  </p>
+</LegalLayout>
