@@ -1,4 +1,9 @@
 import { api } from './api';
+import type { LlmHistoricalItem } from './llm-historical';
+
+export interface LlmHistoricalResult {
+  items: LlmHistoricalItem[];
+}
 
 export interface LlmMentionTarget {
   domain?: string;
@@ -209,6 +214,15 @@ interface KeywordVolumeRequestBody {
   language_code?: string;
 }
 
+interface HistoricalRequestBody {
+  target: LlmMentionTarget[];
+  platform?: 'google' | 'chat_gpt';
+  location_code?: number;
+  language_code?: string;
+  date_from?: string;
+  date_to?: string;
+}
+
 interface ApiEnvelope<T> {
   data: T;
   cost: number;
@@ -260,6 +274,14 @@ export async function fetchLlmTopPages(body: TopPagesRequestBody): Promise<LlmTo
 
 export async function fetchLlmKeywordVolume(body: KeywordVolumeRequestBody): Promise<LlmKeywordVolumeResult> {
   const res = await api<ApiEnvelope<LlmKeywordVolumeResult | null>>('/api/llm-mentions/keyword-volume', {
+    method: 'POST',
+    body,
+  });
+  return res.data ?? { items: [] };
+}
+
+export async function fetchLlmHistorical(body: HistoricalRequestBody): Promise<LlmHistoricalResult> {
+  const res = await api<ApiEnvelope<LlmHistoricalResult | null>>('/api/llm-mentions/historical', {
     method: 'POST',
     body,
   });

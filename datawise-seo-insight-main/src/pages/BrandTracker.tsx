@@ -22,6 +22,7 @@ import {
   fetchLlmAggregate,
   fetchLlmTopDomains,
   fetchLlmSearch,
+  fetchLlmHistorical,
   sumDim,
   type LlmSearchRow,
 } from '@/lib/llm-mentions';
@@ -502,32 +503,28 @@ export default function BrandTracker() {
     staleTime: 60 * 1000,
   });
 
-  // Dedicated chart fetch, decoupled from the list pagination. The "Mentions
-  // over time" chart aggregates client-side, so binding it to the paginated
-  // list made the curve grow on every "Load more" (bug 1175b102 — "every time
-  // I click ... the graph is changing"). These queries pull a single fixed
-  // sample (up to the worker's 1000 cap) once per analyze, so the chart is
-  // stable and representative regardless of how far the list is paged. For
-  // domains under 1000 mentions this is the complete set.
+  // Trend chart runs on the Historical endpoint, not the mention list. DFS
+  // returns exact monthly totals, so the curve no longer depends on how many
+  // rows the list has loaded (bug 1175b102) and one call replaces a 1000-row
+  // search. Platforms are requested separately because DFS merges them
+  // otherwise, which would break the toggles.
   const googleChart = useQuery({
-    queryKey: ['llm-search-chart', activeDomain, 'google'],
+    queryKey: ['llm-historical', activeDomain, 'google'],
     queryFn: () =>
-      fetchLlmSearch({
+      fetchLlmHistorical({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'google',
-        limit: 1000,
       }),
     enabled: analysisEnabled && googleActive,
     staleTime: 5 * 60 * 1000,
   });
 
   const chatgptChart = useQuery({
-    queryKey: ['llm-search-chart', activeDomain, 'chat_gpt'],
+    queryKey: ['llm-historical', activeDomain, 'chat_gpt'],
     queryFn: () =>
-      fetchLlmSearch({
+      fetchLlmHistorical({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'chat_gpt',
-        limit: 1000,
       }),
     enabled: analysisEnabled && chatgptActive,
     staleTime: 5 * 60 * 1000,
@@ -567,22 +564,6 @@ export default function BrandTracker() {
     const total = g + c;
     return total > 0 ? total : undefined;
   }, [googleActive, chatgptActive, googleSearch.data, chatgptSearch.data]);
-
-  // Chart data comes only from the dedicated chart fetch (never the paginated
-  // list), so it never shifts when the user clicks "Load more". Bucketing in
-  // MentionsTrendChart is order-independent, so no sort is needed here.
-  const chartRows = useMemo<LlmSearchRow[]>(() => {
-    const g = googleActive ? googleChart.data?.items || [] : [];
-    const c = chatgptActive ? chatgptChart.data?.items || [] : [];
-    return [...g, ...c];
-  }, [googleActive, chatgptActive, googleChart.data, chatgptChart.data]);
-
-  const chartTotal = useMemo<number | undefined>(() => {
-    const g = googleActive ? googleChart.data?.total_count ?? 0 : 0;
-    const c = chatgptActive ? chatgptChart.data?.total_count ?? 0 : 0;
-    const total = g + c;
-    return total > 0 ? total : undefined;
-  }, [googleActive, chatgptActive, googleChart.data, chatgptChart.data]);
 
   const hasMoreToken =
     (googleActive && !!googleToken) || (chatgptActive && !!chatgptToken);
@@ -832,8 +813,8 @@ export default function BrandTracker() {
 
       <div id="brand-tracker-trend-export">
         <MentionsTrendChart
-          rows={chartRows}
-          totalCount={chartTotal}
+          googleItems={googleActive ? googleChart.data?.items : undefined}
+          chatgptItems={chatgptActive ? chatgptChart.data?.items : undefined}
           loading={analysisEnabled && (googleChart.isLoading || chatgptChart.isLoading)}
           enabled={analysisEnabled}
         />

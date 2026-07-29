@@ -116,7 +116,7 @@ import {
 import { handleRedeemPromo, handlePromoStatus } from './routes/promo';
 import {
   handleAggregate, handleCrossAggregate, handleSearch,
-  handleTopDomains, handleTopPages, handleKeywordVolume,
+  handleTopDomains, handleTopPages, handleKeywordVolume, handleHistorical,
 } from './routes/llm-mentions';
 import {
   handleBacklinksSummary, handleBacklinksTimeseries, handleBacklinksList,
@@ -984,6 +984,9 @@ export default {
       }
       if (path === '/api/llm-mentions/keyword-volume' && method === 'POST') {
         return await withCredit(() => handleKeywordVolume(request, env, user.id), creditCostForRoute(path));
+      }
+      if (path === '/api/llm-mentions/historical' && method === 'POST') {
+        return await withCredit(() => handleHistorical(request, env, user.id), creditCostForRoute(path));
       }
 
       // --- Backlinks (credit-gated) ---

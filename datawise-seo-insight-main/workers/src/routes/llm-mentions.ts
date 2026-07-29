@@ -241,3 +241,61 @@ export async function handleKeywordVolume(request: Request, env: Env, _userId: s
     return json({ error: 'DataForSEO request failed', detail: err instanceof Error ? err.message : String(err) }, 502);
   }
 }
+
+// DFS only holds LLM mention history from this month forward. Sending an
+// earlier date_from returns a task error, so clamp instead of failing.
+const HISTORICAL_MIN_DATE = '2025-08-01';
+
+export function buildHistoricalTask(
+  body: Record<string, unknown>
+): { task?: Record<string, unknown>; error?: string } {
+  const { target, location_code = 2840, language_code = 'en', date_from, ...rest } = body;
+
+  if (!Array.isArray(target) || target.length === 0) {
+    return { error: 'target is required and must be a non-empty array' };
+  }
+  if (target.length > 10) {
+    return { error: 'target accepts at most 10 items' };
+  }
+
+  const clampedFrom =
+    typeof date_from === 'string' && date_from < HISTORICAL_MIN_DATE
+      ? HISTORICAL_MIN_DATE
+      : date_from;
+
+  const task: Record<string, unknown> = { target, location_code, language_code, ...rest };
+  if (clampedFrom) task.date_from = clampedFrom;
+  return { task };
+}
+
+// POST /api/llm-mentions/historical
+export async function handleHistorical(request: Request, env: Env, _userId: string): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { task, error } = buildHistoricalTask(body);
+  if (error || !task) {
+    return json({ error }, 400);
+  }
+
+  try {
+    const data = await dataforseoRequestCached(
+      env,
+      '/ai_optimization/llm_mentions/historical/live',
+      [task],
+      { ttlSeconds: 86400 }
+    );
+    const taskError = getTaskError(data);
+    if (taskError) {
+      return json({ error: 'DataForSEO request failed', detail: taskError }, 502);
+    }
+    const result = extractResult(data);
+    return json({ data: result, cost: (data as Record<string, unknown>)?.cost });
+  } catch (err) {
+    return json({ error: 'DataForSEO request failed', detail: err instanceof Error ? err.message : String(err) }, 502);
+  }
+}

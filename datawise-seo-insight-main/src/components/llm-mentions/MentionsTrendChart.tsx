@@ -13,81 +13,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Skeleton } from '@/components/ui/skeleton';
 import { Info } from 'lucide-react';
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { LlmSearchRow } from '@/lib/llm-mentions';
+import { mergeHistoricalSeries, type LlmHistoricalItem } from '@/lib/llm-historical';
 
 interface MentionsTrendChartProps {
-  rows: LlmSearchRow[];
-  totalCount?: number;
+  googleItems?: LlmHistoricalItem[] | null;
+  chatgptItems?: LlmHistoricalItem[] | null;
   loading: boolean;
   enabled: boolean;
-}
-
-interface BucketRow {
-  month: string;
-  label: string;
-  newMentions: number;
-  aiVolume: number;
-}
-
-function monthKey(iso: string | undefined): string | null {
-  if (!iso || iso.length < 7) return null;
-  return iso.slice(0, 7);
-}
-
-function formatMonthLabel(ym: string): string {
-  const [y, m] = ym.split('-').map(Number);
-  if (!y || !m) return ym;
-  const date = new Date(Date.UTC(y, m - 1, 1));
-  return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
-}
-
-function buildBuckets(rows: LlmSearchRow[]): BucketRow[] {
-  if (!rows.length) return [];
-  const buckets = new Map<string, { newMentions: number; aiVolume: number }>();
-
-  for (const row of rows) {
-    const key = monthKey(row.first_response_at);
-    if (key) {
-      const entry = buckets.get(key) ?? { newMentions: 0, aiVolume: 0 };
-      entry.newMentions += 1;
-      buckets.set(key, entry);
-    }
-
-    const monthly = row.monthly_searches ?? [];
-    for (const ms of monthly) {
-      if (!ms?.year || !ms?.month) continue;
-      const k = `${ms.year}-${String(ms.month).padStart(2, '0')}`;
-      const entry = buckets.get(k) ?? { newMentions: 0, aiVolume: 0 };
-      entry.aiVolume += Number(ms.search_volume ?? ms.ai_search_volume ?? 0);
-      buckets.set(k, entry);
-    }
-  }
-
-  const sortedKeys = Array.from(buckets.keys()).sort();
-  if (!sortedKeys.length) return [];
-
-  // Fill gaps so the line is continuous.
-  const filled: BucketRow[] = [];
-  const [firstY, firstM] = sortedKeys[0].split('-').map(Number);
-  const [lastY, lastM] = sortedKeys[sortedKeys.length - 1].split('-').map(Number);
-  let y = firstY;
-  let m = firstM;
-  while (y < lastY || (y === lastY && m <= lastM)) {
-    const k = `${y}-${String(m).padStart(2, '0')}`;
-    const entry = buckets.get(k) ?? { newMentions: 0, aiVolume: 0 };
-    filled.push({
-      month: k,
-      label: formatMonthLabel(k),
-      newMentions: entry.newMentions,
-      aiVolume: entry.aiVolume,
-    });
-    m += 1;
-    if (m > 12) {
-      m = 1;
-      y += 1;
-    }
-  }
-  return filled;
 }
 
 function fmtCompact(n: number): string {
@@ -98,18 +30,22 @@ function fmtCompact(n: number): string {
 }
 
 export function MentionsTrendChart({
-  rows,
-  totalCount,
+  googleItems,
+  chatgptItems,
   loading,
   enabled,
 }: MentionsTrendChartProps) {
-  const buckets = useMemo(() => buildBuckets(rows), [rows]);
-  const sampleNote =
-    totalCount && rows.length < totalCount
-      ? `Sampled ${rows.length} of ${totalCount} mentions`
-      : rows.length
-      ? `${rows.length} mentions analyzed`
-      : '';
+  const buckets = useMemo(
+    () => mergeHistoricalSeries([googleItems, chatgptItems]),
+    [googleItems, chatgptItems]
+  );
+  const totalMentions = useMemo(
+    () => buckets.reduce((sum, b) => sum + b.mentions, 0),
+    [buckets]
+  );
+  const sampleNote = buckets.length
+    ? `${fmtCompact(totalMentions)} mentions across ${buckets.length} months`
+    : '';
 
   return (
     <Card>
@@ -123,12 +59,13 @@ export function MentionsTrendChart({
                   <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs text-xs">
-                  New mentions are counted by when DataForSEO first saw each prompt mention your
-                  brand. AI search volume sums the monthly volume of every mentioning prompt.
+                  Monthly totals from DataForSEO, available from August 2025 onward. Mentions counts
+                  every prompt that mentioned your brand that month. AI search volume sums the
+                  monthly volume of those prompts. ChatGPT coverage is US and English only.
                 </TooltipContent>
               </UiTooltip>
             </CardTitle>
-            <CardDescription>{sampleNote || 'When your brand started surfacing in AI answers'}</CardDescription>
+            <CardDescription>{sampleNote || 'How often your brand surfaces in AI answers'}</CardDescription>
           </div>
         </div>
       </CardHeader>
@@ -178,8 +115,8 @@ export function MentionsTrendChart({
               <Line
                 yAxisId="left"
                 type="monotone"
-                dataKey="newMentions"
-                name="New mentions"
+                dataKey="mentions"
+                name="Mentions"
                 stroke="#2563eb"
                 strokeWidth={2}
                 dot={{ r: 3 }}
