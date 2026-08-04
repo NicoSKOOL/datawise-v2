@@ -3,10 +3,11 @@ import { dataforseoRequestCached } from '../dataforseo/client';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 import { chatCompleteEscalating } from '../llm/length-escalation';
 
-// Server-side, platform-paid model for the gap-analysis strategic write-up.
-// Cheap "speed pick" from the approved catalog ($0.14/$0.28 per M tokens); the
-// output is short prose so a call costs a fraction of a cent. Replaces the old
-// Supabase function's google/gemini-2.5-flash on the (removed) Lovable gateway.
+// Model for the gap-analysis strategic write-up, billed to the user's own
+// OpenRouter key (see resolveGapAnalysisKey). Cheap "speed pick" from the
+// approved catalog ($0.14/$0.28 per M tokens); the output is short prose so a
+// call costs them a fraction of a cent. Replaces the old Supabase function's
+// google/gemini-2.5-flash on the (removed) Lovable gateway.
 const GAP_ANALYSIS_AI_MODEL = 'deepseek/deepseek-v4-flash';
 
 // Competitor / domain rankings drift slower than search volume — 6h KV cache.
@@ -291,26 +292,22 @@ interface GapAnalysisAIInput {
 }
 
 export type GapAnalysisKey =
-  | { ok: true; apiKey?: string }
+  | { ok: true; apiKey: string }
   | { ok: false; reason: 'no_key' | 'wrong_provider' };
 
 /**
- * Decide which OpenRouter key pays for this analysis.
+ * Resolve the OpenRouter key that pays for this analysis: the caller's own.
  *
- * The platform key wins when present, keeping the feature platform-paid as
- * designed. When it is absent the caller's own key is used instead, so the
- * button works rather than returning a 503 that no user can act on. Returning
- * `apiKey: undefined` on the platform path is deliberate: the provider treats a
- * missing config key as "use env.OPENROUTER_API_KEY" (provider.ts:337).
+ * This is deliberately BYOK-only. It must NOT fall back to
+ * env.OPENROUTER_API_KEY: that key exists for the content-writer's default
+ * routing, and letting this route reach it would silently move the inference
+ * bill onto the platform the moment the secret is set. The platform already
+ * absorbs the DataForSEO cost of the gap analysis itself; the LLM write-up on
+ * top of it is the user's spend, the same as review themes and meta rewrite.
  */
 export function resolveGapAnalysisKey(
-  platformKey: string | undefined,
   callerConfig: UserLLMConfig | undefined
 ): GapAnalysisKey {
-  // An empty or whitespace secret is the documented mispaste failure: wrangler
-  // uploads it and still reports success, so treat it as unset.
-  if (platformKey && platformKey.trim()) return { ok: true };
-
   const callerKey = callerConfig?.api_key?.trim();
   if (!callerKey) return { ok: false, reason: 'no_key' };
   // GAP_ANALYSIS_AI_MODEL is an OpenRouter model id, so only an OpenRouter key
@@ -405,18 +402,18 @@ export async function handleGapAnalysisAI(request: Request, env: Env): Promise<R
     });
   }
 
-  const key = resolveGapAnalysisKey(env.OPENROUTER_API_KEY, input.llm_config);
+  const key = resolveGapAnalysisKey(input.llm_config);
   if (!key.ok) {
-    console.error(`[gap-analysis-ai] no usable OpenRouter key: ${key.reason}`);
-    // The old copy said "temporarily unavailable ... try again later", which was
-    // wrong in both halves: nothing was temporary and retrying never helped.
-    // Name the one action the user can actually take.
+    // 400, not the old 503: the caller did not send a key, which is a request
+    // problem they can fix. The old copy said "temporarily unavailable ... try
+    // again later", wrong in both halves, since nothing was temporary and
+    // retrying never helped. Name the one action the user can actually take.
     return new Response(JSON.stringify({
-      error: 'AI analysis needs an OpenRouter API key',
+      error: 'AI analysis needs your OpenRouter API key',
       details: key.reason === 'wrong_provider'
         ? 'This feature runs on OpenRouter. Add an OpenRouter key (sk-or-...) in Settings.'
         : 'Add your OpenRouter API key in Settings, then try again.',
-    }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
   const messages: ChatMessage[] = [
@@ -424,13 +421,13 @@ export async function handleGapAnalysisAI(request: Request, env: Env): Promise<R
     { role: 'user', content: buildGapAnalysisPrompt(input) },
   ];
 
-  // Platform-paid when key.apiKey is undefined: the OpenRouter adapter then
-  // falls back to env.OPENROUTER_API_KEY. Otherwise the caller's own key pays.
-  // The model is pinned either way, so the analysis reads the same regardless.
+  // Always the caller's key: passing api_key explicitly stops the provider
+  // falling through to env.OPENROUTER_API_KEY (provider.ts:337). The model is
+  // pinned so the write-up reads the same for everyone.
   const config = {
     provider: 'openrouter' as const,
     model: GAP_ANALYSIS_AI_MODEL,
-    ...(key.apiKey ? { api_key: key.apiKey } : {}),
+    api_key: key.apiKey,
   };
 
   let analysis: string;

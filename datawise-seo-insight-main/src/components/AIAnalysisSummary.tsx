@@ -27,8 +27,16 @@ export const AIAnalysisSummary = ({
   const [expanded, setExpanded] = useState(true);
 
   const generateAnalysis = async () => {
+    // The write-up runs on the user's own OpenRouter credits, so check before
+    // firing a request that can only come back as a 400. Mirrors ReviewsSection.
+    const llmConfig = getLLMConfig();
+    if (!llmConfig?.api_key) {
+      toast.error('Add your OpenRouter API key in Settings to generate AI analysis.');
+      return;
+    }
+
     setLoading(true);
-    
+
     try {
       const data = await api<{ analysis?: string; error?: string }>('/api/competitors/gap-analysis-ai', {
         method: 'POST',
@@ -38,10 +46,7 @@ export const AIAnalysisSummary = ({
           both_ranking: bothRanking,
           gaps,
           advantages,
-          // Only used if the platform's own OpenRouter key is unset. Sending it
-          // unconditionally keeps this route working whichever key is paying,
-          // and matches what every other AI feature already sends.
-          llm_config: getLLMConfig() ?? undefined,
+          llm_config: llmConfig,
         },
       });
 
