@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget } from './competitors';
+import {
+  buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget,
+  resolveGapAnalysisKey,
+} from './competitors';
 
 // The gap-analysis "AI Powered Insights" button used to call a Supabase edge
 // function (keyword-analysis-ai) whose Lovable LLM key was removed during the
@@ -141,5 +144,54 @@ describe('sanitizeDomainTarget', () => {
   it('returns empty string for garbage', () => {
     expect(sanitizeDomainTarget('   ')).toBe('');
     expect(sanitizeDomainTarget('https://')).toBe('');
+  });
+});
+
+// Gap Analysis AI is platform-paid, but OPENROUTER_API_KEY has never been set
+// on the worker, so the route returned 503 on every call it ever received
+// (10 of 10 over the 7 days to 2026-08-04, ~168ms each: the guard, not a
+// timeout). Falling back to the caller's own OpenRouter key turns a dead button
+// into a working feature without waiting on platform billing.
+describe('resolveGapAnalysisKey', () => {
+  it('prefers the platform key, keeping the feature platform-paid', () => {
+    const r = resolveGapAnalysisKey('platform-key', {
+      provider: 'openrouter',
+      api_key: 'sk-or-user',
+    });
+    expect(r.ok).toBe(true);
+    // api_key omitted so the provider falls back to env.OPENROUTER_API_KEY.
+    expect(r.ok && r.apiKey).toBeUndefined();
+  });
+
+  it('uses the caller key when the platform key is unset', () => {
+    const r = resolveGapAnalysisKey(undefined, {
+      provider: 'openrouter',
+      api_key: 'sk-or-user',
+    });
+    expect(r.ok && r.apiKey).toBe('sk-or-user');
+  });
+
+  it('treats an empty platform key as unset', () => {
+    // wrangler secret put uploads an empty string on a mispaste and still
+    // reports success, which is how RESEND_WEBHOOK_SECRET broke on 2026-07-27.
+    const r = resolveGapAnalysisKey('   ', { provider: 'openrouter', api_key: 'sk-or-user' });
+    expect(r.ok && r.apiKey).toBe('sk-or-user');
+  });
+
+  it('refuses a caller key from a non-OpenRouter provider', () => {
+    // GAP_ANALYSIS_AI_MODEL is an OpenRouter model id; an Anthropic key cannot
+    // serve it, so failing loudly beats a confusing upstream 401.
+    const r = resolveGapAnalysisKey(undefined, { provider: 'claude', api_key: 'sk-ant-user' });
+    expect(r.ok).toBe(false);
+  });
+
+  it('reports unconfigured when neither key exists', () => {
+    const r = resolveGapAnalysisKey(undefined, undefined);
+    expect(r.ok).toBe(false);
+  });
+
+  it('ignores a blank caller key', () => {
+    const r = resolveGapAnalysisKey(undefined, { provider: 'openrouter', api_key: '  ' });
+    expect(r.ok).toBe(false);
   });
 });

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
+import { getLLMConfig } from "@/lib/chat";
 import { toast } from "sonner";
 import ReactMarkdown from 'react-markdown';
 
@@ -37,6 +38,10 @@ export const AIAnalysisSummary = ({
           both_ranking: bothRanking,
           gaps,
           advantages,
+          // Only used if the platform's own OpenRouter key is unset. Sending it
+          // unconditionally keeps this route working whichever key is paying,
+          // and matches what every other AI feature already sends.
+          llm_config: getLLMConfig() ?? undefined,
         },
       });
 

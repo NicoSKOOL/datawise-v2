@@ -1,6 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
-import { getLLMProvider, type ChatMessage } from '../llm/provider';
+import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 import { chatCompleteEscalating } from '../llm/length-escalation';
 
 // Server-side, platform-paid model for the gap-analysis strategic write-up.
@@ -284,6 +284,40 @@ interface GapAnalysisAIInput {
   both_ranking?: any[];
   gaps?: any[];
   advantages?: any[];
+  // Optional caller key, used only when the platform key is unset. Every other
+  // AI route already accepts this; this one did not, which is why it had no
+  // fallback when OPENROUTER_API_KEY turned out to be missing.
+  llm_config?: UserLLMConfig;
+}
+
+export type GapAnalysisKey =
+  | { ok: true; apiKey?: string }
+  | { ok: false; reason: 'no_key' | 'wrong_provider' };
+
+/**
+ * Decide which OpenRouter key pays for this analysis.
+ *
+ * The platform key wins when present, keeping the feature platform-paid as
+ * designed. When it is absent the caller's own key is used instead, so the
+ * button works rather than returning a 503 that no user can act on. Returning
+ * `apiKey: undefined` on the platform path is deliberate: the provider treats a
+ * missing config key as "use env.OPENROUTER_API_KEY" (provider.ts:337).
+ */
+export function resolveGapAnalysisKey(
+  platformKey: string | undefined,
+  callerConfig: UserLLMConfig | undefined
+): GapAnalysisKey {
+  // An empty or whitespace secret is the documented mispaste failure: wrangler
+  // uploads it and still reports success, so treat it as unset.
+  if (platformKey && platformKey.trim()) return { ok: true };
+
+  const callerKey = callerConfig?.api_key?.trim();
+  if (!callerKey) return { ok: false, reason: 'no_key' };
+  // GAP_ANALYSIS_AI_MODEL is an OpenRouter model id, so only an OpenRouter key
+  // can serve it. Anything else would surface as an opaque upstream 401.
+  if (callerConfig?.provider !== 'openrouter') return { ok: false, reason: 'wrong_provider' };
+
+  return { ok: true, apiKey: callerKey };
 }
 
 // Pure, deterministic prompt builder. Mirrors the original Supabase
@@ -371,11 +405,17 @@ export async function handleGapAnalysisAI(request: Request, env: Env): Promise<R
     });
   }
 
-  if (!env.OPENROUTER_API_KEY) {
-    console.error('[gap-analysis-ai] OPENROUTER_API_KEY not configured');
+  const key = resolveGapAnalysisKey(env.OPENROUTER_API_KEY, input.llm_config);
+  if (!key.ok) {
+    console.error(`[gap-analysis-ai] no usable OpenRouter key: ${key.reason}`);
+    // The old copy said "temporarily unavailable ... try again later", which was
+    // wrong in both halves: nothing was temporary and retrying never helped.
+    // Name the one action the user can actually take.
     return new Response(JSON.stringify({
-      error: 'AI analysis is temporarily unavailable',
-      details: 'The AI service is not configured. Please try again later.',
+      error: 'AI analysis needs an OpenRouter API key',
+      details: key.reason === 'wrong_provider'
+        ? 'This feature runs on OpenRouter. Add an OpenRouter key (sk-or-...) in Settings.'
+        : 'Add your OpenRouter API key in Settings, then try again.',
     }), { status: 503, headers: { 'Content-Type': 'application/json' } });
   }
 
@@ -384,9 +424,14 @@ export async function handleGapAnalysisAI(request: Request, env: Env): Promise<R
     { role: 'user', content: buildGapAnalysisPrompt(input) },
   ];
 
-  // Platform-paid: pass provider+model only so the OpenRouter adapter falls
-  // back to env.OPENROUTER_API_KEY (no BYOK key required for this feature).
-  const config = { provider: 'openrouter' as const, model: GAP_ANALYSIS_AI_MODEL };
+  // Platform-paid when key.apiKey is undefined: the OpenRouter adapter then
+  // falls back to env.OPENROUTER_API_KEY. Otherwise the caller's own key pays.
+  // The model is pinned either way, so the analysis reads the same regardless.
+  const config = {
+    provider: 'openrouter' as const,
+    model: GAP_ANALYSIS_AI_MODEL,
+    ...(key.apiKey ? { api_key: key.apiKey } : {}),
+  };
 
   let analysis: string;
   try {
