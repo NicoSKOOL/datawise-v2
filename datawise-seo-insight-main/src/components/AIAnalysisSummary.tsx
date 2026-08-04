@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
+import { getLLMConfig } from "@/lib/chat";
 import { toast } from "sonner";
 import ReactMarkdown from 'react-markdown';
 
@@ -26,8 +27,16 @@ export const AIAnalysisSummary = ({
   const [expanded, setExpanded] = useState(true);
 
   const generateAnalysis = async () => {
+    // The write-up runs on the user's own OpenRouter credits, so check before
+    // firing a request that can only come back as a 400. Mirrors ReviewsSection.
+    const llmConfig = getLLMConfig();
+    if (!llmConfig?.api_key) {
+      toast.error('Add your OpenRouter API key in Settings to generate AI analysis.');
+      return;
+    }
+
     setLoading(true);
-    
+
     try {
       const data = await api<{ analysis?: string; error?: string }>('/api/competitors/gap-analysis-ai', {
         method: 'POST',
@@ -37,6 +46,7 @@ export const AIAnalysisSummary = ({
           both_ranking: bothRanking,
           gaps,
           advantages,
+          llm_config: llmConfig,
         },
       });
 

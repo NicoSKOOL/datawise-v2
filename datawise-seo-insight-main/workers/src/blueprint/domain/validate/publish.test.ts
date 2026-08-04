@@ -26,6 +26,7 @@ function planned(over: Partial<PlannedPage> & { logicalId: string }): PlannedPag
     primaryKeyword: over.primaryKeyword ?? null,
     clusterIds: over.clusterIds ?? [],
     sections: over.sections ?? [],
+    supportingKeywords: over.supportingKeywords ?? [],
     metaDescription: over.metaDescription ?? null,
     recommendation: over.recommendation ?? 'create',
     consolidateTargetLogicalId: over.consolidateTargetLogicalId ?? null,

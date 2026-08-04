@@ -161,6 +161,36 @@ async function loadClusterVolumes(d1: D1Database, runId: string): Promise<Map<st
   return map;
 }
 
+// Member keywords per cluster with their search volumes (spec 3.7 supporting
+// keywords): normalized keyword + volume, joined from cluster_keywords, ordered
+// volume DESC (nulls last) then keyword ASC so a page's supporting list is
+// deterministic. A missing/zero volume is preserved as null via metrics_missing,
+// never fabricated as 0 (handoff §2.4).
+async function loadClusterMembers(d1: D1Database, runId: string): Promise<Map<string, Array<{ keyword: string; volume: number | null }>>> {
+  const { results } = await d1
+    .prepare(
+      `SELECT ck.cluster_id AS cluster_id, k.normalized_keyword AS nk,
+              k.search_volume AS volume, k.metrics_missing AS metrics_missing
+       FROM cluster_keywords ck
+       JOIN keyword_clusters kc ON kc.id = ck.cluster_id
+       JOIN keywords k ON k.id = ck.keyword_id
+       WHERE kc.run_id = ?
+       ORDER BY ck.cluster_id ASC,
+                (k.search_volume IS NULL) ASC, k.search_volume DESC, k.normalized_keyword ASC`,
+    )
+    .bind(runId)
+    .all<{ cluster_id: string; nk: string | null; volume: number | null; metrics_missing: number | null }>();
+  const map = new Map<string, Array<{ keyword: string; volume: number | null }>>();
+  for (const row of results ?? []) {
+    if (row.nk === null) continue;
+    const volume = row.metrics_missing === 1 ? null : row.volume;
+    const list = map.get(row.cluster_id) ?? [];
+    list.push({ keyword: row.nk, volume });
+    map.set(row.cluster_id, list);
+  }
+  return map;
+}
+
 // Representative query per cluster (its primary keyword's normalized form),
 // used to look up SERP snapshots. Ordered for stability.
 async function loadClusterQueries(d1: D1Database, runId: string): Promise<Map<string, string>> {
@@ -294,9 +324,10 @@ export async function loadPagePlanFacts(
 ): Promise<PagePlanFacts> {
   const locale = `${brief.languageCode}-${brief.countryIso}`;
 
-  const [clusterRows, volumes, queries, organicByQuery, localPackClusters, competitorRows] = await Promise.all([
+  const [clusterRows, volumes, members, queries, organicByQuery, localPackClusters, competitorRows] = await Promise.all([
     loadClusterRows(d1, runId),
     loadClusterVolumes(d1, runId),
+    loadClusterMembers(d1, runId),
     loadClusterQueries(d1, runId),
     loadOrganicByQuery(d1, runId),
     loadLocalPackClusters(d1, runId),
@@ -335,6 +366,7 @@ export async function loadPagePlanFacts(
       serp,
       competitorPages: competitorByCluster.get(row.id) ?? [],
       evidenceRefIds: evidenceRefIdsFrom(row.score_breakdown_json),
+      memberKeywords: members.get(row.id) ?? [],
     };
   });
 

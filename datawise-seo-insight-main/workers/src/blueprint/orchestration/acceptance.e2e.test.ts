@@ -274,7 +274,7 @@ describe('Phase 2 orchestration acceptance', () => {
       .prepare(`SELECT stage_name, status, attempt_count FROM research_stage_runs WHERE run_id = ?`)
       .bind(run.data.id)
       .all<{ stage_name: string; status: string; attempt_count: number }>();
-    expect(stageRows.results.length).toBe(19);
+    expect(stageRows.results.length).toBe(20);
     for (const row of stageRows.results) {
       // Every executed stage on a clean drive (no injected failures) reaches
       // its terminal outcome on the first attempt.
@@ -294,7 +294,7 @@ describe('Phase 2 orchestration acceptance', () => {
     // 'phase2-stub'/'p2' stubs) and a populated summary_json whose pageCount
     // matches the number of blueprint_pages rows written under its revision.
     expect(versionRow!.schema_version).toBe('p4');
-    expect(versionRow!.ruleset_version).toBe('cluster-v2+pp-v1');
+    expect(versionRow!.ruleset_version).toBe('cluster-v3+pp-v3');
     const summary = JSON.parse(versionRow!.summary_json);
     expect(summary.pageCount).toBeGreaterThan(0);
 
@@ -331,7 +331,7 @@ describe('Phase 2 orchestration acceptance', () => {
         scores: { addressableVolume: null, confidence: null, scoreBreakdown: null, evidenceRefs: [] }, warnings: [],
       });
       const artifact = {
-        rulesetVersion: 'pp-v1',
+        rulesetVersion: 'pp-v3',
         pages: [page('home', 'dup', null, null, 'home'), page('svc', 'dup', 'home', 'svc kw')],
         placements: [],
         warnings: [],

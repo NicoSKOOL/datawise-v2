@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget } from './competitors';
+import {
+  buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget,
+  resolveGapAnalysisKey,
+} from './competitors';
 
 // The gap-analysis "AI Powered Insights" button used to call a Supabase edge
 // function (keyword-analysis-ai) whose Lovable LLM key was removed during the
@@ -141,5 +144,51 @@ describe('sanitizeDomainTarget', () => {
   it('returns empty string for garbage', () => {
     expect(sanitizeDomainTarget('   ')).toBe('');
     expect(sanitizeDomainTarget('https://')).toBe('');
+  });
+});
+
+// Gap Analysis AI returned 503 on every call it ever received (10 of 10 over
+// the 7 days to 2026-08-04, ~168ms each: the `!env.OPENROUTER_API_KEY` guard,
+// not a timeout), because that secret was never set on the worker.
+//
+// The fix is NOT to set it. The platform already absorbs the DataForSEO cost of
+// the gap analysis; the LLM write-up on top is the user's spend, billed to
+// their own OpenRouter key like review themes and meta rewrite. env
+// .OPENROUTER_API_KEY belongs to the content-writer's default routing, so this
+// route must never reach it, or setting that secret would silently move this
+// feature's inference bill onto the platform.
+describe('resolveGapAnalysisKey', () => {
+  it('uses the caller key', () => {
+    const r = resolveGapAnalysisKey({ provider: 'openrouter', api_key: 'sk-or-user' });
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.apiKey).toBe('sk-or-user');
+  });
+
+  it('trims a padded caller key', () => {
+    const r = resolveGapAnalysisKey({ provider: 'openrouter', api_key: '  sk-or-user  ' });
+    expect(r.ok && r.apiKey).toBe('sk-or-user');
+  });
+
+  it('refuses a caller key from a non-OpenRouter provider', () => {
+    // GAP_ANALYSIS_AI_MODEL is an OpenRouter model id; an Anthropic key cannot
+    // serve it, so failing loudly beats a confusing upstream 401.
+    const r = resolveGapAnalysisKey({ provider: 'claude', api_key: 'sk-ant-user' });
+    expect(r).toEqual({ ok: false, reason: 'wrong_provider' });
+  });
+
+  it('reports no_key when the caller sends nothing', () => {
+    expect(resolveGapAnalysisKey(undefined)).toEqual({ ok: false, reason: 'no_key' });
+  });
+
+  it('ignores a blank caller key', () => {
+    const r = resolveGapAnalysisKey({ provider: 'openrouter', api_key: '  ' });
+    expect(r).toEqual({ ok: false, reason: 'no_key' });
+  });
+
+  it('takes no platform key argument at all', () => {
+    // Pins the billing boundary structurally: there is no parameter through
+    // which env.OPENROUTER_API_KEY could be threaded into this decision, so a
+    // future edit cannot reintroduce platform-paid inference by accident.
+    expect(resolveGapAnalysisKey.length).toBe(1);
   });
 });

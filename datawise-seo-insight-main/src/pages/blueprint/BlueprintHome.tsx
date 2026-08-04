@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getSessionToken } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -298,6 +299,7 @@ function RunProgressPanel({ run }: { run: ResearchRunView }) {
 
 export default function BlueprintHome() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const [creatingSample, setCreatingSample] = useState(false);
   const [startingRunFor, setStartingRunFor] = useState<Record<string, boolean>>({});
@@ -460,7 +462,11 @@ export default function BlueprintHome() {
           body: {
             estimateId: estimate.estimateId,
             acceptedDataForSeoCeilingUsd: rawCeiling.trim(),
-            acceptedOpenRouterCeilingUsd: '0.00',
+            // Accept the estimate's own OpenRouter ceiling (cents, billed to the
+            // member's BYOK key). Hardcoding '0.00' predates the
+            // adjudicate_clusters stage and silently starved it: every case was
+            // capped at zero LLM calls because the run could reserve nothing.
+            acceptedOpenRouterCeilingUsd: estimate.totals.openRouterMaxUsd ?? '0.00',
           },
         }
       );
@@ -508,9 +514,10 @@ export default function BlueprintHome() {
         evidence-backed site structure.
       </p>
       <p className="text-sm text-muted-foreground">
-        Research stages are live: keyword, competitor, and SERP evidence via DataForSEO.
-        Clustering and fan-out land in later phases; runs finish as partial. Every run
-        spends real DataForSEO budget, so get an estimate and set a ceiling before starting.
+        Research, clustering, and page planning are live. A finished run publishes a full
+        site blueprint: open it with View blueprint. US fan-out evidence lands in a later
+        phase, so runs finish as partial. Every run spends real DataForSEO budget, so get
+        an estimate and set a ceiling before starting.
       </p>
 
       <Card>
@@ -547,6 +554,19 @@ export default function BlueprintHome() {
             const ceiling = ceilingByProject[project.id] ?? '2.00';
             const ceilingError = ceilingErrorByProject[project.id] ?? null;
 
+            // Stage data (activeRun) only exists in this component's state once a
+            // run has been started or polled this session; a fresh page load has
+            // none of it. When it's missing we can't confirm publish_blueprint
+            // succeeded, so show the button anyway and let the canvas page's
+            // empty state handle a project that isn't actually published yet.
+            // Never hide the only path to the canvas behind that loading race.
+            const stagesKnown = !!activeRun;
+            const publishSucceeded =
+              activeRun?.stages.some(
+                (stage) => stage.stage === 'publish_blueprint' && stage.status === 'succeeded'
+              ) ?? false;
+            const showViewBlueprint = project.latestRunId !== null && (!stagesKnown || publishSucceeded);
+
             return (
               <div key={project.id} className="rounded-md border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -558,15 +578,22 @@ export default function BlueprintHome() {
                       {project.latestRunId ?? 'none'}
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => handleGetEstimate(project.id)}
-                    disabled={isFetchingEstimate || isStarting || isRunNonTerminal}
-                  >
-                    {isFetchingEstimate && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    {estimate ? 'Refresh estimate' : 'Get estimate'}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {showViewBlueprint && (
+                      <Button size="sm" onClick={() => navigate(`/blueprint/${project.id}`)}>
+                        View blueprint
+                      </Button>
+                    )}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleGetEstimate(project.id)}
+                      disabled={isFetchingEstimate || isStarting || isRunNonTerminal}
+                    >
+                      {isFetchingEstimate && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {estimate ? 'Refresh estimate' : 'Get estimate'}
+                    </Button>
+                  </div>
                 </div>
 
                 {estimate && !isRunNonTerminal && (
@@ -607,7 +634,7 @@ export default function BlueprintHome() {
                     <p>
                       Total DataForSEO: ${estimate.totals.dataForSeoMinUsd}&ndash;$
                       {estimate.totals.dataForSeoMaxUsd} &middot; OpenRouter: up to $
-                      {estimate.totals.openRouterMaxUsd}
+                      {estimate.totals.openRouterMaxUsd} (billed to your own OpenRouter key)
                     </p>
 
                     {estimate.limitations.length > 0 && (

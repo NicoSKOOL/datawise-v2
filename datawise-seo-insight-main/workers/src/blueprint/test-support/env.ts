@@ -3,6 +3,7 @@ import { processResearchRun } from '../orchestration/process-run';
 import type { BlueprintProviderEnv } from '../orchestration/process-run';
 import type { StageHandler } from '../orchestration/handlers';
 import type { BlueprintStage } from '../contracts/enums';
+import type { ChatMessage, LLMProvider } from '../../llm/provider';
 
 // Shared test env + queue-drain helpers for orchestration tests. Lives in
 // test-support (a non-test module) so multiple *.test.ts files can import
@@ -54,6 +55,36 @@ function fakeAiBinding(): BlueprintProviderEnv['AI'] {
     async run(_model: string, input: Record<string, unknown>) {
       const texts = Array.isArray(input.text) ? (input.text as string[]) : [];
       return { shape: [texts.length, FAKE_AI_DIMENSIONS], data: texts.map(pseudoVector) };
+    },
+  };
+}
+
+// Scripted LLMProvider seam for adjudicate_clusters tests, the LLM analogue of
+// fakeAiBinding above: injected via env.BLUEPRINT_LLM so the REAL handler runs
+// through blueprintOpenRouterCall without a network call. `script(messages,
+// callIndex)` returns the raw completion text (usually a strict-JSON string)
+// plus an optional finishReason ('length' exercises the escalation path). The
+// returned provider records every chatComplete's messages on `.calls` so tests
+// can assert call counts (e.g. re-drain does not re-ask, or a cap bounded the
+// number of calls).
+export function fakeLLMProvider(
+  script: (messages: ChatMessage[], callIndex: number) => { text: string; finishReason?: string }
+): LLMProvider & { calls: ChatMessage[][] } {
+  const calls: ChatMessage[][] = [];
+  return {
+    calls,
+    async chat(): Promise<ReadableStream> {
+      throw new Error('fakeLLMProvider.chat is not implemented (chatComplete only)');
+    },
+    async chatComplete(messages: ChatMessage[]) {
+      const callIndex = calls.length;
+      calls.push(messages);
+      const out = script(messages, callIndex);
+      return {
+        text: out.text,
+        usage: { input_tokens: 10, output_tokens: 20 },
+        ...(out.finishReason ? { finishReason: out.finishReason } : {}),
+      };
     },
   };
 }

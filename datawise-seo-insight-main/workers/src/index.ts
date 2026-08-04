@@ -52,6 +52,7 @@ import { recordRequestActivity, pruneAppEvents, ACTIVITY_ERROR_CODE_HEADER } fro
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty, purgeDormantGSCData, resyncPurgedProperties } from './gsc/sync';
+import { orderSyncQueue, describeSyncQueue, type SyncQueueRow } from './gsc/sync-queue';
 import { handleChat, handleListConversations, handleGetConversation, handleDeleteConversation, handleRenameConversation } from './chat/handler';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
@@ -1227,18 +1228,22 @@ async function runDailyGSCSync(env: Env): Promise<void> {
   // (which write nothing) stay eligible and are retried each day at ~zero cost.
   // The manual "Sync" button bypasses this and force-refreshes on demand.
   const STALE_AFTER = "-3 days";
-  // ORDER BY makes the nightly run self-rotating. The due set (~3,400 props
-  // on 2026-06-11) is far larger than one cron window can sync, and without
-  // an ORDER BY the same head of the table synced every night while the same
-  // tail starved forever: 273 active users' properties were stuck on
-  // pre-2026-05-19 data (the single-batchDate format) three weeks after the
-  // per-day fix shipped. Oldest-synced first puts last night's survivors at
-  // the front tonight; never-synced properties (mostly dormant accounts) go
-  // last so they cannot crowd out users who are actually looking at stale
-  // dashboards. kind='gsc' excludes manual/bwt rows that can never GSC-sync
+  // The due set is far larger than one cron window can sync, so ordering
+  // decides who gets data tonight. orderSyncQueue owns that policy: see
+  // gsc/sync-queue.ts for why never-synced properties are no longer last.
+  // This query is deliberately unordered; do not add an ORDER BY here.
+  // user_has_synced tells the ordering whether the owner currently sees any
+  // data at all. kind='gsc' excludes manual/bwt rows that can never GSC-sync
   // but were occupying sync slots.
   const props = await env.DB.prepare(
-    `SELECT p.id, p.user_id
+    `SELECT p.id, p.user_id, p.last_synced_at,
+            EXISTS (
+              SELECT 1 FROM gsc_properties q
+               WHERE q.user_id = p.user_id
+                 AND q.kind = 'gsc'
+                 AND q.is_enabled = 1
+                 AND q.last_synced_at IS NOT NULL
+            ) AS user_has_synced
        FROM gsc_properties p
       WHERE p.is_enabled = 1
         AND p.kind = 'gsc'
@@ -1247,11 +1252,12 @@ async function runDailyGSCSync(env: Env): Promise<void> {
           SELECT 1 FROM sessions s
            WHERE s.user_id = p.user_id
              AND s.expires_at > datetime('now')
-        )
-      ORDER BY (p.last_synced_at IS NULL), p.last_synced_at ASC`
-  ).bind(STALE_AFTER).all<{ id: string; user_id: string }>();
+        )`
+  ).bind(STALE_AFTER).all<SyncQueueRow>();
 
-  const rows = props.results || [];
+  const due = props.results || [];
+  const composition = describeSyncQueue(due);
+  const rows = orderSyncQueue(due);
   let synced = 0, skipped = 0, failed = 0, processed = 0;
   const concurrency = 4;
   // Scheduled handlers are killed at the 15-minute wall (and the site-audit
@@ -1281,6 +1287,8 @@ async function runDailyGSCSync(env: Env): Promise<void> {
   console.log(
     `GSC daily sync done (active + due-for-refresh scope): ${synced} synced, ${skipped} skipped (token), ` +
     `${failed} failed, ${processed}/${rows.length} due properties processed, ${Date.now() - startedAt}ms` +
+    ` [queue: ${composition.onboarding} onboarding, ${composition.expansion} expansion, ` +
+    `${composition.refresh} refresh]` +
     (processed < rows.length ? ` (time budget reached, ${rows.length - processed} roll to next run)` : '')
   );
 }

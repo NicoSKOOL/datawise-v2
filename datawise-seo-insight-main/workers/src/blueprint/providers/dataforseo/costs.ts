@@ -21,6 +21,14 @@ export const DEFAULT_DFS_COST_ESTIMATES: DfsCostEstimates = {
   contentParsingTaskUsdMicro: 10_000, // $0.01 (deliberately overestimated per Phase 4 plan)
 };
 
+// Flat, deliberately conservative per-call cost for the LLM cluster
+// adjudicator (adjudicate_clusters, Phase D). deepseek/deepseek-v4-flash on a
+// ~40-case classification batch costs a fraction of this in practice; we do not
+// have a per-token price table for OpenRouter, so both the budget reservation
+// and the reconciled actual use this single overestimate ($0.002/call).
+// maxCallsPerRun (10) x this = the openrouter estimate line total ($0.02).
+export const OPENROUTER_ADJUDICATION_CALL_USD_MICRO = 2_000;
+
 const DFS_COST_ESTIMATES_KV_KEY = 'bp:config:dfs-cost-estimates';
 
 // Invalid JSON or a missing/mistyped field falls back to the default for
@@ -61,11 +69,19 @@ export interface CallPlanLine {
   estimatedUsdMicro: number;
   cacheEligible: boolean;
   stage: BlueprintStage;
+  // Which provider bills this line. Defaults to 'dataforseo' for every existing
+  // line; the LLM adjudicator line (page-plan v3 Phase D) is 'openrouter'. Lets
+  // the estimate report DFS and OpenRouter totals separately, and keeps
+  // CallPlan.totalUsdMicro (the DFS budget gate's source of truth) DFS-only.
+  provider: 'dataforseo' | 'openrouter';
 }
 
 export interface CallPlan {
   lines: CallPlanLine[];
+  // DataForSeo-only total (the fail-fast DFS budget gate reads this). Excludes
+  // any openrouter lines, which are summed into openRouterTotalUsdMicro.
   totalUsdMicro: number;
+  openRouterTotalUsdMicro: number;
 }
 
 // Single owner of "which pipeline stage actually makes this DataForSEO call".
@@ -105,6 +121,9 @@ export const OPERATION_STAGE: Record<string, BlueprintStage> = {
   // one owner from the start instead of catching up after the fact.
   content_parsing: 'parse_competitor_pages',
   site_ranked_urls: 'overlay_existing_site',
+  // OpenRouter LLM adjudicator (page-plan v3 Phase D): not a DataForSEO call,
+  // but priced into the plan so the estimate can surface its OpenRouter cost.
+  cluster_adjudication: 'adjudicate_clusters',
 };
 
 // Upper-bound planning constants (catalog Sec 15, adapted to Phase 3 scope).
@@ -129,6 +148,23 @@ function planLine(operation: string, tasks: number, unitUsdMicro: number): CallP
     estimatedUsdMicro: tasks * unitUsdMicro,
     cacheEligible: true,
     stage: OPERATION_STAGE[operation],
+    provider: 'dataforseo',
+  };
+}
+
+// The OpenRouter LLM adjudicator estimate line: plans for the ruleset ceiling of
+// maxCallsPerRun classification calls, each at the flat conservative per-call
+// price. Not cache-eligible (an LLM classification has no cache), and billed to
+// the run's separate openrouter budget, so it never inflates the DFS total.
+function adjudicationPlanLine(): CallPlanLine {
+  const tasks = PAGE_PLAN_RULESET_V1.adjudicator.maxCallsPerRun;
+  return {
+    operation: 'cluster_adjudication',
+    tasks,
+    estimatedUsdMicro: tasks * OPENROUTER_ADJUDICATION_CALL_USD_MICRO,
+    cacheEligible: false,
+    stage: OPERATION_STAGE.cluster_adjudication,
+    provider: 'openrouter',
   };
 }
 
@@ -168,8 +204,17 @@ export function buildCallPlan(brief: NormalizedProjectBrief, costs: DfsCostEstim
     ...(brief.mode === 'existing_site' && brief.websiteDomain
       ? [planLine('site_ranked_urls', 1, costs.labsTaskUsdMicro)]
       : []),
+    adjudicationPlanLine(),
   ].filter((l) => l.tasks > 0);
 
-  const totalUsdMicro = lines.reduce((sum, l) => sum + l.estimatedUsdMicro, 0);
-  return { lines, totalUsdMicro };
+  // Partition totals by provider: totalUsdMicro stays DataForSEO-only (the DFS
+  // budget gate and the estimate's DFS max both read it), openrouter lines sum
+  // into their own total.
+  const totalUsdMicro = lines
+    .filter((l) => l.provider === 'dataforseo')
+    .reduce((sum, l) => sum + l.estimatedUsdMicro, 0);
+  const openRouterTotalUsdMicro = lines
+    .filter((l) => l.provider === 'openrouter')
+    .reduce((sum, l) => sum + l.estimatedUsdMicro, 0);
+  return { lines, totalUsdMicro, openRouterTotalUsdMicro };
 }

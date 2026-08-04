@@ -16,11 +16,12 @@ import type { EmbeddingInput } from '../domain/clustering/features';
 import { embedKeywordTexts } from '../providers/embeddings/workers-ai';
 import { assertEmbeddingSetCompatible, validateVectors } from '../domain/clustering/embeddings';
 import type { KeywordVector } from '../domain/clustering/embeddings';
-import { buildKeywordSimilarityGraph } from '../domain/clustering/graph';
+import { buildKeywordSimilarityGraph, edgeEligibleForMerge } from '../domain/clustering/graph';
 import type { KeywordNode } from '../domain/clustering/graph';
-import { buildDeterministicClusters } from '../domain/clustering/clusters';
+import { buildDeterministicClusters, assembleClusterDraft } from '../domain/clustering/clusters';
 import type { ClusterDraft } from '../domain/clustering/clusters';
 import { refineClusters } from '../domain/clustering/refine';
+import { mergeAcceptPassesRails } from '../domain/clustering/adjudication-rails';
 import type { RefineClusterInput, LiveSerpEvidence, AdjudicationCase } from '../domain/clustering/refine';
 import { rulesetVersionForStage } from '../domain/ruleset';
 import { BlueprintApiError } from '../domain/api-errors';
@@ -179,6 +180,11 @@ export interface NormalizeKeywordUniverseOutput {
   areaLinksAdded: number;
   artifactsRead: number;
   artifactsMissing: number;
+  // cluster-v3 geo_candidate flags: keywords naming an out-of-area US state or
+  // city (NOT excluded here, only flagged). Persisted on this stage output JSON
+  // so the Phase D adjudicate_clusters stage can read it back via
+  // loadStageOutput<NormalizeKeywordUniverseOutput> and decide out_of_area.
+  geoCandidates: Array<{ keywordId: string; matchedGeoTerms: string[] }>;
   rulesetVersion: string;
 }
 
@@ -237,6 +243,7 @@ export const normalizeKeywordUniverseHandler: StageHandler = async (ctx: StageCo
     areaLinksAdded: plan.serviceAreaLinks.length,
     artifactsRead,
     artifactsMissing,
+    geoCandidates: plan.geoCandidates,
     rulesetVersion: CLUSTER_RULESET_V2.version,
   };
 
@@ -1041,6 +1048,9 @@ export interface RefineClustersOutput {
   clustersIn: number;
   clustersOut: number;
   autoMerges: number;
+  // Deterministic cleaned-name / near-name merges (cluster-v3), counted apart
+  // from the SERP-driven autoMerges.
+  nameMerges: number;
   autoSplits: number;
   adjudicationsPending: number;
   adjudicationsInsufficient: number;
@@ -1303,6 +1313,7 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
       clustersIn: 0,
       clustersOut: 0,
       autoMerges: 0,
+      nameMerges: 0,
       autoSplits: 0,
       adjudicationsPending: 0,
       adjudicationsInsufficient: 0,
@@ -1378,49 +1389,9 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
   const newMemberRows: ClusterMemberInsertRow[] = [];
   for (const c of result.clusters) {
     if (!c.changed) continue;
-    const id = newId('kcl');
-    const memberNodes = c.draft.memberIds.map((mid) => byId.get(mid)!).filter((n): n is KeywordNode => !!n);
-    const { score, label, components } = computeClusterConfidence(c.draft, memberNodes);
-
-    const evidenceRefIds = Array.from(
-      new Set(c.draft.memberIds.flatMap((mid) => evidenceRefMap.get(mid) ?? []))
-    )
-      .sort()
-      .slice(0, 50);
-
-    const scoreBreakdown = {
-      rulesetVersion: CLUSTER_RULESET_V2.version,
-      refine: c.liveBreakdown,
-      semanticCohesion: c.draft.semanticCohesion,
-      serpOverlapCohesion: c.draft.serpOverlapCohesion,
-      confidenceComponents: components,
-      evidenceRefIds,
-    };
-
-    newClusterRows.push({
-      id,
-      label: c.draft.label,
-      serviceId: c.draft.serviceId,
-      serviceAreaId: c.draft.serviceAreaId,
-      intent: c.draft.intent,
-      primaryKeywordId: c.draft.primaryKeywordId,
-      semanticCohesion: c.draft.semanticCohesion,
-      serpOverlapCohesion: c.draft.serpOverlapCohesion,
-      confidenceScore: score,
-      confidenceLabel: label,
-      decisionReason: REFINE_DECISION_REASON,
-      warningsJson: JSON.stringify(c.draft.warnings),
-      scoreBreakdownJson: JSON.stringify(scoreBreakdown),
-    });
-
-    for (const mid of c.draft.memberIds) {
-      newMemberRows.push({
-        clusterId: id,
-        keywordId: mid,
-        membershipScore: c.draft.membershipScores[mid],
-        isPrimary: mid === c.draft.primaryKeywordId,
-      });
-    }
+    const { clusterRow, memberRows } = clusterDraftToInsertRows(c.draft, byId, evidenceRefMap, c.liveBreakdown);
+    newClusterRows.push(clusterRow);
+    newMemberRows.push(...memberRows);
   }
 
   await persistRefinedClusters(ctx.d1, ctx.runId, consumedInputIds, newClusterRows, newMemberRows);
@@ -1437,6 +1408,7 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
     clustersIn: result.stats.clustersIn,
     clustersOut: result.stats.clustersOut,
     autoMerges: result.stats.autoMerges,
+    nameMerges: result.stats.nameMerges,
     autoSplits: result.stats.autoSplits,
     adjudicationsPending: result.stats.adjudicationsPending,
     adjudicationsInsufficient: result.stats.adjudicationsInsufficient,
@@ -1448,3 +1420,335 @@ export const refineClustersHandler: StageHandler = async (ctx: StageContext) => 
 
   return { output, status: zeroCoverage ? ('partial' as const) : ('succeeded' as const) };
 };
+
+// Shared draft -> keyword_clusters/cluster_keywords row conversion, extracted
+// (page-plan v3 Phase D) so both refineClustersHandler and
+// applyAcceptedClusterMerges mint a changed cluster's rows identically: same
+// confidence, same score_breakdown shape, same fresh newId('kcl'), same primary
+// flagging. `liveBreakdown` records the merge/split provenance onto
+// score_breakdown_json exactly as refine does.
+function clusterDraftToInsertRows(
+  draft: ClusterDraft,
+  byId: ReadonlyMap<string, KeywordNode>,
+  evidenceRefMap: Map<string, string[]>,
+  liveBreakdown: { origin: 'merge' | 'split'; sourceClusterIds: string[] } | null
+): { clusterRow: ClusterInsertRow; memberRows: ClusterMemberInsertRow[] } {
+  const id = newId('kcl');
+  const memberNodes = draft.memberIds.map((mid) => byId.get(mid)!).filter((n): n is KeywordNode => !!n);
+  const { score, label, components } = computeClusterConfidence(draft, memberNodes);
+
+  const evidenceRefIds = Array.from(new Set(draft.memberIds.flatMap((mid) => evidenceRefMap.get(mid) ?? [])))
+    .sort()
+    .slice(0, 50);
+
+  const scoreBreakdown = {
+    rulesetVersion: CLUSTER_RULESET_V2.version,
+    refine: liveBreakdown,
+    semanticCohesion: draft.semanticCohesion,
+    serpOverlapCohesion: draft.serpOverlapCohesion,
+    confidenceComponents: components,
+    evidenceRefIds,
+  };
+
+  const clusterRow: ClusterInsertRow = {
+    id,
+    label: draft.label,
+    serviceId: draft.serviceId,
+    serviceAreaId: draft.serviceAreaId,
+    intent: draft.intent,
+    primaryKeywordId: draft.primaryKeywordId,
+    semanticCohesion: draft.semanticCohesion,
+    serpOverlapCohesion: draft.serpOverlapCohesion,
+    confidenceScore: score,
+    confidenceLabel: label,
+    decisionReason: REFINE_DECISION_REASON,
+    warningsJson: JSON.stringify(draft.warnings),
+    scoreBreakdownJson: JSON.stringify(scoreBreakdown),
+  };
+
+  const memberRows: ClusterMemberInsertRow[] = draft.memberIds.map((mid) => ({
+    clusterId: id,
+    keywordId: mid,
+    membershipScore: draft.membershipScores[mid],
+    isPrimary: mid === draft.primaryKeywordId,
+  }));
+
+  return { clusterRow, memberRows };
+}
+
+// Rebuilds one merged cluster's draft the SAME way refine's outClusters pass
+// does: recompute the intra-union similarity graph, keep only clean strong
+// edges, and assemble the draft (primary/label/cohesion/membership scores) off
+// that. Reused (not reimplemented) so an adjudicator-applied merge is
+// byte-indistinguishable from a merge refine would have made over the same
+// union.
+function buildMergedDraft(
+  memberIds: readonly string[],
+  byId: ReadonlyMap<string, KeywordNode>,
+  displayKeywords: ReadonlyMap<string, string>
+): ClusterDraft {
+  const memberNodes = memberIds.map((id) => byId.get(id)).filter((n): n is KeywordNode => !!n);
+  const memberGraph = buildKeywordSimilarityGraph({ nodes: memberNodes, ruleset: CLUSTER_RULESET_V2 });
+  const strongEdges = memberGraph.edges.filter(
+    (e) => e.violations.length === 0 && edgeEligibleForMerge(e, CLUSTER_RULESET_V2)
+  );
+  return assembleClusterDraft({ memberIds, byId, strongEdges, displayKeywords });
+}
+
+// Loads the run's keyword nodes + current cluster memberships exactly as
+// refineClustersHandler does, so a caller (the adjudicator) can validate and
+// apply merges against the identical node facts refine clustered over. Throws
+// (provider_invalid_response) if embed_keyword_features left no readable output,
+// same as refine.
+async function loadClusterMergeContext(ctx: StageContext): Promise<{
+  byId: Map<string, KeywordNode>;
+  displayKeywords: Map<string, string>;
+  evidenceRefMap: Map<string, string[]>;
+  membersByCluster: Map<string, string[]>;
+}> {
+  const stage9 = await loadStageOutput<EmbedKeywordFeaturesOutput>(ctx.d1, ctx.runId, 'embed_keyword_features');
+  if (!stage9) {
+    throw new BlueprintApiError('provider_invalid_response', safeErrorMessage('provider_invalid_response'));
+  }
+  const retainedRows = await ctx.d1
+    .prepare(
+      `SELECT id, display_keyword, normalized_keyword, core_keyword, main_intent, search_volume, relevance_score
+       FROM keywords WHERE run_id = ? AND excluded_reason IS NULL ORDER BY normalized_keyword ASC`
+    )
+    .bind(ctx.runId)
+    .all<ClusterableKeywordRow>();
+  const retained = retainedRows.results ?? [];
+
+  const { byId, displayKeywords } = await buildClusteringNodes(ctx, retained, stage9);
+  const evidenceRefMap = await loadKeywordEvidenceRefMap(ctx.d1, ctx.runId);
+
+  const memberRows = await ctx.d1
+    .prepare(
+      `SELECT ck.cluster_id AS cluster_id, ck.keyword_id AS keyword_id
+       FROM cluster_keywords ck
+       JOIN keyword_clusters kc ON kc.id = ck.cluster_id
+       WHERE kc.run_id = ? ORDER BY ck.cluster_id ASC, ck.keyword_id ASC`
+    )
+    .bind(ctx.runId)
+    .all<{ cluster_id: string; keyword_id: string }>();
+  const membersByCluster = new Map<string, string[]>();
+  for (const row of memberRows.results ?? []) {
+    const list = membersByCluster.get(row.cluster_id) ?? [];
+    list.push(row.keyword_id);
+    membersByCluster.set(row.cluster_id, list);
+  }
+
+  return { byId, displayKeywords, evidenceRefMap, membersByCluster };
+}
+
+function cmpStr(x: string, y: string): number {
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+export interface AcceptedMergeCase {
+  caseId: string;
+  clusterIds: string[];
+}
+
+export interface ClusterMergeOutcome {
+  // Per input caseId: 'applied' (merge persisted), 'rejected_by_rules' (union
+  // failed the hard-constraint rails), or 'noop' (fewer than 2 of the case's
+  // clusters still exist, so there is nothing to merge).
+  outcomeByCase: Map<string, 'applied' | 'rejected_by_rules' | 'noop'>;
+}
+
+// Applies the merges an LLM accepted, gated by the deterministic hard rails.
+// Overlapping accepted cases are unioned into one merge component first (a case
+// pulling c1+c2 and another pulling c2+c3 merge into one c1+c2+c3 cluster), so
+// a cluster is never consumed twice. Each component's union is validated with
+// mergeAcceptPassesRails (the SAME hard constraints refine enforces); a failing
+// component is left untouched and all its caseIds are 'rejected_by_rules'.
+// Surviving merges are persisted through persistRefinedClusters, the exact
+// delete-consumed-then-insert machinery refine uses.
+export async function applyAcceptedClusterMerges(
+  ctx: StageContext,
+  cases: readonly AcceptedMergeCase[]
+): Promise<ClusterMergeOutcome> {
+  const outcomeByCase = new Map<string, 'applied' | 'rejected_by_rules' | 'noop'>();
+  if (cases.length === 0) return { outcomeByCase };
+
+  const { byId, displayKeywords, evidenceRefMap, membersByCluster } = await loadClusterMergeContext(ctx);
+  const existingClusterIds = new Set(membersByCluster.keys());
+
+  // Union-find over the cluster ids referenced by accepted cases so overlapping
+  // merges collapse into one component.
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    let cur = x;
+    while (parent.get(cur) !== root) {
+      const nxt = parent.get(cur)!;
+      parent.set(cur, root);
+      cur = nxt;
+    }
+    return root;
+  };
+  const union = (a: string, b: string) => {
+    if (!parent.has(a)) parent.set(a, a);
+    if (!parent.has(b)) parent.set(b, b);
+    const ra = find(a);
+    const rb = find(b);
+    if (ra === rb) return;
+    if (cmpStr(ra, rb) < 0) parent.set(rb, ra);
+    else parent.set(ra, rb);
+  };
+
+  // caseId -> the existing cluster ids it references.
+  const existingByCase = new Map<string, string[]>();
+  for (const c of cases) {
+    const present = c.clusterIds.filter((id) => existingClusterIds.has(id)).sort(cmpStr);
+    existingByCase.set(c.caseId, present);
+    for (const id of present) if (!parent.has(id)) parent.set(id, id);
+    for (let i = 1; i < present.length; i++) union(present[0], present[i]);
+  }
+
+  // Group caseIds by component root over the clusters they still reference.
+  const caseIdsByRoot = new Map<string, string[]>();
+  for (const c of cases) {
+    const present = existingByCase.get(c.caseId)!;
+    if (present.length < 2) {
+      // Nothing left to merge (clusters already merged away or split apart).
+      outcomeByCase.set(c.caseId, 'noop');
+      continue;
+    }
+    const root = find(present[0]);
+    const list = caseIdsByRoot.get(root) ?? [];
+    list.push(c.caseId);
+    caseIdsByRoot.set(root, list);
+  }
+
+  const consumedInputIds: string[] = [];
+  const newClusterRows: ClusterInsertRow[] = [];
+  const newMemberRows: ClusterMemberInsertRow[] = [];
+
+  for (const root of [...caseIdsByRoot.keys()].sort(cmpStr)) {
+    const caseIds = caseIdsByRoot.get(root)!;
+    // Every existing cluster in this component (from every case that landed on
+    // this root).
+    const componentClusters = new Set<string>();
+    for (const cid of caseIds) for (const cl of existingByCase.get(cid)!) componentClusters.add(cl);
+    const clusterList = [...componentClusters].sort(cmpStr);
+
+    const unionMembers = [
+      ...new Set(clusterList.flatMap((cl) => membersByCluster.get(cl) ?? [])),
+    ].sort(cmpStr);
+    const memberNodes = unionMembers.map((id) => byId.get(id)).filter((n): n is KeywordNode => !!n);
+
+    if (!mergeAcceptPassesRails(memberNodes)) {
+      for (const cid of caseIds) outcomeByCase.set(cid, 'rejected_by_rules');
+      continue;
+    }
+
+    const draft = buildMergedDraft(unionMembers, byId, displayKeywords);
+    const { clusterRow, memberRows } = clusterDraftToInsertRows(draft, byId, evidenceRefMap, {
+      origin: 'merge',
+      sourceClusterIds: clusterList,
+    });
+    newClusterRows.push(clusterRow);
+    newMemberRows.push(...memberRows);
+    consumedInputIds.push(...clusterList);
+    for (const cid of caseIds) outcomeByCase.set(cid, 'applied');
+  }
+
+  if (consumedInputIds.length > 0) {
+    await persistRefinedClusters(ctx.d1, ctx.runId, consumedInputIds, newClusterRows, newMemberRows);
+  }
+
+  return { outcomeByCase };
+}
+
+// Applies accepted out-of-area geo exclusions: marks each keyword
+// excluded_reason='out_of_area' (downstream stages already skip
+// excluded_reason IS NOT NULL) and removes it from its cluster membership. A
+// cluster left with zero members is dropped (returned in droppedClusterIds for
+// a warning); if only the primary keyword was removed but members remain, the
+// primary is re-pointed to the lexicographically smallest surviving member.
+// Idempotent: keywords already excluded are skipped, so a re-drain is a no-op.
+export async function applyGeoExclusions(
+  ctx: StageContext,
+  keywordIds: readonly string[]
+): Promise<{ excludedKeywordIds: string[]; droppedClusterIds: string[] }> {
+  const unique = [...new Set(keywordIds)].sort(cmpStr);
+  if (unique.length === 0) return { excludedKeywordIds: [], droppedClusterIds: [] };
+
+  // Only keywords still retained can be excluded (re-drain safety).
+  const toExclude: string[] = [];
+  for (const idsChunk of chunk(unique, DELETE_IDS_PER_STATEMENT)) {
+    const placeholders = idsChunk.map(() => '?').join(',');
+    const rows = await ctx.d1
+      .prepare(
+        `SELECT id FROM keywords WHERE run_id = ? AND excluded_reason IS NULL AND id IN (${placeholders})`
+      )
+      .bind(ctx.runId, ...idsChunk)
+      .all<{ id: string }>();
+    for (const r of rows.results ?? []) toExclude.push(r.id);
+  }
+  if (toExclude.length === 0) return { excludedKeywordIds: [], droppedClusterIds: [] };
+  toExclude.sort(cmpStr);
+
+  // Which clusters currently hold these keywords (and were any of them primary).
+  const affectedClusters = new Set<string>();
+  for (const idsChunk of chunk(toExclude, DELETE_IDS_PER_STATEMENT)) {
+    const placeholders = idsChunk.map(() => '?').join(',');
+    const rows = await ctx.d1
+      .prepare(
+        `SELECT ck.cluster_id AS cluster_id
+         FROM cluster_keywords ck JOIN keyword_clusters kc ON kc.id = ck.cluster_id
+         WHERE kc.run_id = ? AND ck.keyword_id IN (${placeholders})`
+      )
+      .bind(ctx.runId, ...idsChunk)
+      .all<{ cluster_id: string }>();
+    for (const r of rows.results ?? []) affectedClusters.add(r.cluster_id);
+  }
+
+  // Mark excluded + drop memberships.
+  for (const idsChunk of chunk(toExclude, DELETE_IDS_PER_STATEMENT)) {
+    const placeholders = idsChunk.map(() => '?').join(',');
+    await ctx.d1
+      .prepare(
+        `UPDATE keywords SET excluded_reason = 'out_of_area' WHERE run_id = ? AND id IN (${placeholders})`
+      )
+      .bind(ctx.runId, ...idsChunk)
+      .run();
+    await ctx.d1
+      .prepare(`DELETE FROM cluster_keywords WHERE keyword_id IN (${placeholders})`)
+      .bind(...idsChunk)
+      .run();
+  }
+
+  const droppedClusterIds: string[] = [];
+  for (const clusterId of [...affectedClusters].sort(cmpStr)) {
+    const remaining = await ctx.d1
+      .prepare(`SELECT keyword_id, is_primary FROM cluster_keywords WHERE cluster_id = ? ORDER BY keyword_id ASC`)
+      .bind(clusterId)
+      .all<{ keyword_id: string; is_primary: number }>();
+    const members = remaining.results ?? [];
+    if (members.length === 0) {
+      await ctx.d1.prepare(`DELETE FROM keyword_clusters WHERE id = ?`).bind(clusterId).run();
+      droppedClusterIds.push(clusterId);
+      continue;
+    }
+    // Re-point the primary if the removed keyword was it (no surviving member
+    // flagged is_primary).
+    const hasPrimary = members.some((m) => m.is_primary === 1);
+    if (!hasPrimary) {
+      const newPrimary = members[0].keyword_id; // smallest id, deterministic
+      await ctx.d1
+        .prepare(`UPDATE keyword_clusters SET primary_keyword_id = ? WHERE id = ?`)
+        .bind(newPrimary, clusterId)
+        .run();
+      await ctx.d1
+        .prepare(`UPDATE cluster_keywords SET is_primary = 1 WHERE cluster_id = ? AND keyword_id = ?`)
+        .bind(clusterId, newPrimary)
+        .run();
+    }
+  }
+
+  return { excludedKeywordIds: toExclude, droppedClusterIds };
+}

@@ -48,3 +48,18 @@ runs a real handler except the two Phase 5 stubs.
 
 Composite published stamp: `blueprint_versions.ruleset_version = cluster-v2+pp-v1`,
 `schema_version = p4` (`domain/ruleset.ts`).
+
+## Read API and canvas
+
+Four read-only endpoints back the Blueprint Canvas UI (`routes/blueprints.ts`,
+mounted in `routes/router.ts`): `GET /api/blueprint/v1/projects/:id/blueprints/latest`
+returns the latest published version and revision for a project,
+`GET /api/blueprint/v1/blueprint-revisions/:id/graph` returns the page graph
+for a revision, `GET /api/blueprint/v1/blueprint-revisions/:id/pages/:pageId`
+returns single-page detail (evidence, competitor sources, cluster context),
+and `GET /api/blueprint/v1/blueprint-revisions/:id/export?format=html|csv`
+returns the same revision rendered as a standalone html report or a flat csv
+of the page table. On the SPA side (`datawise-seo-insight-main/src/pages/blueprint/`),
+`/blueprint` (`BlueprintHome.tsx`) lists projects and `/blueprint/:projectId`
+(`BlueprintCanvas.tsx`) renders the canvas: a page map/table view, a page
+detail panel, and the html/csv export menu, all admin-gated.

@@ -34,6 +34,7 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric green state', 'bg-emerald-50'],
   ['Keyword metric amber state', 'bg-amber-50'],
   ['Keyword metric red state', 'bg-red-50'],
+  ['Blueprint canvas lazy chunk present', 'BlueprintCanvas'],
 ];
 const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
