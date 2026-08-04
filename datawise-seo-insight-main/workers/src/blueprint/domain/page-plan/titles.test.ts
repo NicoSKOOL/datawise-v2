@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { PAGE_TYPES, type PageType } from '../../contracts/enums';
 import { PAGE_PLAN_RULESET_V1 } from './ruleset';
-import { buildLogicalId, buildSlug, buildTitle, buildH1, dedupeSlug, type TitleParts } from './titles';
+import { buildLogicalId, buildSlug, buildTitle, buildH1, cleanKeywordForNaming, dedupeSlug, type TitleParts } from './titles';
 
 describe('buildLogicalId', () => {
   it('produces stable, prefixed, human-readable ids', () => {
@@ -160,6 +160,65 @@ describe('buildTitle / buildH1 templates', () => {
     const parts: TitleParts = { pageType: 'service', businessName: 'Acme', serviceName: 'Emergency Plumbing' };
     expect(buildTitle(parts)).toBe(buildTitle(parts));
     expect(buildH1(parts)).toBe(buildH1(parts));
+  });
+});
+
+describe('cleanKeywordForNaming', () => {
+  it('strips proximity query modifiers anywhere in the keyword', () => {
+    expect(cleanKeywordForNaming('drain cleaning service near me')).toBe('drain cleaning service');
+    expect(cleanKeywordForNaming('plumber near you')).toBe('plumber');
+    expect(cleanKeywordForNaming('emergency plumber in my area')).toBe('emergency plumber');
+    expect(cleanKeywordForNaming('water heater repair nearby')).toBe('water heater repair');
+    expect(cleanKeywordForNaming('electrician close to me')).toBe('electrician');
+  });
+
+  it('strips leading search modifiers', () => {
+    expect(cleanKeywordForNaming('best drain cleaning service')).toBe('drain cleaning service');
+    expect(cleanKeywordForNaming('cheap plumber austin')).toBe('plumber austin');
+    expect(cleanKeywordForNaming('top best plumber')).toBe('plumber');
+    expect(cleanKeywordForNaming('cheapest water heater repair')).toBe('water heater repair');
+  });
+
+  it('strips trailing year tokens', () => {
+    expect(cleanKeywordForNaming('best crm software 2026')).toBe('crm software');
+  });
+
+  it('does not strip modifier words mid-keyword where they are part of the topic', () => {
+    expect(cleanKeywordForNaming('best practices for seo')).toBe('practices for seo');
+    expect(cleanKeywordForNaming('drain cleaning')).toBe('drain cleaning');
+    expect(cleanKeywordForNaming('how to unclog a drain')).toBe('how to unclog a drain');
+  });
+
+  it('falls back to the original keyword when stripping would empty it', () => {
+    expect(cleanKeywordForNaming('near me')).toBe('near me');
+    expect(cleanKeywordForNaming('best')).toBe('best');
+    expect(cleanKeywordForNaming('')).toBe('');
+  });
+
+  it('is deterministic', () => {
+    expect(cleanKeywordForNaming('best plumber near me')).toBe(cleanKeywordForNaming('best plumber near me'));
+  });
+});
+
+describe('query-shaped keywords never surface in titles or H1s', () => {
+  it('cleans the primaryKeyword fallback in titles', () => {
+    expect(buildTitle({ pageType: 'service', businessName: 'Acme Plumbing', primaryKeyword: 'drain cleaning service near me' }))
+      .toBe('Drain Cleaning Service | Acme Plumbing');
+  });
+
+  it('cleans the primaryKeyword fallback in H1s', () => {
+    expect(buildH1({ pageType: 'service', businessName: 'Acme Plumbing', primaryKeyword: 'best drain cleaning near me' }))
+      .toBe('Drain Cleaning');
+  });
+
+  it('cleans the primaryKeyword fallback on service_location pages', () => {
+    expect(buildTitle({ pageType: 'service_location', businessName: 'Acme Plumbing', primaryKeyword: 'drain cleaning near me', cityName: 'Austin' }))
+      .toBe('Drain Cleaning in Austin | Acme Plumbing');
+  });
+
+  it('leaves explicit service names alone (only keywords are query-shaped)', () => {
+    expect(buildTitle({ pageType: 'service', businessName: 'Acme Plumbing', serviceName: 'Emergency Plumbing', primaryKeyword: 'emergency plumber near me' }))
+      .toBe('Emergency Plumbing | Acme Plumbing');
   });
 });
 

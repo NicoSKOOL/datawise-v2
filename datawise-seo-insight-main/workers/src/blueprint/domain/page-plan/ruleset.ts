@@ -1,4 +1,5 @@
 import type { DoorwayGuardrailRules } from '../doorway';
+import { NAMING_STRIPPED_PHRASES, NAMING_STRIPPED_LEADING_WORDS } from '../keyword-naming';
 
 // Frozen v1 ruleset for the page-planning engine (Phase 4:
 // parse_competitor_pages, build_page_plan, overlay_existing_site,
@@ -9,7 +10,21 @@ import type { DoorwayGuardrailRules } from '../doorway';
 // fails CI. That is Phase 4's acceptance requirement: "changing a threshold
 // records a new ruleset version".
 export const PAGE_PLAN_RULESET_V1 = Object.freeze({
-  version: 'pp-v1',
+  version: 'pp-v3',
+  // Search-query modifiers that make sense as keywords to TARGET but never as
+  // page names: "drain cleaning service near me" is a real query, but no sane
+  // site titles a page that. cleanKeywordForNaming strips these before a
+  // cluster's primary keyword becomes a title/H1/slug/logical id; the page's
+  // primaryKeyword field keeps the raw query. Phrases are removed anywhere in
+  // the keyword; leading words only when they lead (so "best practices" content
+  // topics mid-keyword survive).
+  // The canonical lists live in domain/keyword-naming.ts (shared with the
+  // clustering engine); referenced here so this ruleset and cleanKeywordForNaming
+  // stay a single source of truth.
+  naming: {
+    strippedPhrases: NAMING_STRIPPED_PHRASES,
+    strippedLeadingWords: NAMING_STRIPPED_LEADING_WORDS,
+  },
   separate: {
     minStrongSignals: 2,
     lowSerpOverlapMax: 0.3,
@@ -21,6 +36,23 @@ export const PAGE_PLAN_RULESET_V1 = Object.freeze({
     questionWords: ['how', 'what', 'why', 'when', 'which', 'can', 'do', 'does', 'is', 'are', 'should'],
   },
   hubs: { serviceHubMinChildren: 3, locationHubMinChildren: 2 },
+  // Service-variant folding (pp-v3, spec 3.3a). A commercial/transactional
+  // cluster linked to a service whose cleaned keyword tokens are a subset of the
+  // service's name tokens plus these generic modifier tokens folds into the
+  // service page rather than minting a /resources/ variant page. "24 hour
+  // emergency plumbing", "emergency plumbing services", "emergency plumbing
+  // repair" all collapse onto svc:emergency-plumbing.
+  variantFold: {
+    genericTokens: ['service', 'services', 'company', 'companies', 'repair', 'repairs', 'local', 'professional', 'licensed'],
+  },
+  // Supporting (secondary) keyword lists per page (pp-v3, spec 3.7). storeCap
+  // bounds what the engine records + persists to blueprint_pages; exportCap
+  // bounds the pipe-separated list the CSV export renders.
+  supporting: { storeCap: 20, exportCap: 10 },
+  // LLM adjudicator plumbing (pp-v3, spec 3.5). The model classifies borderline
+  // merge/variant/geo cases; maxCallsPerRun caps run cost, casesPerCall caps a
+  // single batch. Consumed by the adjudicate_clusters stage (Phase D).
+  adjudicator: { model: 'deepseek/deepseek-v4-flash', maxCallsPerRun: 10, casesPerCall: 40 },
   // Type-compatible with domain/doorway.ts's DoorwayGuardrailRules: local
   // evidence required, unique proof required, a volume floor of 20 (below
   // that, evaluateServiceLocationPage denies the page as a doorway risk).

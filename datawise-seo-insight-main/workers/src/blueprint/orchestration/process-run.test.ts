@@ -308,7 +308,7 @@ describe('processResearchRun', () => {
     expect(JSON.parse(finalRun.partial_reasons_json).sort()).toEqual(['collect_us_fanout', 'overlay_existing_site', 'refine_clusters']);
 
     const finalStageRows = await getStageRows(d1, runId);
-    expect(finalStageRows.length).toBe(19);
+    expect(finalStageRows.length).toBe(20);
     for (const row of finalStageRows) {
       expect(['succeeded', 'skipped', 'partial', 'failed', 'cancelled']).toContain(row.status);
     }
@@ -320,9 +320,9 @@ describe('processResearchRun', () => {
     // just baked into the input hash. Clustering/page-plan stages get their
     // real versioned ruleset; every other stage still gets the legacy stub.
     const clusterStageRow = finalStageRows.find((r) => r.stage_name === 'build_provisional_clusters');
-    expect(clusterStageRow?.ruleset_version).toBe('cluster-v2');
+    expect(clusterStageRow?.ruleset_version).toBe('cluster-v3');
     const pagePlanStageRow = finalStageRows.find((r) => r.stage_name === 'build_page_plan');
-    expect(pagePlanStageRow?.ruleset_version).toBe('pp-v1');
+    expect(pagePlanStageRow?.ruleset_version).toBe('pp-v3');
     const legacyStageRow = finalStageRows.find((r) => r.stage_name === 'validate_intake');
     expect(legacyStageRow?.ruleset_version).toBe(LEGACY_RULESET_VERSION);
 

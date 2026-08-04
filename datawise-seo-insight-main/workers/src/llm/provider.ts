@@ -37,9 +37,12 @@ export interface ChatCompleteResult {
 // Optional per-call hints. `responseFormat: 'json'` asks the provider to
 // constrain output to a JSON object (OpenAI/Anthropic/DeepSeek/Kimi via
 // OpenRouter all honor this). Providers that can't enforce it ignore the
-// hint silently.
+// hint silently. `temperature` overrides the adapter default (0.7) when a
+// caller needs deterministic output (e.g. the blueprint cluster adjudicator
+// asks for 0); only the OpenRouter adapter honors it today, others ignore it.
 export interface ChatCompleteOptions {
   responseFormat?: 'json';
+  temperature?: number;
 }
 
 export interface LLMProvider {
@@ -393,6 +396,7 @@ class OpenRouterProvider implements LLMProvider {
     const responseFormat = options?.responseFormat === 'json'
       ? { response_format: { type: 'json_object' as const } }
       : {};
+    const temperature = typeof options?.temperature === 'number' ? options.temperature : 0.7;
     const maxRetries = 3;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -406,7 +410,7 @@ class OpenRouterProvider implements LLMProvider {
           model,
           messages,
           stream: false,
-          temperature: 0.7,
+          temperature,
           max_tokens: maxTokens,
           ...(reasoning ? { reasoning } : {}),
           ...responseFormat,

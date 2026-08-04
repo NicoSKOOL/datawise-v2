@@ -662,6 +662,47 @@ async function persistPageCandidates(
   await runBatchedStatements(d1, statements);
 }
 
+// Persists the engine's borderline service-variant folds (spec 3.3a) as pending
+// `variant_fold` cluster_adjudications rows for the Phase D adjudicator. The
+// cluster already folded deterministically into its service page; this row only
+// records the ambiguity for later LLM resolution. Rerun-safe: the run's existing
+// variant_fold rows are cleared first, so a re-drain reflects the latest plan
+// without accumulating duplicates (single-writer stage, same assumption
+// persistPageCandidates makes).
+async function persistVariantFoldCases(
+  d1: D1Database,
+  runId: string,
+  cases: PagePlanResult['pendingVariantCases'],
+  keywordIdByCluster: Map<string, string>,
+  rulesetVersion: string,
+): Promise<void> {
+  await d1
+    .prepare(`DELETE FROM cluster_adjudications WHERE run_id = ? AND case_type = 'variant_fold'`)
+    .bind(runId)
+    .run();
+  if (cases.length === 0) return;
+  const createdAt = nowIso();
+  const statements: D1PreparedStatement[] = cases.map((c) => {
+    const keywordId = keywordIdByCluster.get(c.clusterId) ?? '';
+    return d1
+      .prepare(
+        `INSERT INTO cluster_adjudications
+          (id, run_id, case_type, cluster_ids_json, keyword_ids_json, decision, score_context_json, ruleset_version, created_at)
+         VALUES (?, ?, 'variant_fold', ?, ?, 'pending', ?, ?, ?)`,
+      )
+      .bind(
+        newId('bpadj'),
+        runId,
+        JSON.stringify([c.clusterId]),
+        JSON.stringify(keywordId !== '' ? [keywordId] : []),
+        JSON.stringify({ serviceId: c.serviceId, keyword: c.keyword, extraToken: c.extraToken, rule: 'service_variant_borderline' }),
+        rulesetVersion,
+        createdAt,
+      );
+  });
+  await runBatchedStatements(d1, statements);
+}
+
 export interface BuildPagePlanOutput {
   stage: 'build_page_plan';
   artifactId: string;
@@ -716,6 +757,13 @@ export const buildPagePlanHandler: StageHandler = async (ctx: StageContext) => {
   const { artifactId, storageKey, byteSize } = await persistPagePlanArtifact(ctx, project.organization_id, rawJson);
 
   await persistPageCandidates(ctx.d1, plan.placements);
+  await persistVariantFoldCases(
+    ctx.d1,
+    ctx.runId,
+    plan.pendingVariantCases,
+    new Map(facts.clusters.map((c) => [c.clusterId, c.primaryKeywordId])),
+    rulesetVersion,
+  );
 
   const warnings: string[] = plan.warnings.map((w) => w.code);
   if (facts.clusters.length === 0) warnings.push('no_clusters_planned');

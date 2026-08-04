@@ -1,5 +1,11 @@
 import type { PageType } from '../../contracts/enums';
 import { normalizeSlug } from '../slug';
+import { cleanKeywordForNaming } from '../keyword-naming';
+
+// cleanKeywordForNaming lives in domain/keyword-naming.ts (so the clustering
+// engine can import it without a clustering -> page-plan dependency). Re-exported
+// here to keep the historical import path (`./titles`) working for callers.
+export { cleanKeywordForNaming };
 
 // Deterministic naming for the page plan: logical IDs, slugs, titles, and H1s.
 // All pure over their inputs (pageType + service/area/keyword/brand parts): the
@@ -53,6 +59,16 @@ function capLength(text: string, max: number): string {
   const lastSpace = cut.lastIndexOf(' ');
   const base = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
   return base.replace(/[\s|,\-]+$/, '').trim();
+}
+
+// ---------------------------------------------------------------------------
+// Keyword-to-name cleaning
+// ---------------------------------------------------------------------------
+
+// The primaryKeyword title/H1 fallback always goes through the cleaner; '' when
+// absent so firstNonEmpty moves on.
+function cleanedKeyword(keyword: string | null | undefined): string {
+  return keyword === null || keyword === undefined ? '' : cleanKeywordForNaming(keyword);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +225,11 @@ function titleFor(parts: TitleParts, brand: string): string {
     case 'resource':
     case 'comparison':
     case 'faq': {
-      const topic = titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword));
+      const topic = titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword)));
       return topic ? `${topic} | ${brand}` : brand;
     }
     case 'service_location': {
-      const svc = titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword));
+      const svc = titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword)));
       const city = titleCase(firstNonEmpty(parts.cityName));
       return `${svc} in ${city} | ${brand}`;
     }
@@ -241,9 +257,9 @@ function h1For(parts: TitleParts, brand: string): string {
     case 'resource':
     case 'comparison':
     case 'faq':
-      return titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword)) || brand;
+      return titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword))) || brand;
     case 'service_location': {
-      const svc = titleCase(firstNonEmpty(parts.serviceName, parts.primaryKeyword));
+      const svc = titleCase(firstNonEmpty(parts.serviceName, cleanedKeyword(parts.primaryKeyword)));
       const city = titleCase(firstNonEmpty(parts.cityName));
       return `${svc} in ${city}`;
     }

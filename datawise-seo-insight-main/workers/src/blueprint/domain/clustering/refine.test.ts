@@ -317,6 +317,101 @@ describe('refineClusters', () => {
   });
 });
 
+describe('name-based auto-merge (cluster-v3)', () => {
+  it('merges two clusters cleaning to the same page name with NO live SERP evidence', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning near me', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    // No live snapshots: the merge is driven purely by the cleaned name.
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    expect(result.stats.nameMerges).toBe(1);
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.stats.liveSnapshotCoverage).toBe(0);
+    expect(result.clusters).toHaveLength(1);
+    expect(result.clusters[0].changed).toBe(true);
+    expect(result.clusters[0].origin).toBe('merge');
+    expect(result.clusters[0].draft.memberIds).toEqual(['kwA', 'kwB']);
+    // No contradictory adjudication for a pair merged by name.
+    expect(result.adjudications).toHaveLength(0);
+  });
+
+  it('near-name merges two clusters differing only by a trailing "services" suffix', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'emergency plumbing', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'emergency plumbing services', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    expect(result.stats.nameMerges).toBe(1);
+    expect(result.clusters).toHaveLength(1);
+    expect(result.clusters[0].draft.memberIds).toEqual(['kwA', 'kwB']);
+    expect(result.adjudications).toHaveLength(0);
+  });
+
+  it('does NOT name-merge two clusters with identical cleaned names but different services', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning', tokens: ['drain', 'cleaning'], vector: [0, 1, 0, 0], intent: 'transactional', serviceIds: ['s2'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    expect(result.stats.nameMerges).toBe(0);
+    expect(result.stats.autoMerges).toBe(0);
+    expect(result.clusters).toHaveLength(2);
+  });
+
+  it('never name-merges branded-navigational into generic even with identical cleaned names', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'bluedog plumbing', tokens: ['bluedog', 'plumbing'], vector: [1, 0, 0, 0], intent: 'navigational', isBranded: true }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'bluedog plumbing', tokens: ['bluedog', 'plumbing'], vector: [1, 0, 0, 0], intent: 'transactional', isBranded: false }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'navigational'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+    ];
+    const result = refineClusters({ clusters, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    expect(result.stats.nameMerges).toBe(0);
+    expect(result.clusters).toHaveLength(2);
+    expect(result.clusters.every((c) => !c.changed)).toBe(true);
+  });
+
+  it('is deterministic: identical output regardless of input order (double-run hash) with a name merge', () => {
+    const nodes = [
+      node({ keywordId: 'kwA', normalizedKeyword: 'drain cleaning', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwB', normalizedKeyword: 'drain cleaning near me', vector: [1, 0, 0, 0], intent: 'transactional', serviceIds: ['s1'] }),
+      node({ keywordId: 'kwC', normalizedKeyword: 'water heater install dallas', vector: [0, 0, 1, 0], intent: 'transactional', serviceIds: ['s2'] }),
+    ];
+    const clusters = [
+      cluster('c_a', ['kwA'], 'kwA', 'transactional'),
+      cluster('c_b', ['kwB'], 'kwB', 'transactional'),
+      cluster('c_c', ['kwC'], 'kwC', 'transactional'),
+    ];
+    const run = (cs: RefineClusterInput[]) =>
+      refineClusters({ clusters: cs, nodes, displayKeywords: displayMap(nodes), liveByQuery: new Map(), ruleset: CLUSTER_RULESET_V2 });
+
+    const forward = run(clusters);
+    const reversed = run([...clusters].reverse());
+    expect(canonicalize(forward)).toBe(canonicalize(reversed));
+    expect(canonicalize(run(clusters))).toBe(canonicalize(run(clusters)));
+    expect(forward.stats.nameMerges).toBe(1);
+  });
+});
+
 describe('semantic-only adjudication floor (cluster-v2)', () => {
   it('emits NO adjudication for an unevidenced pair below the adjudication floor', () => {
     // cosine([1,0,0,0],[0.6,0.8,0,0]) = 0.6, below

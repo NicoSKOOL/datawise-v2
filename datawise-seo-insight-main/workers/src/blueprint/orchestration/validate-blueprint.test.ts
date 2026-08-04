@@ -60,6 +60,7 @@ function plannedPage(overrides: Partial<PlannedPage> & { logicalId: string }): P
     primaryKeyword: overrides.primaryKeyword ?? null,
     clusterIds: overrides.clusterIds ?? [],
     sections: overrides.sections ?? [],
+    supportingKeywords: overrides.supportingKeywords ?? [],
     metaDescription: overrides.metaDescription ?? null,
     recommendation: overrides.recommendation ?? 'create',
     consolidateTargetLogicalId: overrides.consolidateTargetLogicalId ?? null,
@@ -70,7 +71,7 @@ function plannedPage(overrides: Partial<PlannedPage> & { logicalId: string }): P
 
 function pagePlanArtifact(pages: PlannedPage[], extra: { warnings?: any[]; pageBudget?: number; totalAddressableVolume?: number | null } = {}): string {
   return JSON.stringify({
-    rulesetVersion: 'pp-v1',
+    rulesetVersion: 'pp-v3',
     pages,
     placements: [],
     warnings: extra.warnings ?? [],
@@ -179,7 +180,7 @@ describe('validateBlueprintHandler', () => {
     artifacts.set(
       `runs/${runId}/overlay.json`,
       JSON.stringify({
-        rulesetVersion: 'pp-v1',
+        rulesetVersion: 'pp-v3',
         plannedPages: [
           { logicalId: 'home', recommendation: 'create', matchedUrl: null, matchScore: null },
           { logicalId: 'svc_drain', recommendation: 'keep', matchedUrl: 'https://acme.com/drain-cleaning', matchScore: 0.9 },
@@ -194,7 +195,7 @@ describe('validateBlueprintHandler', () => {
     expect(output.pageCount).toBe(2);
     expect(output.byRecommendation).toEqual({ keep: 1, update: 0, create: 1, consolidate: 1 });
     expect(output.addressableDemandTotal).toBe(4321);
-    expect(output.rulesetVersion).toBe('pp-v1');
+    expect(output.rulesetVersion).toBe('pp-v3');
     expect(output.warnings).toEqual([]);
   });
 

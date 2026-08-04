@@ -64,6 +64,14 @@ export interface UniverseNormalizationPlan {
   updates: Array<{ keywordId: string; fields: KeywordUniverseUpdate }>;
   serviceLinks: Array<[keywordId: string, serviceId: string]>;
   serviceAreaLinks: Array<[keywordId: string, serviceAreaId: string]>;
+  // Keywords that name a US state or major city (cluster-v3 geo lexicon) NOT
+  // matching any brief service area. NOT excluded here: stage 8 only FLAGS them,
+  // and the Phase D adjudicator makes the actual out_of_area exclusion call
+  // (its hard rule forbids excluding any keyword that token-matches a brief
+  // service area). The handler surfaces this list on the normalize stage output
+  // JSON so the adjudicator can read it back with loadStageOutput. Sorted by
+  // keywordId; matchedGeoTerms sorted, so the payload is deterministic.
+  geoCandidates: Array<{ keywordId: string; matchedGeoTerms: string[] }>;
   counters: {
     total: number;
     retained: number;
@@ -91,6 +99,21 @@ function allTokensPresent(text: string, keywordTokens: ReadonlySet<string>): boo
 
 function matchesExcludedTopic(keywordTokens: ReadonlySet<string>, brief: NormalizedProjectBrief): boolean {
   return brief.excludedTopics.some((topic) => allTokensPresent(topic, keywordTokens));
+}
+
+// True when `termTokens` appear as a contiguous run inside `tokens` (in order).
+// Multi-word geo terms ("san antonio", "north carolina") only match when their
+// words are adjacent, so "san jose antonio" never matches "san antonio". Pure.
+function containsConsecutive(tokens: readonly string[], termTokens: readonly string[]): boolean {
+  if (termTokens.length === 0 || tokens.length < termTokens.length) return false;
+  for (let i = 0; i + termTokens.length <= tokens.length; i++) {
+    let matches = true;
+    for (let j = 0; j < termTokens.length; j++) {
+      if (tokens[i + j] !== termTokens[j]) { matches = false; break; }
+    }
+    if (matches) return true;
+  }
+  return false;
 }
 
 // Applies the enrichment merge (step 1): first-non-null-wins, field by
@@ -196,6 +219,19 @@ export function planUniverseNormalization(input: {
   const serviceLinks: Array<[string, string]> = [];
   const serviceAreaLinks: Array<[string, string]> = [];
 
+  // Geo lexicon (cluster-v3): deduped state + city terms, and the brief's
+  // service-area cities as token sets. A matched geo term is "in area" when all
+  // of its tokens are present in some brief service area's city (mirrors
+  // allTokensPresent, so "austin" matches an "Austin, TX" area). A keyword is a
+  // geo_candidate when it matches at least one geo term that is NOT in area.
+  const geoTerms = [...new Set([...ruleset.geo.stateTokens, ...ruleset.geo.cityTokens])];
+  const briefAreaTokenSets = brief.serviceAreas.map(
+    (area) => new Set(area.city.toLowerCase().split(/\s+/).filter(Boolean))
+  );
+  const termIsBriefArea = (termTokens: readonly string[]): boolean =>
+    briefAreaTokenSets.some((set) => termTokens.every((t) => set.has(t)));
+  const geoCandidates: Array<{ keywordId: string; matchedGeoTerms: string[] }> = [];
+
   interface WorkingRow {
     keywordId: string;
     normalizedKeyword: string;
@@ -209,7 +245,21 @@ export function planUniverseNormalization(input: {
   let languageMismatchCount = 0;
 
   for (const row of keywords) {
-    const tokens = new Set(row.normalizedKeyword.split(' ').filter(Boolean));
+    const tokenList = row.normalizedKeyword.split(' ').filter(Boolean);
+    const tokens = new Set(tokenList);
+
+    // Step 0 (cluster-v3): geo_candidate flag. Independent of the exclusion
+    // pipeline below -- flagged keywords are NOT excluded here (the adjudicator
+    // decides out_of_area later), they only carry the flag on the stage output.
+    const outOfAreaTerms = new Set<string>();
+    for (const term of geoTerms) {
+      const termTokens = term.split(' ');
+      const present = termTokens.length === 1 ? tokens.has(term) : containsConsecutive(tokenList, termTokens);
+      if (present && !termIsBriefArea(termTokens)) outOfAreaTerms.add(term);
+    }
+    if (outOfAreaTerms.size > 0) {
+      geoCandidates.push({ keywordId: row.id, matchedGeoTerms: [...outOfAreaTerms].sort() });
+    }
 
     // Step 1: enrichment merge (first-non-null-at-row-level).
     const { fields: enrichmentFields, wasEnriched } = planEnrichmentFields(row, enrichment.get(row.normalizedKeyword));
@@ -306,10 +356,13 @@ export function planUniverseNormalization(input: {
 
   const excludedCount = working.filter((w) => w.fields.excludedReason !== null).length;
 
+  geoCandidates.sort((a, b) => (a.keywordId < b.keywordId ? -1 : a.keywordId > b.keywordId ? 1 : 0));
+
   return {
     updates: working.map((w) => ({ keywordId: w.keywordId, fields: w.fields })),
     serviceLinks,
     serviceAreaLinks,
+    geoCandidates,
     counters: {
       total: working.length,
       retained: working.length - excludedCount,

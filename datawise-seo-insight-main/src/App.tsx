@@ -50,6 +50,7 @@ const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const AdminActivity = lazy(() => import('./pages/AdminActivity'));
 const AdminContentWriterPrompts = lazy(() => import('./pages/AdminContentWriterPrompts'));
 const BlueprintHome = lazy(() => import('./pages/blueprint/BlueprintHome'));
+const BlueprintCanvas = lazy(() => import('./pages/blueprint/BlueprintCanvas'));
 
 const queryClient = new QueryClient();
 
@@ -183,6 +184,7 @@ const App = () => (
             <Route path="/admin/activity" element={<ProtectedPage><AdminActivity /></ProtectedPage>} />
             <Route path="/admin/content-writer-prompts" element={<ProtectedPage><AdminContentWriterPrompts /></ProtectedPage>} />
             <Route path="/blueprint" element={<ProtectedPage requireAdmin><BlueprintHome /></ProtectedPage>} />
+            <Route path="/blueprint/:projectId" element={<ProtectedPage requireAdmin><BlueprintCanvas /></ProtectedPage>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
