@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { Plus, Trash2, Globe, Target, ChevronUp, ChevronDown, Minus } from 'lucide-react';
 import { locationOptions } from '@/lib/dataForSeoLocations';
+import { useDefaults } from '@/hooks/use-defaults';
 import type { Project } from '@/types/rank-tracking';
 
 interface ProjectListViewProps {
@@ -38,10 +39,14 @@ function formatLastChecked(value: string | null | undefined) {
 }
 
 export default function ProjectListView({ projects, loading, selectedDomain, onSelect, onDelete, onCreate }: ProjectListViewProps) {
+  // The country a project is created with decides which Google every ranking
+  // check runs against, so it must start from the user's saved default rather
+  // than a hardcoded country they never chose.
+  const { defaultLocation } = useDefaults();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [domain, setDomain] = useState('');
-  const [locationCode, setLocationCode] = useState('2036');
+  const [locationCode, setLocationCode] = useState(defaultLocation);
   const [showAllSites, setShowAllSites] = useState(false);
 
   // Scope the list to the sidebar-selected website by default. Other sites'
@@ -55,7 +60,7 @@ export default function ProjectListView({ projects, loading, selectedDomain, onS
     await onCreate(name.trim(), domain.trim(), parseInt(locationCode, 10));
     setName('');
     setDomain('');
-    setLocationCode('2036');
+    setLocationCode(defaultLocation);
     setCreateOpen(false);
   };
 

@@ -69,7 +69,7 @@ import {
   handleVisibilitySummary, handleVisibilityCheck,
 } from './routes/ai';
 import {
-  handleListProjects, handleCreateProject, handleDeleteProject,
+  handleListProjects, handleCreateProject, handleUpdateProject, handleDeleteProject,
   handleListKeywords, handleAddKeywords, handleDeleteKeyword,
   handleCheckRankings, handleKeywordHistory,
   handleProjectReport, handleDashboardSummary,
@@ -520,6 +520,10 @@ export default {
       }
       if (path === '/api/rank-tracking/projects' && method === 'POST') {
         return addCors(await handleCreateProject(request, env, user.id));
+      }
+      if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+$/) && method === 'PATCH') {
+        const projectId = path.split('/')[4];
+        return addCors(await handleUpdateProject(request, env, user.id, projectId));
       }
       if (path.match(/^\/api\/rank-tracking\/projects\/[^/]+$/) && method === 'DELETE') {
         const projectId = path.split('/')[4];

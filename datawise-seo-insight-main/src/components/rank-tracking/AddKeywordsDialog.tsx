@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -6,20 +6,41 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
+import { useDefaults } from '@/hooks/use-defaults';
 
 interface AddKeywordsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onAdd: (keywords: string[], locationCode: number, languageCode: string, device: 'desktop' | 'mobile') => Promise<void>;
+  /** The project these keywords are added to. Its locale wins over the account default. */
+  projectLocationCode?: number | null;
+  projectLanguageCode?: string | null;
 }
 
-export default function AddKeywordsDialog({ open, onOpenChange, onAdd }: AddKeywordsDialogProps) {
+export default function AddKeywordsDialog({
+  open, onOpenChange, onAdd, projectLocationCode, projectLanguageCode,
+}: AddKeywordsDialogProps) {
+  // Keywords inherit the project's country/language, falling back to the
+  // account default. A hardcoded country here silently tracked UK sites in
+  // US Google.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const initialLocation = projectLocationCode ? String(projectLocationCode) : defaultLocation;
+  const initialLanguage = projectLanguageCode || defaultLanguage;
+
   const [keywordInput, setKeywordInput] = useState('');
-  const [location, setLocation] = useState('2840');
-  const [language, setLanguage] = useState('en');
+  const [location, setLocation] = useState(initialLocation);
+  const [language, setLanguage] = useState(initialLanguage);
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [adding, setAdding] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Re-seed each time the dialog opens: the same mounted dialog is reused
+  // across projects, so stale state would carry one project's locale to another.
+  useEffect(() => {
+    if (!open) return;
+    setLocation(initialLocation);
+    setLanguage(initialLanguage);
+  }, [open, initialLocation, initialLanguage]);
 
   const firstCsvField = (line: string): string => {
     const quoted = line.match(/^\s*"((?:[^"]|"")*)"/);
