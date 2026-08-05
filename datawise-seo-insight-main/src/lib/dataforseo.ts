@@ -162,6 +162,24 @@ export async function createRankProject(params: { name: string; domain: string; 
   return api('/api/rank-tracking/projects', { method: 'POST', body: params });
 }
 
+/** Fixes a project tracked against the wrong country's Google. */
+export async function updateRankProjectLocale(projectId: string, params: {
+  location_code: number;
+  language_code?: string;
+  /** Defaults to true server-side: rewrites every tracked keyword to the new locale. */
+  apply_to_keywords?: boolean;
+  /** Positions measured in the old country are not comparable to the new ones. */
+  reset_history?: boolean;
+}) {
+  return api<{
+    success: boolean;
+    location_code: number | null;
+    language_code: string | null;
+    keywords_updated: number;
+    history_cleared: boolean;
+  }>(`/api/rank-tracking/projects/${projectId}`, { method: 'PATCH', body: params });
+}
+
 export async function deleteRankProject(projectId: string) {
   return api(`/api/rank-tracking/projects/${projectId}`, { method: 'DELETE' });
 }

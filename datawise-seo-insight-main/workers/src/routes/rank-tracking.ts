@@ -46,6 +46,55 @@ function extractDomain(url: string): string | null {
   }
 }
 
+// Last-resort locale when a caller supplies none. Falling straight back to the
+// US silently tracked non-US sites in the wrong Google, so prefer whatever the
+// user chose in Settings and only use 2840 when they have no preference.
+const FALLBACK_LOCATION_CODE = 2840;
+
+async function userDefaultLocale(
+  env: Env,
+  userId: string,
+): Promise<{ location_code: number; language_code: string }> {
+  const row = await env.DB.prepare(
+    'SELECT default_location_code, default_language_code FROM users WHERE id = ?'
+  ).bind(userId).first() as { default_location_code?: number; default_language_code?: string } | null;
+
+  return {
+    location_code: Number(row?.default_location_code) || FALLBACK_LOCATION_CODE,
+    language_code: (row?.default_language_code as string) || 'en',
+  };
+}
+
+export function parseLocationCode(value: unknown): number | null {
+  const code = Number(value);
+  return Number.isInteger(code) && code > 0 ? code : null;
+}
+
+export function parseLanguageCode(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 16) : null;
+}
+
+/**
+ * Which Google a tracked keyword is checked against.
+ *
+ * Precedence is explicit request > owning project > account default. Before
+ * this existed the callers each defaulted to the US, so a UK site added from
+ * the Add Keywords dialog was silently tracked in google.com.
+ */
+export function resolveKeywordLocale(input: {
+  requested?: { location_code?: unknown; language_code?: unknown };
+  project?: { location_code?: number | null };
+  accountDefault: { location_code: number; language_code: string };
+}): { location_code: number; language_code: string } {
+  const { requested, project, accountDefault } = input;
+  return {
+    location_code: parseLocationCode(requested?.location_code)
+      ?? parseLocationCode(project?.location_code)
+      ?? accountDefault.location_code,
+    language_code: parseLanguageCode(requested?.language_code) ?? accountDefault.language_code,
+  };
+}
+
 function findTrackedDomainPosition(items: any[], targetDomain: string) {
   for (const item of items || []) {
     if (item.type !== 'organic' || !item.url) continue;
@@ -120,13 +169,114 @@ export async function handleCreateProject(request: Request, env: Env, userId: st
 
   const id = generateId();
   const cleanedDomain = cleanDomain(domain);
-  const locCode = location_code || 2840;
+  const locCode = parseLocationCode(location_code) ?? (await userDefaultLocale(env, userId)).location_code;
 
   await env.DB.prepare(
     'INSERT INTO seo_projects (id, user_id, name, domain, location_code) VALUES (?, ?, ?, ?, ?)'
   ).bind(id, userId, name.trim(), cleanedDomain, locCode).run();
 
   return json({ id, name: name.trim(), domain: cleanedDomain, location_code: locCode, keyword_count: 0 }, 201);
+}
+
+// PATCH /api/rank-tracking/projects/:id
+//
+// Corrects a project's country/language. Projects created before the locale
+// defaults were fixed carry the wrong Google, and without this there is no way
+// to repair them short of deleting every keyword and re-adding it.
+export async function handleUpdateProject(
+  request: Request,
+  env: Env,
+  userId: string,
+  projectId: string,
+): Promise<Response> {
+  const project = await env.DB.prepare(
+    'SELECT id, location_code FROM seo_projects WHERE id = ? AND user_id = ?'
+  ).bind(projectId, userId).first() as { id: string; location_code?: number | null } | null;
+
+  if (!project) return json({ error: 'Project not found' }, 404);
+
+  const body = await request.json() as {
+    location_code?: unknown;
+    language_code?: unknown;
+    apply_to_keywords?: boolean;
+    reset_history?: boolean;
+  };
+
+  const locationCode = parseLocationCode(body.location_code);
+  if (body.location_code !== undefined && locationCode === null) {
+    return json({ error: 'location_code must be a positive integer' }, 400);
+  }
+  const languageCode = parseLanguageCode(body.language_code);
+
+  if (locationCode === null && languageCode === null) {
+    return json({ error: 'Nothing to update: pass location_code and/or language_code' }, 400);
+  }
+
+  // Default to true: a project's country is meaningless if its keywords keep
+  // checking a different one, which is exactly the state this endpoint repairs.
+  const applyToKeywords = body.apply_to_keywords !== false;
+  const resetHistory = body.reset_history === true;
+
+  const stmts: D1PreparedStatement[] = [];
+
+  if (locationCode !== null) {
+    stmts.push(
+      env.DB.prepare('UPDATE seo_projects SET location_code = ? WHERE id = ? AND user_id = ?')
+        .bind(locationCode, projectId, userId)
+    );
+  }
+
+  let keywordsUpdated = 0;
+  if (applyToKeywords) {
+    const countRow = await env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
+    ).bind(projectId).first() as any;
+    keywordsUpdated = Number(countRow?.cnt || 0);
+
+    if (keywordsUpdated > 0) {
+      if (locationCode !== null) {
+        stmts.push(
+          env.DB.prepare('UPDATE tracked_keywords SET location_code = ? WHERE project_id = ? AND is_active = 1')
+            .bind(locationCode, projectId)
+        );
+      }
+      if (languageCode !== null) {
+        stmts.push(
+          env.DB.prepare('UPDATE tracked_keywords SET language_code = ? WHERE project_id = ? AND is_active = 1')
+            .bind(languageCode, projectId)
+        );
+      }
+
+      // Positions recorded under the old country are not comparable to the new
+      // ones. Dropping them is opt-in because it destroys real history.
+      if (resetHistory) {
+        stmts.push(
+          env.DB.prepare(`
+            DELETE FROM rank_history WHERE keyword_id IN (
+              SELECT id FROM tracked_keywords WHERE project_id = ?
+            )
+          `).bind(projectId)
+        );
+        stmts.push(
+          env.DB.prepare(`
+            DELETE FROM local_rank_history WHERE keyword_id IN (
+              SELECT id FROM tracked_keywords WHERE project_id = ?
+            )
+          `).bind(projectId)
+        );
+      }
+    }
+  }
+
+  await env.DB.batch(stmts);
+
+  return json({
+    success: true,
+    location_code: locationCode ?? project.location_code ?? null,
+    language_code: languageCode,
+    keywords_updated: applyToKeywords ? keywordsUpdated : 0,
+    history_cleared: resetHistory && applyToKeywords && keywordsUpdated > 0,
+  });
 }
 
 // DELETE /api/rank-tracking/projects/:id
@@ -175,16 +325,27 @@ export async function handleListKeywords(env: Env, userId: string, projectId: st
 
 // POST /api/rank-tracking/projects/:id/keywords
 export async function handleAddKeywords(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
+  // seo_projects carries location_code but no language_code, so language falls
+  // back to the account default.
   const project = await env.DB.prepare(
-    'SELECT id, project_type FROM seo_projects WHERE id = ? AND user_id = ?'
-  ).bind(projectId, userId).first() as { id: string; project_type: string } | null;
+    'SELECT id, project_type, location_code FROM seo_projects WHERE id = ? AND user_id = ?'
+  ).bind(projectId, userId).first() as
+    { id: string; project_type: string; location_code?: number | null } | null;
 
   if (!project) return json({ error: 'Project not found' }, 404);
   const isLocal = project.project_type === 'local';
 
-  const { keywords, location_code = 2840, language_code = 'en', device = 'desktop', initial_positions } = await request.json() as any;
+  const { keywords, location_code, language_code, device = 'desktop', initial_positions } = await request.json() as any;
   if (!keywords?.length) return json({ error: 'Keywords array is required' }, 400);
   const cleanDevice = device === 'mobile' ? 'mobile' : 'desktop';
+
+  // Keywords belong to the project's Google, not to a hardcoded country. Only
+  // fall through to the account default when the project itself has none.
+  const { location_code: resolvedLocation, language_code: resolvedLanguage } = resolveKeywordLocale({
+    requested: { location_code, language_code },
+    project,
+    accountDefault: await userDefaultLocale(env, userId),
+  });
 
   // Get existing keywords to skip duplicates. Dedupe is per keyword+device:
   // the same keyword tracked on desktop AND mobile is two distinct entries.
@@ -206,7 +367,7 @@ export async function handleAddKeywords(request: Request, env: Env, userId: stri
     stmts.push(
       env.DB.prepare(
         'INSERT INTO tracked_keywords (id, project_id, keyword, location_code, language_code, device) VALUES (?, ?, ?, ?, ?, ?)'
-      ).bind(keywordId, projectId, cleaned, location_code, language_code, cleanDevice)
+      ).bind(keywordId, projectId, cleaned, resolvedLocation, resolvedLanguage, cleanDevice)
     );
 
     // Seed history with the provided position so the first row of the

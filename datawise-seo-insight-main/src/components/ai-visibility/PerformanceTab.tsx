@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { RefreshCw, Sparkles, TrendingUp } from 'lucide-react';
 import { useProperty } from '@/contexts/PropertyContext';
+import { useDefaults } from '@/hooks/use-defaults';
 import { fetchRankProjects, createRankProject, fetchProjectKeywords } from '@/lib/dataforseo';
 import { cleanTrackingDomain as cleanDomain, rankProjectsForAITracking } from '@/lib/ai-tracking';
 import type { Project, TrackedKeyword } from '@/types/rank-tracking';
@@ -16,6 +17,7 @@ import AIVisibilityPanel from '@/components/rank-tracking/AIVisibilityPanel';
 // exists yet, one click creates it.
 export default function PerformanceTab() {
   const { selectedProperty, primaryDomain } = useProperty();
+  const { defaultLocation } = useDefaults();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [keywords, setKeywords] = useState<string[]>([]);
@@ -67,7 +69,13 @@ export default function PerformanceTab() {
     if (!primaryDomain) return;
     setCreating(true);
     try {
-      await createRankProject({ name: primaryDomain, domain: primaryDomain });
+      // Without an explicit country the API falls back to the US, which then
+      // stamps every keyword added to this project with the wrong Google.
+      await createRankProject({
+        name: primaryDomain,
+        domain: primaryDomain,
+        location_code: parseInt(defaultLocation, 10),
+      });
       await load();
       toast({ title: 'Tracking project created', description: `AI visibility tracking is ready for ${primaryDomain}. Add the queries you want checked weekly.` });
     } catch (err) {

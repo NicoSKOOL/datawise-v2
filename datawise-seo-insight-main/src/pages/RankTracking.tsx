@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useTabParam } from '@/hooks/use-tab-param';
 import { useProperty } from '@/contexts/PropertyContext';
+import { useDefaults } from '@/hooks/use-defaults';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -9,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
 import {
-  fetchRankProjects, createRankProject, deleteRankProject,
+  fetchRankProjects, createRankProject, updateRankProjectLocale, deleteRankProject,
   fetchProjectKeywords, addProjectKeywords, deleteTrackedKeyword,
   checkProjectRankings, fetchKeywordHistory, fetchProjectReport,
 } from '@/lib/dataforseo';
@@ -29,6 +30,7 @@ import GSCQueryTable from '@/components/rank-tracking/GSCQueryTable';
 import type { Project, TrackedKeyword, HistoryEntry, ProjectReport } from '@/types/rank-tracking';
 import type { LocalProject, LocalTrackedKeyword, LocalProjectReport, GBPProfile } from '@/types/local-seo';
 import ProjectDetailHeader from '@/components/rank-tracking/ProjectDetailHeader';
+import ProjectLocaleDialog from '@/components/rank-tracking/ProjectLocaleDialog';
 import AddKeywordsDialog from '@/components/rank-tracking/AddKeywordsDialog';
 import ProjectStatsCards from '@/components/rank-tracking/ProjectStatsCards';
 import KeywordTable from '@/components/rank-tracking/KeywordTable';
@@ -70,6 +72,7 @@ export default function RankTracking() {
   const [loadingKeywords, setLoadingKeywords] = useState(false);
   const [checking, setChecking] = useState(false);
   const [addKeywordsOpen, setAddKeywordsOpen] = useState(false);
+  const [localeDialogOpen, setLocaleDialogOpen] = useState(false);
   const [historyKeyword, setHistoryKeyword] = useState<TrackedKeyword | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -119,6 +122,8 @@ export default function RankTracking() {
   const [localGBPProfile, setLocalGBPProfile] = useState<GBPProfile | null>(null);
   const [linkGBPOpen, setLinkGBPOpen] = useState(false);
   const { toast } = useToast();
+  const { defaultLocation } = useDefaults();
+  const fallbackLocationCode = parseInt(defaultLocation, 10);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(querySearch), 300);
@@ -322,6 +327,30 @@ export default function RankTracking() {
       setAddKeywordsOpen(false);
       loadKeywords(selectedProject.id);
       loadProjects();
+    } catch (err: unknown) {
+      toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
+    }
+  };
+
+  // Repairs a project whose keywords are checked against the wrong Google.
+  const handleUpdateProjectLocale = async (params: {
+    location_code: number;
+    language_code: string;
+    reset_history: boolean;
+  }) => {
+    if (!selectedProject) return;
+    try {
+      const result = await updateRankProjectLocale(selectedProject.id, params);
+      setSelectedProject((prev) => (prev ? { ...prev, location_code: params.location_code } : prev));
+      toast({
+        title: 'Tracking country updated',
+        description: result.history_cleared
+          ? `${result.keywords_updated} keywords moved. Past rankings cleared: run a check to repopulate.`
+          : `${result.keywords_updated} keywords moved. Run a check to get positions for the new country.`,
+      });
+      loadKeywords(selectedProject.id);
+      loadProjects();
+      loadReport(selectedProject.id, reportPeriod);
     } catch (err: unknown) {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
     }
@@ -671,6 +700,7 @@ export default function RankTracking() {
           category={localCategory}
           city={localCity}
           gbpProfile={localGBPProfile}
+          projectLocationCode={selectedLocalProject.location_code}
         />
 
         <PeriodSelector value={localReportPeriod} onChange={setLocalReportPeriod} />
@@ -706,7 +736,7 @@ export default function RankTracking() {
                   (selectedLocalProject.place_id || selectedLocalProject.business_name) ? (
                     <LocalKeywordDiscoveryPanel
                       projectId={selectedLocalProject.id}
-                      locationCode={selectedLocalProject.location_code || 2840}
+                      locationCode={selectedLocalProject.location_code || fallbackLocationCode}
                       onAdd={handleAddLocalKeywords}
                       onOpenManual={() => setLocalAddKeywordsOpen(true)}
                     />
@@ -714,7 +744,7 @@ export default function RankTracking() {
                     <LocalSuggestionsInline
                       category={localCategory}
                       city={localCity}
-                      locationCode={selectedLocalProject.location_code || 2840}
+                      locationCode={selectedLocalProject.location_code || fallbackLocationCode}
                       onAdd={handleAddLocalKeywords}
                       onOpenManual={() => setLocalAddKeywordsOpen(true)}
                     />
@@ -765,6 +795,7 @@ export default function RankTracking() {
           onBack={() => { setSelectedProject(null); setKeywords([]); loadProjects(); }}
           onAddKeywords={() => setAddKeywordsOpen(true)}
           onCheckRankings={handleCheckRankings}
+          onEditLocale={() => setLocaleDialogOpen(true)}
           extraActions={
             <ExportMenu
               surface="rank-tracking"
@@ -791,6 +822,16 @@ export default function RankTracking() {
           open={addKeywordsOpen}
           onOpenChange={setAddKeywordsOpen}
           onAdd={handleAddKeywords}
+          projectLocationCode={selectedProject.location_code}
+        />
+
+        <ProjectLocaleDialog
+          open={localeDialogOpen}
+          onOpenChange={setLocaleDialogOpen}
+          currentLocationCode={selectedProject.location_code}
+          currentLanguageCode={keywords[0]?.language_code}
+          keywordCount={keywords.length}
+          onSave={handleUpdateProjectLocale}
         />
 
         <PeriodSelector value={reportPeriod} onChange={setReportPeriod} />

@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
+import { useDefaults } from '@/hooks/use-defaults';
 import { fetchLocalKeywordSuggestions, type LocalKeywordSuggestionGroup } from '@/lib/local-seo';
 import { RefreshCw, ChevronDown, ChevronRight, Check, CheckCircle, XCircle } from 'lucide-react';
 import type { GBPProfile } from '@/types/local-seo';
@@ -18,6 +19,9 @@ interface LocalAddKeywordsDialogProps {
   category: string | null;
   city: string | null;
   gbpProfile?: GBPProfile | null;
+  /** The local project these keywords belong to. Its locale wins over the account default. */
+  projectLocationCode?: number | null;
+  projectLanguageCode?: string | null;
 }
 
 function CompactCompleteness({ profile }: { profile: GBPProfile }) {
@@ -68,16 +72,31 @@ function CompactCompleteness({ profile }: { profile: GBPProfile }) {
 }
 
 export default function LocalAddKeywordsDialog({
-  open, onOpenChange, onAdd, category, city, gbpProfile,
+  open, onOpenChange, onAdd, category, city, gbpProfile, projectLocationCode, projectLanguageCode,
 }: LocalAddKeywordsDialogProps) {
+  // Local pack checks run in whatever country these rows carry, so start from
+  // the project's own country instead of a hardcoded one.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const initialLocation = projectLocationCode ? String(projectLocationCode) : defaultLocation;
+  const initialLanguage = projectLanguageCode || defaultLanguage;
+
   const [keywordInput, setKeywordInput] = useState('');
-  const [location, setLocation] = useState('2840');
-  const [language, setLanguage] = useState('en');
+  const [location, setLocation] = useState(initialLocation);
+  const [language, setLanguage] = useState(initialLanguage);
   const [adding, setAdding] = useState(false);
   const [suggestions, setSuggestions] = useState<LocalKeywordSuggestionGroup[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+
+  // Re-seed the locale each time the dialog opens: the same mounted dialog is
+  // reused across projects, so stale state would carry one project's locale
+  // to another.
+  useEffect(() => {
+    if (!open) return;
+    setLocation(initialLocation);
+    setLanguage(initialLanguage);
+  }, [open, initialLocation, initialLanguage]);
 
   // Load suggestions when dialog opens
   useEffect(() => {
@@ -87,11 +106,13 @@ export default function LocalAddKeywordsDialog({
     setOpenGroups(new Set());
     setLoadingSuggestions(true);
 
+    // Use the freshly seeded locale, not `location`/`language` state, which
+    // still holds the previous render's value on the open that reseeds it.
     fetchLocalKeywordSuggestions({
       category,
       city: city || undefined,
-      location_code: parseInt(location, 10),
-      language_code: language,
+      location_code: parseInt(initialLocation, 10),
+      language_code: initialLanguage,
     })
       .then((data) => {
         setSuggestions(data.suggestions);
@@ -100,7 +121,9 @@ export default function LocalAddKeywordsDialog({
       })
       .catch(() => setSuggestions([]))
       .finally(() => setLoadingSuggestions(false));
-  }, [open, category, city]);
+    // Suggestions are locale-specific, so a project in a different country
+    // must not reuse another country's cached list.
+  }, [open, category, city, initialLocation, initialLanguage]);
 
   const toggleKeyword = (kw: string) => {
     setSelected((prev) => {
