@@ -109,3 +109,13 @@ faqs:
     answer: "DataWise runs live queries to each AI engine at the time of your scan, so every check reflects that engine's current output rather than a cached snapshot. Because AI answers are non-deterministic and updated frequently, we recommend running visibility checks after any major content publish, PR event, or product update. Tracking over time, rather than in one-off checks, reveals citation trends and shows whether your generative engine optimization efforts are moving the needle across ChatGPT, Perplexity, Google AI Overviews, and AI Mode."
   - question: "Can I track Perplexity or Gemini citations for a specific industry?"
     answer: "Yes. DataWise lets you input any keyword or brand term, so you can scope tracking to your specific vertical, whether that is legal services, SaaS, e-commerce, or local businesses. Run industry-specific queries to see which competitors earn Perplexity citations in your niche, which topics trigger AI Overviews, and what PAA questions dominate your category. This makes AI Visibility useful not just for brand monitoring but for full competitive intelligence across the emerging GEO and AEO landscape."
+
+video:
+  youtubeId: "DBwWMufaxAQ"
+  title: "How To Find Fan-out Queries | DataWise"
+  description: "Walk through DataWise's Fan-out Queries tool: enter a target keyword and see the cluster of follow-up questions Google AI Mode and ChatGPT fan out into, so you can structure pages that answer the whole intent surface and earn more AI citations."
+  uploadDate: "2026-05-21"
+  duration: "PT3M31S"
+  thumbnail: "https://i.ytimg.com/vi/DBwWMufaxAQ/maxresdefault.jpg"
+  eyebrow: "Walkthrough"
+  heading: "See Fan-out Queries in action"
