@@ -1,20 +1,22 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
-
-const CHUNK_ERROR_RE =
-  /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError/i;
+import { extractModuleUrl, isChunkLoadError, repairAssetCache } from '@/lib/chunk-cache-repair';
 
 const RELOAD_FLAG = 'dw_chunk_reload_at';
 const RELOAD_WINDOW_MS = 60_000;
-
-function isChunkLoadError(error: unknown): boolean {
-  return error instanceof Error && CHUNK_ERROR_RE.test(`${error.name}: ${error.message}`);
-}
+const REPAIR_TIMEOUT_MS = 8_000;
 
 // After a deploy, chunk filenames change and a stale client can fail to fetch a
 // lazy route. One automatic reload picks up the new bundle; the sessionStorage
 // timestamp stops a broken deploy from causing a reload loop.
-function tryReloadOnceForStaleChunk(): boolean {
+//
+// A plain reload is not always enough. When Cloudflare Pages answers an asset
+// URL with the SPA fallback (200 + text/html, cached for four hours), the
+// reload re-reads that poisoned cache entry and the route stays broken. So we
+// first refetch the failing module's import graph with the HTTP cache bypassed,
+// which replaces any poisoned entries, and only then reload. See
+// src/lib/chunk-cache-repair.ts.
+function tryReloadOnceForStaleChunk(error: Error): boolean {
   try {
     const last = Number(sessionStorage.getItem(RELOAD_FLAG) || 0);
     if (Date.now() - last < RELOAD_WINDOW_MS) return false;
@@ -22,7 +24,19 @@ function tryReloadOnceForStaleChunk(): boolean {
   } catch {
     return false;
   }
-  window.location.reload();
+
+  const moduleUrl = extractModuleUrl(error.message);
+  const reload = () => window.location.reload();
+  if (!moduleUrl) {
+    reload();
+    return true;
+  }
+
+  // Reload even if the repair hangs, so recovery never depends on the network.
+  Promise.race([
+    repairAssetCache(moduleUrl),
+    new Promise((resolve) => setTimeout(resolve, REPAIR_TIMEOUT_MS)),
+  ]).then(reload, reload);
   return true;
 }
 
@@ -47,7 +61,7 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[AppErrorBoundary] Render crashed:', error, info?.componentStack);
-    if (isChunkLoadError(error) && tryReloadOnceForStaleChunk()) {
+    if (isChunkLoadError(error) && tryReloadOnceForStaleChunk(error)) {
       this.setState({ error, info, reloading: true });
       return;
     }
@@ -56,6 +70,24 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   private reset = () => {
     this.setState({ error: null, info: null, reloading: false });
+  };
+
+  // The manual button repairs the asset cache too: the automatic pass is capped
+  // to once a minute, so a user clicking again should get the strongest retry
+  // rather than a plain reload that re-reads the same poisoned cache entry.
+  private reloadWithRepair = () => {
+    const { error } = this.state;
+    const moduleUrl = error && isChunkLoadError(error) ? extractModuleUrl(error.message) : null;
+    const reload = () => window.location.reload();
+    if (!moduleUrl) {
+      reload();
+      return;
+    }
+    this.setState({ reloading: true });
+    Promise.race([
+      repairAssetCache(moduleUrl),
+      new Promise((resolve) => setTimeout(resolve, REPAIR_TIMEOUT_MS)),
+    ]).then(reload, reload);
   };
 
   render() {
@@ -97,7 +129,7 @@ export class AppErrorBoundary extends Component<Props, State> {
           )}
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={this.reloadWithRepair}
             className="inline-flex items-center rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium hover:bg-primary/90"
           >
             Reload page
