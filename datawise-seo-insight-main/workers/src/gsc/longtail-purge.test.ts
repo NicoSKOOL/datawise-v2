@@ -41,11 +41,15 @@ function makeFakes(opts: { candidates: string[]; rowsPerProperty: number; kv?: R
       return stmt;
     },
   };
+  const puts: Array<{ key: string; value: string; at: number }> = [];
   const kv: any = {
     async get(k: string) { return kvStore[k] ?? null; },
-    async put(k: string, v: string) { kvStore[k] = v; },
+    async put(k: string, v: string) {
+      kvStore[k] = v;
+      puts.push({ key: k, value: v, at: Date.now() });
+    },
   };
-  return { db, kv, kvStore, prepared, remaining };
+  return { db, kv, kvStore, prepared, remaining, puts };
 }
 
 describe('purgeLongTailGSCData', () => {
@@ -96,5 +100,20 @@ describe('purgeLongTailGSCData', () => {
     const second = await purgeLongTailGSCData({ DB: f.db, KV: f.kv } as any, { maxChunks: 4 });
     expect(second.done).toBe(true);
     expect(f.remaining.get('p2')).toBe(0);
+  });
+
+  it('throttles intermediate cursor writes and always flushes the final position', async () => {
+    const candidates = Array.from({ length: 10 }, (_, i) => `p${i + 1}`);
+    // rowsPerProperty: 1 drains in a single cheap chunk (deleted < GSC_PURGE_CHUNK).
+    const f = makeFakes({ candidates, rowsPerProperty: 1 });
+    const result = await purgeLongTailGSCData({ DB: f.db, KV: f.kv } as any);
+
+    const cursorPuts = f.puts.filter((p) => p.key === 'gsc-longtail-purge-cursor');
+    // Real time barely advances across 10 synchronous fast-drains, so the
+    // 1-write-per-second throttle should collapse this to a handful of puts,
+    // not one per property.
+    expect(cursorPuts.length).toBeLessThan(10);
+    expect(result.done).toBe(true);
+    expect(f.kvStore['gsc-longtail-purge-cursor']).toBe('p10');
   });
 });

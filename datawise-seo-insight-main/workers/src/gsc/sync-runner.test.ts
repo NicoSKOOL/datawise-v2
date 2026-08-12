@@ -4,7 +4,7 @@ vi.mock('./oauth', () => ({
   refreshGSCToken: vi.fn(async () => 'fake-access-token'),
 }));
 
-import { runDailyGSCSync, GSC_NIGHTLY_CONCURRENCY } from './sync-runner';
+import { runDailyGSCSync, GSC_NIGHTLY_CONCURRENCY, GSC_SYNC_BREAKER_THRESHOLD } from './sync-runner';
 
 function makeEnvWithDue(rows: Array<{ id: string; user_id: string }>) {
   const db: any = {
@@ -85,5 +85,33 @@ describe('runDailyGSCSync worker pool', () => {
       return okResponse();
     });
     expect(seen.length).toBe(6); // rejection and 500 do not stop the pool
+  });
+
+  it('trips the breaker after consecutive failures and stops dispatching new work', async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, user_id: `u${i}` }));
+    const seen: string[] = [];
+    await runDailyGSCSync(makeEnvWithDue(rows), Date.now() + 60_000, async (_e, _u, id) => {
+      seen.push(id);
+      return new Response('{}', { status: 500 });
+    });
+    // The pool stops after roughly GSC_SYNC_BREAKER_THRESHOLD + concurrency
+    // attempts: the in-flight lanes that already claimed work before the
+    // breaker tripped are allowed to finish, but no lane claims new work.
+    expect(seen.length).toBeGreaterThanOrEqual(GSC_SYNC_BREAKER_THRESHOLD);
+    expect(seen.length).toBeLessThanOrEqual(GSC_SYNC_BREAKER_THRESHOLD + GSC_NIGHTLY_CONCURRENCY);
+    expect(seen.length).toBeLessThan(40);
+  });
+
+  it('does not trip when failures are not consecutive', async () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, user_id: `u${i}` }));
+    const seen: string[] = [];
+    let callCount = 0;
+    await runDailyGSCSync(makeEnvWithDue(rows), Date.now() + 60_000, async (_e, _u, id) => {
+      seen.push(id);
+      const n = callCount++;
+      if (n < 4) return new Response('{}', { status: 500 });
+      return okResponse();
+    });
+    expect(seen.length).toBe(40); // 4 failures reset by a success never reach the threshold
   });
 });

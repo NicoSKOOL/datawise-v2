@@ -1006,6 +1006,16 @@ export async function purgeLongTailGSCData(
   let chunks = 0;
   let exhaustedList = candidates.length < GSC_LONGTAIL_PROPS_PAGE;
 
+  // Workers KV allows about 1 write/sec to a single key. A stretch of
+  // already-clean properties drains in one cheap DELETE each, so writing the
+  // cursor after every property can exceed that rate and throw a 429 mid-run.
+  // Keep the cursor in memory, flush it to KV at most once per second, and
+  // always flush the final position once on exit below.
+  let pendingCursor = cursor;
+  let lastFlushedCursor = cursor;
+  let lastCursorPutAt = startedAt;
+  const CURSOR_PUT_INTERVAL_MS = 1000;
+
   for (const prop of candidates) {
     if (chunks >= maxChunks || Date.now() - startedAt > budgetMs) {
       exhaustedList = false;
@@ -1030,11 +1040,27 @@ export async function purgeLongTailGSCData(
     }
     if (!propDrained) { exhaustedList = false; break; }
     properties += 1;
-    await env.KV.put(GSC_LONGTAIL_CURSOR_KEY, prop.id);
+    pendingCursor = prop.id;
+    const now = Date.now();
+    if (now - lastCursorPutAt >= CURSOR_PUT_INTERVAL_MS) {
+      await env.KV.put(GSC_LONGTAIL_CURSOR_KEY, pendingCursor);
+      lastFlushedCursor = pendingCursor;
+      lastCursorPutAt = now;
+    }
   }
 
   const done = exhaustedList;
   if (done) await env.KV.put(GSC_LONGTAIL_DONE_KEY, '1');
+  // Cursor only ever names a fully drained property, so a best-effort final
+  // write is safe: if it fails, the next run just re-purges some already
+  // clean properties (idempotent deletes), which is harmless.
+  if (pendingCursor !== lastFlushedCursor) {
+    try {
+      await env.KV.put(GSC_LONGTAIL_CURSOR_KEY, pendingCursor);
+    } catch (e) {
+      console.error('gsc longtail purge final cursor put failed:', e);
+    }
+  }
   return { properties, rows, done };
 }
 

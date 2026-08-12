@@ -7,6 +7,16 @@ import { orderSyncQueue, describeSyncQueue, type SyncQueueRow } from './sync-que
 // Console API quota (1,200 QPM per user) is nowhere near binding at 8.
 export const GSC_NIGHTLY_CONCURRENCY = 8;
 
+// Every GSC fetch page and every D1 statement/batch counts against the
+// Worker's per-invocation subrequest cap. At 8 lanes for up to 11 minutes a
+// nightly run can approach that cap; once it is exhausted every remaining
+// syncFn call fails instantly, and a sync interrupted between its delete
+// batch and its inserts strands that property with partial data. A run of
+// consecutive failures is the signal that the cap (or GSC/D1 itself) is
+// exhausted, not isolated per-property errors, so stop dispatching new work
+// instead of churning through hundreds of guaranteed failures.
+export const GSC_SYNC_BREAKER_THRESHOLD = 5;
+
 // Daily GSC re-sync over enabled properties whose owner has logged in within
 // the 30-day session lifetime (a currently-valid session). Properties owned by
 // dormant users are skipped: their data is NOT deleted, and the next daily run
@@ -62,24 +72,31 @@ export async function runDailyGSCSync(
 
   let synced = 0, skipped = 0, failed = 0;
   let next = 0;
+  let consecutiveFailures = 0;
+  let tripped = false;
   // Shared-index pool: each lane pulls the next property the moment it
   // finishes its current one, so a 3-minute straggler occupies one lane
   // instead of stalling a whole batch. The deadline is absolute (computed by
   // the caller from the scheduled-tick start), so time spent in the site-audit
   // queue before us no longer comes out of an unaccounted budget.
   const worker = async (): Promise<void> => {
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !tripped) {
       const idx = next++;
       if (idx >= rows.length) return;
       const p = rows[idx];
       try {
         const res = await syncFn(env, p.user_id, p.id);
-        if (res.ok) synced++;
-        else if (res.status === 403) skipped++;
-        else failed++;
+        if (res.ok) { synced++; consecutiveFailures = 0; }
+        else if (res.status === 403) { skipped++; consecutiveFailures = 0; }
+        else { failed++; consecutiveFailures++; }
       } catch (err) {
         failed++;
+        consecutiveFailures++;
         console.error('cron syncProperty rejected:', err);
+      }
+      if (!tripped && consecutiveFailures >= GSC_SYNC_BREAKER_THRESHOLD) {
+        tripped = true;
+        console.error(`GSC nightly sync breaker tripped after ${GSC_SYNC_BREAKER_THRESHOLD} consecutive failures; halting dispatch`);
       }
     }
   };
@@ -91,6 +108,7 @@ export async function runDailyGSCSync(
     `${failed} failed, ${processed}/${rows.length} due properties processed, ${Date.now() - startedAt}ms` +
     ` [queue: ${composition.onboarding} onboarding, ${composition.expansion} expansion, ` +
     `${composition.refresh} refresh]` +
-    (processed < rows.length ? ` (time budget reached, ${rows.length - processed} roll to next run)` : '')
+    (processed < rows.length ? ` (time budget reached, ${rows.length - processed} roll to next run)` : '') +
+    (tripped ? ` (breaker tripped)` : '')
   );
 }
