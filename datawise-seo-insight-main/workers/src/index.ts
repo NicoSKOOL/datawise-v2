@@ -189,8 +189,10 @@ export default {
     if (event.cron === '0 11 * * *') {
       // Scheduled handlers die at the 15-minute wall. Measure from tick start
       // so the site-audit queue above is charged to the same clock, and keep
-      // 2 minutes of headroom to finish in-flight syncs and log the summary.
-      await runDailyGSCSync(env, tickStart + 13 * 60 * 1000);
+      // 4 minutes of headroom: the slowest observed single sync is 191s, and
+      // an in-flight sync killed at the wall can strand a property mid-rewrite,
+      // so the margin must exceed the straggler tail, not just the log write.
+      await runDailyGSCSync(env, tickStart + 11 * 60 * 1000);
       return;
     }
 
