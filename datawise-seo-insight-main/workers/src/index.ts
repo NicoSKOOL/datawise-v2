@@ -51,8 +51,8 @@ import { authMiddleware } from './middleware/auth';
 import { recordRequestActivity, pruneAppEvents, ACTIVITY_ERROR_CODE_HEADER } from './activity';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
-import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty, purgeDormantGSCData, resyncPurgedProperties, purgeLongTailGSCData, handleAdminLongTailPurge } from './gsc/sync';
-import { orderSyncQueue, describeSyncQueue, type SyncQueueRow } from './gsc/sync-queue';
+import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, purgeDormantGSCData, resyncPurgedProperties, purgeLongTailGSCData, handleAdminLongTailPurge } from './gsc/sync';
+import { runDailyGSCSync } from './gsc/sync-runner';
 import { handleChat, handleListConversations, handleGetConversation, handleDeleteConversation, handleRenameConversation } from './chat/handler';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
@@ -177,6 +177,7 @@ import {
 
 export default {
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    const tickStart = Date.now();
     const auditQueue = await processSiteAuditQueue(env, { batchSize: 5 });
     if (auditQueue.processed || auditQueue.timed_out) {
       console.log(
@@ -186,7 +187,10 @@ export default {
 
     // Daily GSC re-sync (runs once a day, separate from the 6h email cron).
     if (event.cron === '0 11 * * *') {
-      await runDailyGSCSync(env);
+      // Scheduled handlers die at the 15-minute wall. Measure from tick start
+      // so the site-audit queue above is charged to the same clock, and keep
+      // 2 minutes of headroom to finish in-flight syncs and log the summary.
+      await runDailyGSCSync(env, tickStart + 13 * 60 * 1000);
       return;
     }
 
@@ -1225,85 +1229,3 @@ export default {
   },
 };
 
-// Daily GSC re-sync over enabled properties whose owner has logged in within
-// the 30-day session lifetime (a currently-valid session). Properties owned by
-// dormant users are skipped: their data is NOT deleted, and the next daily run
-// picks them up automatically once they log in again. This avoids rewriting
-// 90-day Search Console data that nobody is currently looking at, which is the
-// dominant driver of D1 "rows written" cost.
-// Skips properties whose refresh token can no longer mint an access token
-// (user must reconnect); skipping does not delete the property.
-// Processes in small concurrent batches to stay within Worker CPU limits.
-async function runDailyGSCSync(env: Env): Promise<void> {
-  const startedAt = Date.now();
-  // Only re-sync a property if it has not been refreshed in the last few days.
-  // Google Search Console data itself lags ~2-3 days, so a daily rewrite of the
-  // full 90-day window produced no fresher data while dominating D1 write cost.
-  // last_synced_at is set only on a SUCCESSFUL sync, so token-expired properties
-  // (which write nothing) stay eligible and are retried each day at ~zero cost.
-  // The manual "Sync" button bypasses this and force-refreshes on demand.
-  const STALE_AFTER = "-3 days";
-  // The due set is far larger than one cron window can sync, so ordering
-  // decides who gets data tonight. orderSyncQueue owns that policy: see
-  // gsc/sync-queue.ts for why never-synced properties are no longer last.
-  // This query is deliberately unordered; do not add an ORDER BY here.
-  // user_has_synced tells the ordering whether the owner currently sees any
-  // data at all. kind='gsc' excludes manual/bwt rows that can never GSC-sync
-  // but were occupying sync slots.
-  const props = await env.DB.prepare(
-    `SELECT p.id, p.user_id, p.last_synced_at,
-            EXISTS (
-              SELECT 1 FROM gsc_properties q
-               WHERE q.user_id = p.user_id
-                 AND q.kind = 'gsc'
-                 AND q.is_enabled = 1
-                 AND q.last_synced_at IS NOT NULL
-            ) AS user_has_synced
-       FROM gsc_properties p
-      WHERE p.is_enabled = 1
-        AND p.kind = 'gsc'
-        AND (p.last_synced_at IS NULL OR p.last_synced_at < datetime('now', ?))
-        AND EXISTS (
-          SELECT 1 FROM sessions s
-           WHERE s.user_id = p.user_id
-             AND s.expires_at > datetime('now')
-        )`
-  ).bind(STALE_AFTER).all<SyncQueueRow>();
-
-  const due = props.results || [];
-  const composition = describeSyncQueue(due);
-  const rows = orderSyncQueue(due);
-  let synced = 0, skipped = 0, failed = 0, processed = 0;
-  const concurrency = 4;
-  // Scheduled handlers are killed at the 15-minute wall (and the site-audit
-  // queue runs first in the same invocation). Stop dispatching in time to
-  // finish in-flight syncs and log the summary instead of dying mid-loop.
-  const TIME_BUDGET_MS = 10 * 60 * 1000;
-
-  for (let i = 0; i < rows.length; i += concurrency) {
-    if (Date.now() - startedAt > TIME_BUDGET_MS) break;
-    const batch = rows.slice(i, i + concurrency);
-    const results = await Promise.allSettled(
-      batch.map(p => syncProperty(env, p.user_id, p.id))
-    );
-    processed += batch.length;
-    for (const r of results) {
-      if (r.status === 'fulfilled') {
-        if (r.value.ok) synced++;
-        else if (r.value.status === 403) skipped++;
-        else failed++;
-      } else {
-        failed++;
-        console.error('cron syncProperty rejected:', r.reason);
-      }
-    }
-  }
-
-  console.log(
-    `GSC daily sync done (active + due-for-refresh scope): ${synced} synced, ${skipped} skipped (token), ` +
-    `${failed} failed, ${processed}/${rows.length} due properties processed, ${Date.now() - startedAt}ms` +
-    ` [queue: ${composition.onboarding} onboarding, ${composition.expansion} expansion, ` +
-    `${composition.refresh} refresh]` +
-    (processed < rows.length ? ` (time budget reached, ${rows.length - processed} roll to next run)` : '')
-  );
-}
