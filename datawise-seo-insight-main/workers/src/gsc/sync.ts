@@ -1,6 +1,8 @@
 import type { Env } from '../index';
 import { ACTIVITY_ERROR_CODE_HEADER } from '../activity';
 import { refreshGSCToken } from './oauth';
+import { isAdmin } from '../routes/admin';
+import type { AuthUser } from '../auth/google';
 
 interface SearchAnalyticsRow {
   keys: string[]; // [date, query, page]
@@ -948,6 +950,108 @@ export async function purgeDormantGSCData(env: Env): Promise<{ properties: numbe
     properties++;
   }
   return { properties, rows };
+}
+
+// ---------------------------------------------------------------------------
+// One-time long-tail backlog purge
+// ---------------------------------------------------------------------------
+// The write-time filter (hasSignal) stops NEW zero-signal rows, but ~70% of
+// the 29M rows already stored predate it, and at 9.06 GB of the 10 GB D1 cap
+// there is no headroom to raise nightly sync capacity (bugs f7fa343f,
+// 536e8205, b05f760e) until they are gone. Left alone they would age out via
+// the agg90 weekly rebuild and the 35-day pd slide, but only for properties
+// that still sync; this purge clears everything in days instead.
+//
+// Same shape as purgeDormantGSCData: chunked deletes under a time/chunk
+// budget, self-draining across 6h-cron runs. Progress is a KV cursor of the
+// last fully-purged property id; interrupting mid-property just re-purges an
+// already-clean property (idempotent deletes). When the property walk
+// completes, a done flag turns every future invocation into one KV read.
+const GSC_LONGTAIL_CURSOR_KEY = 'gsc-longtail-purge-cursor';
+const GSC_LONGTAIL_DONE_KEY = 'gsc-longtail-purge-done';
+const GSC_LONGTAIL_PAUSED_KEY = 'gsc-longtail-purge-paused';
+const GSC_LONGTAIL_MAX_CHUNKS_PER_RUN = 150;
+const GSC_LONGTAIL_TIME_BUDGET_MS = 3 * 60 * 1000;
+const GSC_LONGTAIL_PROPS_PAGE = 400;
+
+export async function purgeLongTailGSCData(
+  env: Env,
+  opts?: { budgetMs?: number; maxChunks?: number },
+): Promise<{ properties: number; rows: number; done: boolean }> {
+  if (await env.KV.get(GSC_LONGTAIL_DONE_KEY) === '1') {
+    return { properties: 0, rows: 0, done: true };
+  }
+  if (await env.KV.get(GSC_LONGTAIL_PAUSED_KEY) === '1') {
+    return { properties: 0, rows: 0, done: false };
+  }
+
+  const startedAt = Date.now();
+  const budgetMs = opts?.budgetMs ?? GSC_LONGTAIL_TIME_BUDGET_MS;
+  const maxChunks = opts?.maxChunks ?? GSC_LONGTAIL_MAX_CHUNKS_PER_RUN;
+  const cursor = (await env.KV.get(GSC_LONGTAIL_CURSOR_KEY)) ?? '';
+
+  // Only properties that ever synced can hold rows. New properties are
+  // written post-filter, so anything created after this purge started (id
+  // ordering is random hex, not time) either has no rows or gets caught by
+  // its own agg90/pd turnover.
+  const page = await env.DB.prepare(
+    `SELECT id FROM gsc_properties
+      WHERE last_synced_at IS NOT NULL AND id > ?
+      ORDER BY id LIMIT ${GSC_LONGTAIL_PROPS_PAGE}`
+  ).bind(cursor).all<{ id: string }>();
+  const candidates = page.results || [];
+
+  let properties = 0;
+  let rows = 0;
+  let chunks = 0;
+  let exhaustedList = candidates.length < GSC_LONGTAIL_PROPS_PAGE;
+
+  for (const prop of candidates) {
+    if (chunks >= maxChunks || Date.now() - startedAt > budgetMs) {
+      exhaustedList = false;
+      break;
+    }
+    let propDrained = false;
+    while (chunks < maxChunks && Date.now() - startedAt <= budgetMs) {
+      const res = await env.DB.prepare(
+        `DELETE FROM gsc_search_data WHERE id IN (
+           SELECT id FROM gsc_search_data
+            WHERE property_id = ?
+              AND clicks = 0 AND impressions <= ${GSC_LONGTAIL_MAX_IMPRESSIONS}
+              AND query != '__daily_total__'
+              AND (page IS NULL OR page != '__7d_query__')
+            LIMIT ${GSC_PURGE_CHUNK}
+         )`
+      ).bind(prop.id).run();
+      const deleted = res.meta?.changes ?? 0;
+      rows += deleted;
+      chunks += 1;
+      if (deleted < GSC_PURGE_CHUNK) { propDrained = true; break; }
+    }
+    if (!propDrained) { exhaustedList = false; break; }
+    properties += 1;
+    await env.KV.put(GSC_LONGTAIL_CURSOR_KEY, prop.id);
+  }
+
+  const done = exhaustedList;
+  if (done) await env.KV.put(GSC_LONGTAIL_DONE_KEY, '1');
+  return { properties, rows, done };
+}
+
+// POST /api/admin/gsc/purge-long-tail { budgetMs?: number }
+// Manual accelerated drain: the 6h cron alone takes ~3-4 days to clear the
+// backlog; repeated calls here move that to hours when headroom is critical.
+export async function handleAdminLongTailPurge(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user, env)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 });
+  }
+  let budgetMs = 20_000;
+  try {
+    const body = await request.json() as { budgetMs?: number };
+    if (typeof body.budgetMs === 'number') budgetMs = Math.min(Math.max(body.budgetMs, 1_000), 25_000);
+  } catch { /* empty body is fine */ }
+  const result = await purgeLongTailGSCData(env, { budgetMs, maxChunks: 500 });
+  return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
 }
 
 // Background repopulation for a returning user, fired (fire-and-forget) from

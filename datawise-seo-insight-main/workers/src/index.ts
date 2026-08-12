@@ -51,7 +51,7 @@ import { authMiddleware } from './middleware/auth';
 import { recordRequestActivity, pruneAppEvents, ACTIVITY_ERROR_CODE_HEADER } from './activity';
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
-import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty, purgeDormantGSCData, resyncPurgedProperties } from './gsc/sync';
+import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, syncProperty, purgeDormantGSCData, resyncPurgedProperties, purgeLongTailGSCData, handleAdminLongTailPurge } from './gsc/sync';
 import { orderSyncQueue, describeSyncQueue, type SyncQueueRow } from './gsc/sync-queue';
 import { handleChat, handleListConversations, handleGetConversation, handleDeleteConversation, handleRenameConversation } from './chat/handler';
 import {
@@ -254,6 +254,14 @@ export default {
       }
     } catch (err) {
       console.error('purgeDormantGSCData failed:', err);
+    }
+    try {
+      const lt = await purgeLongTailGSCData(env);
+      if (lt.properties || lt.rows) {
+        console.log(`GSC long-tail purge: ${lt.properties} properties, ${lt.rows} rows deleted, done=${lt.done}`);
+      }
+    } catch (err) {
+      console.error('purgeLongTailGSCData failed:', err);
     }
   },
 
@@ -865,6 +873,9 @@ export default {
       }
 
       // --- Admin ---
+      if (path === '/api/admin/gsc/purge-long-tail' && method === 'POST') {
+        return addCors(await handleAdminLongTailPurge(request, env, user));
+      }
       if (path === '/api/admin/upload-members' && method === 'POST') {
         return addCors(await handleUploadMembers(request, env, user));
       }
