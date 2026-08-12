@@ -21,6 +21,19 @@ const GSC_MAX_PAGES = 30;
 const GSC_SYNC_DELETE_CHUNK = 10000;
 const GSC_SYNC_MAX_DELETE_CHUNKS = 200;
 
+// Long-tail write filter. Zero-click rows with <=2 impressions were ~70% of
+// all stored gsc_search_data volume (measured 2026-08-12, DB at 9.06 GB of the
+// 10 GB cap) yet power no dashboard number: opportunities and page2 gate on
+// SUM(impressions) > 100 and top_queries sorts by clicks. Dropping them at
+// write time is the durable half of the fix; the agg90 weekly rebuild and the
+// sliding 35-day pd window then age the already-stored long tail out on their
+// own. Marker rows (__daily_total__, __7d_query__) are never filtered.
+export const GSC_LONGTAIL_MAX_IMPRESSIONS = 2;
+
+export function hasSignal(row: SearchAnalyticsRow): boolean {
+  return Number(row.clicks) > 0 || Number(row.impressions) > GSC_LONGTAIL_MAX_IMPRESSIONS;
+}
+
 // ---------------------------------------------------------------------------
 // Upstream error handling
 // ---------------------------------------------------------------------------
@@ -263,6 +276,7 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
         dimensions: ['query', 'page'],
         dataState: 'final',
       })).rows;
+      aggRows = aggRows.filter(hasSignal);
     } catch (err) {
       if (err instanceof GSCFetchError) return gscFailureResponse(err.failure, siteUrl);
       throw err;
@@ -293,6 +307,7 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
       dimensions: ['date', 'query', 'page'],
       dataState: 'final',
     })).rows;
+    perDayRows = perDayRows.filter(hasSignal);
   } catch (err) {
     if (err instanceof GSCFetchError) return gscFailureResponse(err.failure, siteUrl);
     throw err;

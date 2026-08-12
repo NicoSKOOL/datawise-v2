@@ -12,13 +12,17 @@ import { handleGSCSync } from './sync';
 // happened.
 function makeFakeDB(opts: { lastPdDate: string | null; agg90Stamp: string | null }) {
   const prepared: string[] = [];
+  const inserts: unknown[][] = [];
   let batchCalls = 0;
   const db: any = {
     prepare(sql: string) {
       prepared.push(sql);
       const stmt: any = {
         sql,
-        bind() {
+        bind(...args: unknown[]) {
+          if (sql.startsWith('INSERT INTO gsc_search_data')) {
+            inserts.push(args);
+          }
           return stmt;
         },
         async first() {
@@ -46,6 +50,7 @@ function makeFakeDB(opts: { lastPdDate: string | null; agg90Stamp: string | null
     prepared,
     deletedSomething: () => prepared.some((s) => /DELETE/i.test(s)),
     batchCalls: () => batchCalls,
+    boundInserts: () => inserts,
   };
 }
 
@@ -204,5 +209,49 @@ describe('handleGSCSync upstream error classification', () => {
     expect(res.status).toBe(502);
     expect(body.code).toBe('gsc_upstream_error');
     expect(body.google_status).toBe(418);
+  });
+});
+
+describe('handleGSCSync long-tail write filter', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Rows with 0 clicks and <=2 impressions are ~70% of stored volume and
+  // power no dashboard number. They must never reach D1.
+  it('drops zero-signal rows from agg90 and pd inserts but keeps daily totals', async () => {
+    const fake = makeFakeDB({ lastPdDate: null, agg90Stamp: null }); // full-path sync
+
+    const signalRow = { keys: ['kept query', 'https://ex.com/a'], clicks: 0, impressions: 3, ctr: 0, position: 8 };
+    const noiseRow = { keys: ['dropped query', 'https://ex.com/b'], clicks: 0, impressions: 2, ctr: 0, position: 60 };
+    const perDaySignal = { keys: ['2026-08-01', 'kept pd', 'https://ex.com/c'], clicks: 1, impressions: 1, ctr: 1, position: 2 };
+    const perDayNoise = { keys: ['2026-08-01', 'dropped pd', 'https://ex.com/d'], clicks: 0, impressions: 1, ctr: 0, position: 90 };
+
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      const dims = (body.dimensions || []).join(',');
+      let rows: unknown[] = [];
+      if (dims === 'date') rows = [{ keys: ['2026-08-01'], clicks: 0, impressions: 1, ctr: 0, position: 5 }];
+      if (dims === 'query,page') rows = [signalRow, noiseRow];
+      if (dims === 'date,query,page') rows = [perDaySignal, perDayNoise];
+      if (dims === 'query') rows = [{ keys: ['seven day q'], clicks: 0, impressions: 1, ctr: 0, position: 5 }];
+      return { ok: true, json: async () => ({ rows }), text: async () => '' };
+    }));
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    const inserted = fake.boundInserts(); // flat list of all bound INSERT arg arrays
+    const queries = inserted.map((args) => args[2]); // 3rd bind position is `query`
+
+    expect(queries).toContain('kept query');
+    expect(queries).toContain('kept pd');
+    expect(queries).not.toContain('dropped query');
+    expect(queries).not.toContain('dropped pd');
+    // Markers survive untouched: zero-signal daily total and 7d rows still insert.
+    expect(queries).toContain('__daily_total__');
+    expect(queries).toContain('seven day q');
+    expect(body.query_agg90_rows).toBe(1);
+    expect(body.query_perday_rows).toBe(1);
   });
 });
