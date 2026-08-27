@@ -2,8 +2,9 @@ import type { Env } from '../index';
 import type { AuthUser } from '../auth/google';
 import { sendInviteEmail } from '../email/resend';
 import { cancelUserSequences, startWinbackSequence } from '../email/sequences';
-import { logTierChange, logBulkTierChanges } from '../lib/tier-changes';
+import { logTierChange, logBulkTierChanges, upgradeUserToCommunityIfMember } from '../lib/tier-changes';
 import { normalizeEmail } from '../lib/email-normalize';
+import { suggestMembers, type BlockedAccount, type RosterCandidate } from '../lib/member-match';
 
 const ADMIN_EMAIL = 'nico@airankingskool.com';
 
@@ -260,7 +261,21 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
   const { results: rosterRows } = await env.DB.prepare(
     'SELECT email FROM community_members'
   ).all<{ email: string }>();
-  const memberKeys = rosterKeySet((rosterRows || []).map(r => r.email));
+  // Linked login emails count as membership too. Without this the sweep would
+  // revoke the very accounts an admin linked, since an alias deliberately has
+  // no community_members row of its own.
+  const { results: aliasRows } = await env.DB.prepare(
+    `SELECT a.alias_email FROM community_email_aliases a
+       WHERE EXISTS (
+         SELECT 1 FROM community_members cm
+          WHERE lower(cm.email) = lower(a.member_email)
+             OR cm.normalized_email = a.member_normalized
+       )`
+  ).all<{ alias_email: string }>();
+  const memberKeys = rosterKeySet([
+    ...(rosterRows || []).map(r => r.email),
+    ...(aliasRows || []).map(r => r.alias_email),
+  ]);
 
   const sync = await reconcileCommunityAccess(env, memberKeys);
 
@@ -280,26 +295,37 @@ export async function handleCrossReference(request: Request, env: Env, user: Aut
     return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Active members: app users whose email IS in the community CSV
+  // Active members: app users whose email IS on the roster, directly or through
+  // an admin-confirmed alias. The alias arm is what keeps a linked account out
+  // of the Non-Members list below, where a revoke click would strip it.
   const activeMembers = await env.DB.prepare(`
     SELECT u.id, u.email, u.name, u.subscription_tier, u.created_at,
-           cm.first_name, cm.last_name, cm.tier as community_tier, cm.ltv, cm.joined_date
+           cm.first_name, cm.last_name, cm.tier as community_tier, cm.ltv, cm.joined_date,
+           CASE WHEN lower(u.email) = lower(cm.email) THEN NULL ELSE cm.email END AS linked_via
     FROM users u
-    INNER JOIN community_members cm ON lower(u.email) = lower(cm.email)
+    INNER JOIN community_members cm
+      ON lower(u.email) = lower(cm.email)
+      OR lower(cm.email) IN (
+        SELECT lower(a.member_email) FROM community_email_aliases a
+         WHERE lower(a.alias_email) = lower(u.email)
+      )
   `).all();
 
-  // Non-members: app users whose email is NOT in the community CSV
+  // Non-members: app users on neither the roster nor an alias.
   const nonMembers = await env.DB.prepare(`
     SELECT u.id, u.email, u.name, u.subscription_tier, u.is_community_member, u.created_at
     FROM users u
     WHERE lower(u.email) NOT IN (SELECT lower(email) FROM community_members)
+      AND lower(u.email) NOT IN (SELECT lower(alias_email) FROM community_email_aliases)
   `).all();
 
-  // Not registered: CSV members who haven't signed up
+  // Not registered: roster members with no account under their roster email and
+  // no account linked to it by alias.
   const notRegistered = await env.DB.prepare(`
     SELECT cm.email, cm.first_name, cm.last_name, cm.tier, cm.ltv, cm.joined_date
     FROM community_members cm
     WHERE lower(cm.email) NOT IN (SELECT lower(email) FROM users)
+      AND lower(cm.email) NOT IN (SELECT lower(member_email) FROM community_email_aliases)
   `).all();
 
   // Total community members count
@@ -313,6 +339,173 @@ export async function handleCrossReference(request: Request, env: Env, user: Aut
   }), {
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// GET /api/admin/email-mismatches
+//
+// Finds paying Skool members who are locked out because they signed up for
+// DataWise with a different email than they used on Skool. Two lists, scored
+// against each other:
+//
+//   unclaimed grants  - roster members whose invite was never claimed. The
+//                       marker is exact, not a guess: Google login overwrites
+//                       google_id and email signup sets password_hash, so a row
+//                       can only still be 'invited:' with a NULL password_hash
+//                       if nobody ever logged into it.
+//   blocked accounts  - free accounts that burned real credits and are on
+//                       neither the roster nor an alias.
+export async function handleEmailMismatches(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const url = new URL(request.url);
+  const minCredits = Math.max(1, parseInt(url.searchParams.get('min_credits') || '3', 10) || 3);
+
+  const { results: unclaimedRows } = await env.DB.prepare(`
+    SELECT u.id AS user_id, u.email, cm.first_name, cm.last_name, cm.tier, cm.ltv, cm.joined_date
+    FROM users u
+    INNER JOIN community_members cm ON lower(cm.email) = lower(u.email)
+    WHERE u.google_id LIKE 'invited:%'
+      AND u.password_hash IS NULL
+    ORDER BY cm.joined_date DESC
+  `).all<{
+    user_id: string; email: string; first_name: string | null;
+    last_name: string | null; tier: string | null; ltv: number | null; joined_date: string | null;
+  }>();
+
+  const { results: blockedRows } = await env.DB.prepare(`
+    SELECT u.id, u.email, u.name, u.created_at, u.credits_used
+    FROM users u
+    WHERE u.subscription_tier = 'free'
+      AND u.credits_used >= ?
+      AND u.is_admin = 0
+      AND lower(u.email) NOT IN (SELECT lower(email) FROM community_members)
+      AND lower(u.email) NOT IN (SELECT lower(alias_email) FROM community_email_aliases)
+    ORDER BY u.credits_used DESC, u.created_at DESC
+  `).bind(minCredits).all<BlockedAccount>();
+
+  const roster: RosterCandidate[] = (unclaimedRows || []).map(r => ({
+    email: r.email,
+    first_name: r.first_name,
+    last_name: r.last_name,
+    joined_date: r.joined_date,
+  }));
+
+  const matches = [];
+  for (const account of blockedRows || []) {
+    const suggestions = suggestMembers(account, roster);
+    if (suggestions.length > 0) matches.push({ account, suggestions });
+  }
+  matches.sort((a, b) => b.suggestions[0].score - a.suggestions[0].score);
+
+  return new Response(JSON.stringify({
+    matches,
+    unclaimed_grants: unclaimedRows || [],
+    blocked_count: (blockedRows || []).length,
+    min_credits: minCredits,
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// POST /api/admin/link-member
+//
+// Records that a login email and a roster email are the same person, then
+// grants community access. The alias is the durable half: every login path
+// re-resolves it through findCommunityMemberByEmail, so a later CSV upload
+// cannot strip the grant.
+export async function handleLinkMember(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const body = await request.json() as { user_id?: string; login_email?: string; member_email?: string; note?: string };
+  const userId = String(body.user_id || '').trim();
+  const loginEmail = String(body.login_email || '').trim().toLowerCase();
+  const memberEmail = String(body.member_email || '').trim().toLowerCase();
+  if ((!userId && !loginEmail) || !memberEmail) {
+    return new Response(JSON.stringify({ error: 'member_email plus one of user_id or login_email are required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  // Suggested pairs arrive with a user_id; manual pairing types an address.
+  const target = userId
+    ? await env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(userId).first<{ id: string; email: string }>()
+    : await env.DB.prepare('SELECT id, email FROM users WHERE lower(email) = ?').bind(loginEmail).first<{ id: string; email: string }>();
+  if (!target) {
+    return new Response(JSON.stringify({ error: userId ? 'User not found' : `No DataWise account uses ${loginEmail}` }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const member = await env.DB.prepare(
+    'SELECT email, normalized_email FROM community_members WHERE lower(email) = ? LIMIT 1'
+  ).bind(memberEmail).first<{ email: string; normalized_email: string | null }>();
+  if (!member) {
+    return new Response(JSON.stringify({ error: 'That email is not on the community roster' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const aliasEmail = String(target.email || '').trim().toLowerCase();
+  if (aliasEmail === memberEmail) {
+    return new Response(JSON.stringify({ error: 'Account already uses the roster email' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO community_email_aliases
+       (alias_email, member_email, alias_normalized, member_normalized, linked_by, note)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(alias_email) DO UPDATE SET
+       member_email = excluded.member_email,
+       member_normalized = excluded.member_normalized,
+       linked_by = excluded.linked_by,
+       note = excluded.note`
+  ).bind(
+    aliasEmail,
+    member.email.toLowerCase(),
+    normalizeEmail(aliasEmail),
+    member.normalized_email || normalizeEmail(member.email.toLowerCase()),
+    user.email,
+    body.note || null,
+  ).run();
+
+  const upgrade = await upgradeUserToCommunityIfMember(env, target.id, aliasEmail, 'admin_email_link');
+
+  // Retire the stranded invite row, but only when it is provably untouched:
+  // never logged in, no password, no usage. Anything else is someone's real
+  // account and must be left alone even though it shares the identity.
+  let removedOrphan: string | null = null;
+  const orphan = await env.DB.prepare(
+    `SELECT id, email FROM users
+      WHERE lower(email) = ?
+        AND google_id LIKE 'invited:%'
+        AND password_hash IS NULL
+        AND credits_used = 0
+        AND id != ?
+        AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = users.id)`
+  ).bind(memberEmail, target.id).first<{ id: string; email: string }>();
+  if (orphan) {
+    await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(orphan.id).run();
+    removedOrphan = orphan.email;
+  }
+
+  return new Response(JSON.stringify({
+    success: true,
+    alias_email: aliasEmail,
+    member_email: member.email,
+    granted: upgrade.changed,
+    preserved_pro: upgrade.preservedPro,
+    removed_orphan_account: removedOrphan,
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// POST /api/admin/unlink-member
+export async function handleUnlinkMember(request: Request, env: Env, user: AuthUser): Promise<Response> {
+  if (!isAdmin(user)) {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+  }
+  const body = await request.json() as { alias_email?: string };
+  const aliasEmail = String(body.alias_email || '').trim().toLowerCase();
+  if (!aliasEmail) {
+    return new Response(JSON.stringify({ error: 'alias_email is required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+  }
+  await env.DB.prepare('DELETE FROM community_email_aliases WHERE lower(alias_email) = ?').bind(aliasEmail).run();
+  return new Response(JSON.stringify({ success: true }), { headers: { 'Content-Type': 'application/json' } });
 }
 
 // POST /api/admin/revoke-access

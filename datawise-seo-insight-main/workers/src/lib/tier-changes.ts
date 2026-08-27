@@ -11,9 +11,26 @@ export async function findCommunityMemberByEmail(
 ): Promise<{ email: string } | null> {
   const lower = (email || '').trim().toLowerCase();
   if (!lower) return null;
-  return await db.prepare(
+  const normalized = normalizeEmail(lower);
+
+  const direct = await db.prepare(
     'SELECT email FROM community_members WHERE lower(email) = ? OR normalized_email = ? LIMIT 1'
-  ).bind(lower, normalizeEmail(lower)).first<{ email: string }>();
+  ).bind(lower, normalized).first<{ email: string }>();
+  if (direct) return direct;
+
+  // Third arm: an admin-confirmed link from this login email to the roster
+  // email of the same person, for members who joined Skool as one address and
+  // signed up here as another. Resolving it HERE rather than at link time is
+  // what makes the grant durable: every login re-derives it, so a later CSV
+  // upload or revoke sweep cannot silently strip access.
+  return await db.prepare(
+    `SELECT cm.email FROM community_email_aliases a
+       JOIN community_members cm
+         ON lower(cm.email) = lower(a.member_email)
+         OR cm.normalized_email = a.member_normalized
+      WHERE lower(a.alias_email) = ? OR a.alias_normalized = ?
+      LIMIT 1`
+  ).bind(lower, normalized).first<{ email: string }>();
 }
 
 export async function logTierChange(

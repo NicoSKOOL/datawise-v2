@@ -201,6 +201,23 @@ CREATE TABLE IF NOT EXISTS community_members (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_community_members_email ON community_members(email);
 CREATE INDEX IF NOT EXISTS idx_community_members_normalized ON community_members(normalized_email);
 
+-- Links a DataWise login email to the Skool roster email of the same person,
+-- for members who joined Skool as one address and signed up here as another.
+-- An alias says "these two addresses are one person", which a second
+-- community_members row could not: that would inflate the member count and
+-- imply a second subscription.
+CREATE TABLE IF NOT EXISTS community_email_aliases (
+  alias_email TEXT PRIMARY KEY,
+  member_email TEXT NOT NULL,
+  alias_normalized TEXT,
+  member_normalized TEXT,
+  linked_by TEXT,
+  note TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alias_member ON community_email_aliases(member_email);
+CREATE INDEX IF NOT EXISTS idx_alias_normalized ON community_email_aliases(alias_normalized);
+
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

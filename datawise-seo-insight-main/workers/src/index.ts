@@ -98,6 +98,7 @@ import {
 } from './routes/content-tools';
 import {
   handleUploadMembers, handleCrossReference, handleRevokeAccess,
+  handleEmailMismatches, handleLinkMember, handleUnlinkMember,
   handleSendInvites, handleToggleMember, handleAddMember, handleListUsers, handleDeleteUser,
   handleListPromoCodes, handleCreatePromoCode, handleTogglePromoCode, handlePromoRedemptions,
   handleConversionAnalytics, handleTrafficAnalytics, handleSignupAnalytics,
@@ -890,6 +891,15 @@ export default {
       }
       if (path === '/api/admin/cross-reference' && method === 'GET') {
         return addCors(await handleCrossReference(request, env, user));
+      }
+      if (path === '/api/admin/email-mismatches' && method === 'GET') {
+        return addCors(await handleEmailMismatches(request, env, user));
+      }
+      if (path === '/api/admin/link-member' && method === 'POST') {
+        return addCors(await handleLinkMember(request, env, user));
+      }
+      if (path === '/api/admin/unlink-member' && method === 'POST') {
+        return addCors(await handleUnlinkMember(request, env, user));
       }
       if (path === '/api/admin/revoke-access' && method === 'POST') {
         return addCors(await handleRevokeAccess(request, env, user));
