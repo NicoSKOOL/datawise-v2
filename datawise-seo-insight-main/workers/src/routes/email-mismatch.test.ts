@@ -170,6 +170,25 @@ describe('handleLinkMember', () => {
     expect(user?.subscription_tier).toBe('community');
   });
 
+  it('still revokes a linked member once they leave Skool', async () => {
+    // The alias must not become a permanent bypass. It only counts while the
+    // roster row it points at still exists, so a leaver is revoked normally.
+    await seedTazCase();
+    await handleLinkMember(postJson({ user_id: 'real1', member_email: 'positiveoutloud@gmail.com' }), env, adminUser());
+
+    // Next export no longer lists them: they left the community.
+    const csv = [
+      'FirstName,LastName,Email,JoinedDate,Tier,LTV',
+      'Someone,Else,someoneelse@gmail.com,2026-08-01 00:00:00,standard,0',
+    ].join('\n');
+    await handleUploadMembers(postJson({ csv }), env, adminUser());
+
+    const user = await db.prepare("SELECT subscription_tier, is_community_member FROM users WHERE id = 'real1'")
+      .first<{ subscription_tier: string; is_community_member: number }>();
+    expect(user?.subscription_tier).toBe('free');
+    expect(user?.is_community_member).toBe(0);
+  });
+
   it('retires the untouched invite row', async () => {
     await seedTazCase();
     const body = await handleLinkMember(postJson({ user_id: 'real1', member_email: 'positiveoutloud@gmail.com' }), env, adminUser())
