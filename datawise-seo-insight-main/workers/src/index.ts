@@ -98,6 +98,7 @@ import {
 } from './routes/content-tools';
 import {
   handleUploadMembers, handleCrossReference, handleRevokeAccess,
+  handleEmailMismatches, handleLinkMember, handleUnlinkMember,
   handleSendInvites, handleToggleMember, handleAddMember, handleListUsers, handleDeleteUser,
   handleListPromoCodes, handleCreatePromoCode, handleTogglePromoCode, handlePromoRedemptions,
   handleConversionAnalytics, handleTrafficAnalytics, handleSignupAnalytics,
@@ -159,7 +160,7 @@ import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
 import { syncResendContacts } from './email/resend-contacts';
 import { handleSyncContacts, handleSuppressionsOverview } from './routes/admin-email';
-import { handleSkoolMemberJoined } from './routes/webhooks';
+import { handleSkoolMemberJoined, handleSkoolMemberLeft } from './routes/webhooks';
 import { handleResendWebhook } from './routes/resend-webhook';
 import {
   handleRelatedKeywordsPublic,
@@ -377,6 +378,9 @@ export default {
       // --- Webhooks (Bearer-token auth, no CORS needed) ---
       if (path === '/webhooks/skool-member-joined' && method === 'POST') {
         return await handleSkoolMemberJoined(request, env);
+      }
+      if (path === '/webhooks/skool-member-left' && method === 'POST') {
+        return await handleSkoolMemberLeft(request, env);
       }
       // Resend delivery/contact events (Svix-signed). Keeps Resend's opt-out
       // state and our email_suppressions table in sync.
@@ -887,6 +891,15 @@ export default {
       }
       if (path === '/api/admin/cross-reference' && method === 'GET') {
         return addCors(await handleCrossReference(request, env, user));
+      }
+      if (path === '/api/admin/email-mismatches' && method === 'GET') {
+        return addCors(await handleEmailMismatches(request, env, user));
+      }
+      if (path === '/api/admin/link-member' && method === 'POST') {
+        return addCors(await handleLinkMember(request, env, user));
+      }
+      if (path === '/api/admin/unlink-member' && method === 'POST') {
+        return addCors(await handleUnlinkMember(request, env, user));
       }
       if (path === '/api/admin/revoke-access' && method === 'POST') {
         return addCors(await handleRevokeAccess(request, env, user));

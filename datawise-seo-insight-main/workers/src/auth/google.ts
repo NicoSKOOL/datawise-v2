@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { getAllowedFrontendOrigin } from './origins';
 import { isBannedEmail } from '../lib/email-normalize';
+import { upgradeUserToCommunityIfMember } from '../lib/tier-changes';
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -159,15 +160,9 @@ export async function handleGoogleCallback(request: Request, env: Env): Promise<
     ).bind(userId, googleUser.sub, googleUser.email, googleUser.name, googleUser.picture, isAdminUser ? 1 : 0).run();
   }
 
-  // Auto-detect community member
-  const communityMember = await env.DB.prepare(
-    'SELECT email FROM community_members WHERE lower(email) = ?'
-  ).bind(googleUser.email.toLowerCase()).first();
-  if (communityMember) {
-    await env.DB.prepare(
-      "UPDATE users SET is_community_member = 1, subscription_tier = 'community', updated_at = datetime('now') WHERE id = ?"
-    ).bind(userId).run();
-  }
+  // Auto-detect community member (matches provider aliases like gmail dots,
+  // preserves pro, and logs the tier change)
+  await upgradeUserToCommunityIfMember(env, userId, googleUser.email, 'google_auto_detect');
 
   // Create session
   const sessionToken = generateToken();

@@ -9,10 +9,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { Upload, AlertCircle, RefreshCw, Send, ShieldCheck, ShieldX, Trash2, Search, X, UserPlus } from 'lucide-react';
+import { Upload, AlertCircle, RefreshCw, Send, ShieldCheck, ShieldX, Trash2, Search, X, UserPlus, Link2 } from 'lucide-react';
+import EmailMismatchPanel from '@/components/admin/EmailMismatchPanel';
 
 type UserStatus = 'community' | 'non-member' | 'not-registered' | 'unknown';
-type TabValue = 'all' | 'community' | 'non-members' | 'not-registered';
+type TabValue = 'all' | 'community' | 'non-members' | 'not-registered' | 'mismatches';
 
 interface UnifiedUser {
   id: string | null;
@@ -78,6 +79,7 @@ export default function AdminMembers() {
   const [loadingUsers, setLoadingUsers] = useState(true);
 
   const [activeTab, setActiveTab] = useState<TabValue>('all');
+  const [mismatchCount, setMismatchCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -210,7 +212,8 @@ export default function AdminMembers() {
     community: unifiedUsers.filter(r => r.status === 'community').length,
     nonMembers: unifiedUsers.filter(r => r.status === 'non-member').length,
     notRegistered: unifiedUsers.filter(r => r.status === 'not-registered').length,
-  }), [unifiedUsers]);
+    mismatches: mismatchCount,
+  }), [unifiedUsers, mismatchCount]);
 
   // Filtered rows
   const filteredUsers = useMemo(() => {
@@ -300,6 +303,27 @@ export default function AdminMembers() {
             {result.preserved_pro > 0 && (
               <div className="rounded-md bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
                 Kept {result.preserved_pro} paid pro user(s) on pro access.
+              </div>
+            )}
+            {(result.revoked_emails?.length ?? 0) > 0 && (
+              <div className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                <div className="font-medium">Revoked (not in this CSV):</div>
+                <div className="mt-1 max-h-24 overflow-y-auto break-all">
+                  {result.revoked_emails.join(', ')}
+                </div>
+              </div>
+            )}
+            {(result.protected_members?.length ?? 0) > 0 && (
+              <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                <div className="font-medium">
+                  Kept {result.protected_members.length} member(s) the CSV does not list (added via webhook or manually):
+                </div>
+                <div className="mt-1 max-h-24 overflow-y-auto break-all">
+                  {result.protected_members.map(m => `${m.email} (${m.source})`).join(', ')}
+                </div>
+                <div className="mt-1 text-[11px] opacity-80">
+                  If any of these actually left Skool, revoke them from the Users tab.
+                </div>
               </div>
             )}
           </div>
@@ -459,6 +483,7 @@ export default function AdminMembers() {
     { value: 'community', label: 'Community', count: counts.community, color: 'bg-green-100 text-green-700' },
     { value: 'non-members', label: 'Non-Members', count: counts.nonMembers, color: 'bg-red-100 text-red-700' },
     { value: 'not-registered', label: 'Not Registered', count: counts.notRegistered, color: 'bg-yellow-100 text-yellow-700' },
+    { value: 'mismatches', label: 'Email Mismatches', count: counts.mismatches, color: 'bg-amber-100 text-amber-700' },
   ];
 
   return (
@@ -576,7 +601,7 @@ export default function AdminMembers() {
                   {sendingInvites ? 'Sending...' : `Invite All (${notRegistered.length})`}
                 </Button>
               )}
-              <div className="relative">
+              <div className={`relative ${activeTab === 'mismatches' ? 'hidden' : ''}`}>
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   placeholder="Search..."
@@ -596,130 +621,137 @@ export default function AdminMembers() {
             </div>
           </div>
 
+          {/* Email mismatches: kept mounted so the tab badge stays accurate. */}
+          <div className={activeTab === 'mismatches' ? '' : 'hidden'}>
+            <EmailMismatchPanel onCountChange={setMismatchCount} onLinked={handleRefresh} />
+          </div>
+
           {/* Table */}
-          <div className="overflow-x-auto">
-            {loadingUsers && !allUsers.length ? (
-              <div className="flex justify-center py-12">
-                <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : filteredUsers.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground text-sm">
-                {searchQuery ? 'No users match your search.' : 'No users in this category.'}
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10 pl-4">
-                      {activeTab !== 'not-registered' && selectableIds.length > 0 && (
-                        <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
-                      )}
-                    </TableHead>
-                    <TableHead>User</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Credits</TableHead>
-                    <TableHead>Joined</TableHead>
-                    <TableHead className="text-right pr-4">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredUsers.map((user, idx) => (
-                    <TableRow key={user.id || `nr-${idx}`} className="group">
-                      <TableCell className="pl-4">
-                        {user.id && user.is_admin !== 1 && (
-                          <Checkbox
-                            checked={selectedIds.has(user.id)}
-                            onCheckedChange={() => toggleSelect(user.id!)}
-                          />
+          {activeTab !== 'mismatches' && (
+            <div className="overflow-x-auto">
+              {loadingUsers && !allUsers.length ? (
+                <div className="flex justify-center py-12">
+                  <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground text-sm">
+                  {searchQuery ? 'No users match your search.' : 'No users in this category.'}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10 pl-4">
+                        {activeTab !== 'not-registered' && selectableIds.length > 0 && (
+                          <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
                         )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {user.avatar_url ? (
-                            <img src={user.avatar_url} alt="" className="w-6 h-6 rounded-full" />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">
-                              {(user.name || user.email)[0]?.toUpperCase() || '?'}
-                            </div>
+                      </TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Credits</TableHead>
+                      <TableHead>Joined</TableHead>
+                      <TableHead className="text-right pr-4">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredUsers.map((user, idx) => (
+                      <TableRow key={user.id || `nr-${idx}`} className="group">
+                        <TableCell className="pl-4">
+                          {user.id && user.is_admin !== 1 && (
+                            <Checkbox
+                              checked={selectedIds.has(user.id)}
+                              onCheckedChange={() => toggleSelect(user.id!)}
+                            />
                           )}
-                          <span className="font-medium text-sm">
-                            {user.name || 'N/A'}
-                            {user.is_admin === 1 && (
-                              <Badge variant="outline" className="ml-1.5 text-xs py-0 px-1">Admin</Badge>
-                            )}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{user.email}</TableCell>
-                      <TableCell>{statusBadge(user.status)}</TableCell>
-                      <TableCell className="text-sm">
-                        {user.status === 'community' || user.status === 'not-registered'
-                          ? <span className="text-green-600 font-medium">Unlimited</span>
-                          : user.credits_used != null ? user.credits_used : '-'}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {user.created_at ? new Date(user.created_at).toLocaleDateString() : user.joined_date || '-'}
-                      </TableCell>
-                      <TableCell className="text-right pr-4">
-                        {user.is_admin !== 1 && (
-                          <div className="flex items-center justify-end gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
-                            {user.status === 'not-registered' ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs h-7"
-                                onClick={() => handleSendSingleInvite(user.email)}
-                              >
-                                <Send className="h-3 w-3 mr-1" />
-                                Invite
-                              </Button>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {user.avatar_url ? (
+                              <img src={user.avatar_url} alt="" className="w-6 h-6 rounded-full" />
                             ) : (
-                              <>
-                                {(user.status === 'non-member' || user.status === 'unknown') && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-xs h-7 text-green-600 hover:text-green-700"
-                                    disabled={togglingId === user.id}
-                                    onClick={() => handleToggleMember(user.id!, 'grant')}
-                                  >
-                                    <ShieldCheck className="h-3 w-3 mr-1" />
-                                    Grant
-                                  </Button>
-                                )}
-                                {user.status === 'community' && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-xs h-7 text-red-600 hover:text-red-700"
-                                    disabled={togglingId === user.id}
-                                    onClick={() => handleToggleMember(user.id!, 'revoke')}
-                                  >
-                                    <ShieldX className="h-3 w-3 mr-1" />
-                                    Revoke
-                                  </Button>
-                                )}
+                              <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">
+                                {(user.name || user.email)[0]?.toUpperCase() || '?'}
+                              </div>
+                            )}
+                            <span className="font-medium text-sm">
+                              {user.name || 'N/A'}
+                              {user.is_admin === 1 && (
+                                <Badge variant="outline" className="ml-1.5 text-xs py-0 px-1">Admin</Badge>
+                              )}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm">{user.email}</TableCell>
+                        <TableCell>{statusBadge(user.status)}</TableCell>
+                        <TableCell className="text-sm">
+                          {user.status === 'community' || user.status === 'not-registered'
+                            ? <span className="text-green-600 font-medium">Unlimited</span>
+                            : user.credits_used != null ? user.credits_used : '-'}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {user.created_at ? new Date(user.created_at).toLocaleDateString() : user.joined_date || '-'}
+                        </TableCell>
+                        <TableCell className="text-right pr-4">
+                          {user.is_admin !== 1 && (
+                            <div className="flex items-center justify-end gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                              {user.status === 'not-registered' ? (
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="text-xs h-7 text-destructive hover:text-destructive"
-                                  disabled={togglingId === user.id}
-                                  onClick={() => handleDeleteUser(user.id!, user.email)}
+                                  className="text-xs h-7"
+                                  onClick={() => handleSendSingleInvite(user.email)}
                                 >
-                                  <Trash2 className="h-3 w-3" />
+                                  <Send className="h-3 w-3 mr-1" />
+                                  Invite
                                 </Button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </div>
+                              ) : (
+                                <>
+                                  {(user.status === 'non-member' || user.status === 'unknown') && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="text-xs h-7 text-green-600 hover:text-green-700"
+                                      disabled={togglingId === user.id}
+                                      onClick={() => handleToggleMember(user.id!, 'grant')}
+                                    >
+                                      <ShieldCheck className="h-3 w-3 mr-1" />
+                                      Grant
+                                    </Button>
+                                  )}
+                                  {user.status === 'community' && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="text-xs h-7 text-red-600 hover:text-red-700"
+                                      disabled={togglingId === user.id}
+                                      onClick={() => handleToggleMember(user.id!, 'revoke')}
+                                    >
+                                      <ShieldX className="h-3 w-3 mr-1" />
+                                      Revoke
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs h-7 text-destructive hover:text-destructive"
+                                    disabled={togglingId === user.id}
+                                    onClick={() => handleDeleteUser(user.id!, user.email)}
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

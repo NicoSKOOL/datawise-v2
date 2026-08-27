@@ -7,6 +7,10 @@ interface UploadResult {
   revoked: number;
   preserved_pro: number;
   winback_started: number;
+  /** Emails downgraded to free by this upload (absent from the CSV). */
+  revoked_emails: string[];
+  /** Webhook/manually-added members the CSV does not cover; kept, not revoked. */
+  protected_members: Array<{ email: string; source: string }>;
 }
 
 interface CrossReferenceResult {
@@ -22,6 +26,8 @@ interface CrossReferenceResult {
     community_tier: string;
     ltv: number;
     joined_date: string;
+    /** Roster email this account is linked to by alias; null when it matches directly. */
+    linked_via: string | null;
   }>;
   non_members: Array<{
     id: string;
@@ -55,6 +61,75 @@ export function uploadMembers(csvText: string): Promise<UploadResult> {
 
 export function getCrossReference(): Promise<CrossReferenceResult> {
   return api<CrossReferenceResult>('/api/admin/cross-reference');
+}
+
+export interface MismatchSuggestion {
+  member: { email: string; first_name: string | null; last_name: string | null; joined_date: string | null };
+  score: number;
+  reasons: string[];
+}
+
+export interface MismatchAccount {
+  id: string;
+  email: string;
+  name: string | null;
+  created_at: string;
+  credits_used: number;
+}
+
+export interface UnclaimedGrant {
+  user_id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  tier: string | null;
+  ltv: number | null;
+  joined_date: string | null;
+}
+
+export interface EmailMismatchResult {
+  matches: Array<{ account: MismatchAccount; suggestions: MismatchSuggestion[] }>;
+  unclaimed_grants: UnclaimedGrant[];
+  blocked_count: number;
+  min_credits: number;
+}
+
+export function getEmailMismatches(minCredits?: number): Promise<EmailMismatchResult> {
+  const qs = minCredits ? `?min_credits=${minCredits}` : '';
+  return api<EmailMismatchResult>(`/api/admin/email-mismatches${qs}`);
+}
+
+export interface LinkMemberResult {
+  success: boolean;
+  alias_email: string;
+  member_email: string;
+  granted: boolean;
+  removed_orphan_account: string | null;
+}
+
+/** Identify the account by id (suggested pair) or by typed address (manual pair). */
+export function linkMember(args: {
+  userId?: string;
+  loginEmail?: string;
+  memberEmail: string;
+  note?: string;
+}): Promise<LinkMemberResult> {
+  return api('/api/admin/link-member', {
+    method: 'POST',
+    body: {
+      user_id: args.userId,
+      login_email: args.loginEmail,
+      member_email: args.memberEmail,
+      note: args.note,
+    },
+  });
+}
+
+export function unlinkMember(aliasEmail: string): Promise<{ success: boolean }> {
+  return api('/api/admin/unlink-member', {
+    method: 'POST',
+    body: { alias_email: aliasEmail },
+  });
 }
 
 export function revokeAccess(userIds: string[]): Promise<AccessResult> {
