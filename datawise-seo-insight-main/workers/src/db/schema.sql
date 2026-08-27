@@ -188,9 +188,18 @@ CREATE TABLE IF NOT EXISTS community_members (
   tier TEXT,
   ltv REAL,
   joined_date TEXT,
-  uploaded_at TEXT DEFAULT (datetime('now'))
+  uploaded_at TEXT DEFAULT (datetime('now')),
+  -- 'csv' rows are managed by the Skool export upload (absent = revoked).
+  -- 'webhook' and 'manual' rows are durable: the Skool export has proven
+  -- unreliable for them (Skool account email can differ from login email),
+  -- so uploads preserve them and report them instead of revoking.
+  source TEXT NOT NULL DEFAULT 'csv',
+  -- Canonical form from normalizeEmail (gmail dots and +tags collapsed) so a
+  -- member whose Skool email is a provider alias of their login email matches.
+  normalized_email TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_community_members_email ON community_members(email);
+CREATE INDEX IF NOT EXISTS idx_community_members_normalized ON community_members(normalized_email);
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

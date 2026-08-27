@@ -7,6 +7,10 @@ interface UploadResult {
   revoked: number;
   preserved_pro: number;
   winback_started: number;
+  /** Emails downgraded to free by this upload (absent from the CSV). */
+  revoked_emails: string[];
+  /** Webhook/manually-added members the CSV does not cover; kept, not revoked. */
+  protected_members: Array<{ email: string; source: string }>;
 }
 
 interface CrossReferenceResult {

@@ -1,4 +1,20 @@
 import type { Env } from '../index';
+import { normalizeEmail } from './email-normalize';
+
+// Roster lookup used by every grant path. Matches the exact lower-cased email
+// or its canonical form (gmail dots / +tags collapsed), so a member whose
+// Skool email is a provider alias of their login email still matches. Rows
+// written before normalized_email existed match through the lower(email) arm.
+export async function findCommunityMemberByEmail(
+  db: D1Database,
+  email: string,
+): Promise<{ email: string } | null> {
+  const lower = (email || '').trim().toLowerCase();
+  if (!lower) return null;
+  return await db.prepare(
+    'SELECT email FROM community_members WHERE lower(email) = ? OR normalized_email = ? LIMIT 1'
+  ).bind(lower, normalizeEmail(lower)).first<{ email: string }>();
+}
 
 export async function logTierChange(
   db: D1Database,
@@ -49,9 +65,7 @@ export async function upgradeUserToCommunityIfMember(
     return { matched: false, changed: false, preservedPro: false };
   }
 
-  const communityMember = await env.DB.prepare(
-    'SELECT email FROM community_members WHERE lower(email) = ?'
-  ).bind(cleanEmail).first();
+  const communityMember = await findCommunityMemberByEmail(env.DB, cleanEmail);
   if (!communityMember) {
     return { matched: false, changed: false, preservedPro: false };
   }

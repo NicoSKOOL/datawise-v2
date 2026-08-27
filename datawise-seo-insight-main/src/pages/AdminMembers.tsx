@@ -302,6 +302,27 @@ export default function AdminMembers() {
                 Kept {result.preserved_pro} paid pro user(s) on pro access.
               </div>
             )}
+            {(result.revoked_emails?.length ?? 0) > 0 && (
+              <div className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                <div className="font-medium">Revoked (not in this CSV):</div>
+                <div className="mt-1 max-h-24 overflow-y-auto break-all">
+                  {result.revoked_emails.join(', ')}
+                </div>
+              </div>
+            )}
+            {(result.protected_members?.length ?? 0) > 0 && (
+              <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+                <div className="font-medium">
+                  Kept {result.protected_members.length} member(s) the CSV does not list (added via webhook or manually):
+                </div>
+                <div className="mt-1 max-h-24 overflow-y-auto break-all">
+                  {result.protected_members.map(m => `${m.email} (${m.source})`).join(', ')}
+                </div>
+                <div className="mt-1 text-[11px] opacity-80">
+                  If any of these actually left Skool, revoke them from the Users tab.
+                </div>
+              </div>
+            )}
           </div>
         ),
       });

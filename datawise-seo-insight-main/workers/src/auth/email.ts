@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { sendPasswordResetEmail } from '../email/resend';
 import { isBannedEmail } from '../lib/email-normalize';
+import { upgradeUserToCommunityIfMember } from '../lib/tier-changes';
 
 // --- Password hashing with PBKDF2 (Web Crypto API) ---
 
@@ -115,15 +116,8 @@ export async function handleEmailSignup(request: Request, env: Env): Promise<Res
     'INSERT INTO users (id, google_id, email, name, password_hash, is_admin) VALUES (?, ?, ?, ?, ?, ?)'
   ).bind(userId, `email:${userId}`, email.toLowerCase(), name || email.split('@')[0], passwordHash, isAdmin ? 1 : 0).run();
 
-  // Auto-detect community member
-  const communityMember = await env.DB.prepare(
-    'SELECT email FROM community_members WHERE lower(email) = ?'
-  ).bind(email.toLowerCase()).first();
-  if (communityMember) {
-    await env.DB.prepare(
-      "UPDATE users SET is_community_member = 1, subscription_tier = 'community', updated_at = datetime('now') WHERE id = ?"
-    ).bind(userId).run();
-  }
+  // Auto-detect community member (matches provider aliases like gmail dots)
+  await upgradeUserToCommunityIfMember(env, userId, email, 'email_auto_detect');
 
   const token = await createSession(env, userId);
   return json({ token });
@@ -154,6 +148,11 @@ export async function handleEmailLogin(request: Request, env: Env): Promise<Resp
   if (!valid) {
     return json({ error: 'Invalid email or password' }, 401);
   }
+
+  // Re-check membership on every login, not just signup: a user who signed up
+  // free and joined Skool later would otherwise stay free forever on the
+  // password path (Google login already re-checks each time).
+  await upgradeUserToCommunityIfMember(env, user.id as string, email, 'email_auto_detect');
 
   const token = await createSession(env, user.id as string);
   return json({ token });

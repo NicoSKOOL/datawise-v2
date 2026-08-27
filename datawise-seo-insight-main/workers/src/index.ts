@@ -159,7 +159,7 @@ import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
 import { syncResendContacts } from './email/resend-contacts';
 import { handleSyncContacts, handleSuppressionsOverview } from './routes/admin-email';
-import { handleSkoolMemberJoined } from './routes/webhooks';
+import { handleSkoolMemberJoined, handleSkoolMemberLeft } from './routes/webhooks';
 import { handleResendWebhook } from './routes/resend-webhook';
 import {
   handleRelatedKeywordsPublic,
@@ -377,6 +377,9 @@ export default {
       // --- Webhooks (Bearer-token auth, no CORS needed) ---
       if (path === '/webhooks/skool-member-joined' && method === 'POST') {
         return await handleSkoolMemberJoined(request, env);
+      }
+      if (path === '/webhooks/skool-member-left' && method === 'POST') {
+        return await handleSkoolMemberLeft(request, env);
       }
       // Resend delivery/contact events (Svix-signed). Keeps Resend's opt-out
       // state and our email_suppressions table in sync.

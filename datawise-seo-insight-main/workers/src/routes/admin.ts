@@ -2,7 +2,8 @@ import type { Env } from '../index';
 import type { AuthUser } from '../auth/google';
 import { sendInviteEmail } from '../email/resend';
 import { cancelUserSequences, startWinbackSequence } from '../email/sequences';
-import { logTierChange } from '../lib/tier-changes';
+import { logTierChange, logBulkTierChanges } from '../lib/tier-changes';
+import { normalizeEmail } from '../lib/email-normalize';
 
 const ADMIN_EMAIL = 'nico@airankingskool.com';
 
@@ -34,13 +35,31 @@ interface CommunitySyncResult {
   revoked: number;
   preserved_pro: number;
   winback_started: number;
+  revoked_emails: string[];
 }
 
 function isTruthyFlag(value: number | boolean | null | undefined): boolean {
   return value === true || value === 1;
 }
 
-async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promise<CommunitySyncResult> {
+// Every identity a roster represents: the lower-cased email plus its canonical
+// (dots/+tags collapsed) form. Users match if either form of THEIR email is in
+// the set, so gmail-dot variants between Skool and Google logins line up.
+function rosterKeySet(emails: Iterable<string>): Set<string> {
+  const keys = new Set<string>();
+  for (const raw of emails) {
+    const lower = String(raw || '').trim().toLowerCase();
+    if (!lower) continue;
+    keys.add(lower);
+    keys.add(normalizeEmail(lower));
+  }
+  return keys;
+}
+
+// Reconciles users against the CURRENT community_members table (not the raw
+// CSV): webhook/manual rows count as membership even when the Skool export
+// misses them.
+async function reconcileCommunityAccess(env: Env, memberKeys: Set<string>): Promise<CommunitySyncResult> {
   const { results } = await env.DB.prepare(`
     SELECT id, email, name, subscription_tier, is_community_member, is_admin
     FROM users
@@ -50,6 +69,7 @@ async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promi
   let revoked = 0;
   let preservedPro = 0;
   let winbackStarted = 0;
+  const revokedEmails: string[] = [];
 
   for (const user of results || []) {
     const email = String(user.email || '').trim().toLowerCase();
@@ -58,7 +78,7 @@ async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promi
     const tier = user.subscription_tier || 'free';
     const isCommunityMember = isTruthyFlag(user.is_community_member);
     const isAdminUser = isTruthyFlag(user.is_admin) || email === ADMIN_EMAIL;
-    const inCsv = csvEmails.has(email);
+    const inCsv = memberKeys.has(email) || memberKeys.has(normalizeEmail(email));
 
     if (inCsv) {
       if (tier === 'pro') {
@@ -104,10 +124,33 @@ async function reconcileCommunityAccess(env: Env, csvEmails: Set<string>): Promi
       await startWinbackSequence(env, user.id);
       revoked++;
       winbackStarted++;
+      revokedEmails.push(email);
     }
   }
 
-  return { granted, revoked, preserved_pro: preservedPro, winback_started: winbackStarted };
+  return { granted, revoked, preserved_pro: preservedPro, winback_started: winbackStarted, revoked_emails: revokedEmails };
+}
+
+// Durable roster row for an admin-granted member. 'manual' rows survive CSV
+// uploads; ON CONFLICT also promotes an existing csv/webhook row to manual.
+async function upsertManualRosterRow(env: Env, email: string): Promise<void> {
+  const lower = String(email || '').trim().toLowerCase();
+  if (!lower) return;
+  await env.DB.prepare(
+    `INSERT INTO community_members (email, source, normalized_email)
+     VALUES (?, 'manual', ?)
+     ON CONFLICT(email) DO UPDATE SET source = 'manual', normalized_email = excluded.normalized_email`
+  ).bind(lower, normalizeEmail(lower)).run();
+}
+
+// Removes every roster row representing this identity (exact or alias form),
+// so login-time auto-detect cannot re-grant a deliberate revocation.
+async function deleteRosterRowsForEmail(env: Env, email: string): Promise<void> {
+  const lower = String(email || '').trim().toLowerCase();
+  if (!lower) return;
+  await env.DB.prepare(
+    'DELETE FROM community_members WHERE lower(email) = ? OR normalized_email = ?'
+  ).bind(lower, normalizeEmail(lower)).run();
 }
 
 // POST /api/admin/upload-members
@@ -121,7 +164,8 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
     return new Response(JSON.stringify({ error: 'CSV data required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
-  const lines = csv.split('\n').filter(line => line.trim());
+  // Tolerate a UTF-8 BOM and CRLF line endings (both appear in real Skool exports).
+  const lines = csv.replace(/^﻿/, '').split(/\r?\n/).filter(line => line.trim());
   if (lines.length < 2) {
     return new Response(JSON.stringify({ error: 'CSV must have a header row and at least one data row' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
@@ -139,20 +183,23 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
     return new Response(JSON.stringify({ error: 'CSV must have an Email column' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
-  // Clear previous data
-  await env.DB.prepare('DELETE FROM community_members').run();
-
-  // Parse rows and batch insert (D1 supports up to ~100 statements per batch)
+  // Upsert every CSV row as csv-managed. No blanket DELETE: webhook and manual
+  // rows must survive an upload, because the Skool export has repeatedly been
+  // missing genuinely-paying members (their Skool email differs from the email
+  // the webhook or admin registered). Wiping them here is what caused the
+  // Aug 2026 "paying member locked out after every CSV sync" incidents.
   const BATCH_SIZE = 80;
   let inserted = 0;
   const statements: D1PreparedStatement[] = [];
   const csvEmails = new Set<string>();
+  const csvNormalized = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
     const cols = parseCSVLine(lines[i]);
     const email = cols[emailIdx]?.trim().toLowerCase();
     if (!email) continue;
     csvEmails.add(email);
+    csvNormalized.add(normalizeEmail(email));
 
     const firstName = firstNameIdx >= 0 ? cols[firstNameIdx]?.trim() || null : null;
     const lastName = lastNameIdx >= 0 ? cols[lastNameIdx]?.trim() || null : null;
@@ -162,8 +209,18 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
 
     statements.push(
       env.DB.prepare(
-        `INSERT OR REPLACE INTO community_members (email, first_name, last_name, tier, ltv, joined_date) VALUES (?, ?, ?, ?, ?, ?)`
-      ).bind(email, firstName, lastName, tier, ltv, joinedDate)
+        `INSERT INTO community_members (email, first_name, last_name, tier, ltv, joined_date, source, normalized_email, uploaded_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'csv', ?, datetime('now'))
+         ON CONFLICT(email) DO UPDATE SET
+           first_name = excluded.first_name,
+           last_name = excluded.last_name,
+           tier = excluded.tier,
+           ltv = excluded.ltv,
+           joined_date = excluded.joined_date,
+           source = 'csv',
+           normalized_email = excluded.normalized_email,
+           uploaded_at = excluded.uploaded_at`
+      ).bind(email, firstName, lastName, tier, ltv, joinedDate, normalizeEmail(email))
     );
     inserted++;
   }
@@ -174,9 +231,45 @@ export async function handleUploadMembers(request: Request, env: Env, user: Auth
     await env.DB.batch(batch);
   }
 
-  const sync = await reconcileCommunityAccess(env, csvEmails);
+  // Prune csv-managed rows that dropped out of the export: those members left
+  // the community, and reconcile below revokes their user accounts.
+  const { results: csvRows } = await env.DB.prepare(
+    "SELECT id, email FROM community_members WHERE source = 'csv'"
+  ).all<{ id: number; email: string }>();
+  const staleIds = (csvRows || [])
+    .filter(r => !csvEmails.has(String(r.email || '').trim().toLowerCase()))
+    .map(r => r.id);
+  for (let i = 0; i < staleIds.length; i += BATCH_SIZE) {
+    const chunk = staleIds.slice(i, i + BATCH_SIZE);
+    await env.DB.prepare(
+      `DELETE FROM community_members WHERE id IN (${chunk.map(() => '?').join(',')})`
+    ).bind(...chunk).run();
+  }
 
-  return new Response(JSON.stringify({ success: true, imported: inserted, ...sync }), {
+  // Webhook/manual rows the export does not cover: preserved, but surfaced to
+  // the admin so a member who genuinely left can still be revoked by hand.
+  const { results: nonCsvRows } = await env.DB.prepare(
+    "SELECT email, source FROM community_members WHERE source != 'csv'"
+  ).all<{ email: string; source: string }>();
+  const protectedMembers = (nonCsvRows || []).filter(r => {
+    const lower = String(r.email || '').trim().toLowerCase();
+    return !csvEmails.has(lower) && !csvNormalized.has(normalizeEmail(lower));
+  });
+
+  // Reconcile users against the resulting table state (csv + webhook + manual).
+  const { results: rosterRows } = await env.DB.prepare(
+    'SELECT email FROM community_members'
+  ).all<{ email: string }>();
+  const memberKeys = rosterKeySet((rosterRows || []).map(r => r.email));
+
+  const sync = await reconcileCommunityAccess(env, memberKeys);
+
+  return new Response(JSON.stringify({
+    success: true,
+    imported: inserted,
+    ...sync,
+    protected_members: protectedMembers,
+  }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
@@ -235,14 +328,40 @@ export async function handleRevokeAccess(request: Request, env: Env, user: AuthU
 
   const placeholders = user_ids.map(() => '?').join(',');
 
+  const { results: affectedUsers } = await env.DB.prepare(
+    `SELECT id, email, subscription_tier FROM users WHERE id IN (${placeholders})`
+  ).bind(...user_ids).all<{ id: string; email: string; subscription_tier: string | null }>();
+
   if (action === 'restore') {
     await env.DB.prepare(
       `UPDATE users SET subscription_tier = 'community', is_community_member = 1, updated_at = datetime('now') WHERE id IN (${placeholders})`
     ).bind(...user_ids).run();
+    // Put them back on the roster (as durable manual rows) so the change
+    // survives logins and future CSV uploads.
+    for (const u of affectedUsers || []) {
+      await upsertManualRosterRow(env, u.email);
+    }
+    await logBulkTierChanges(
+      env.DB,
+      (affectedUsers || []).map(u => ({ id: u.id, tier: u.subscription_tier || 'free' })),
+      'community',
+      'admin_restore'
+    );
   } else {
     await env.DB.prepare(
       `UPDATE users SET subscription_tier = 'free', is_community_member = 0, updated_at = datetime('now') WHERE id IN (${placeholders})`
     ).bind(...user_ids).run();
+    // Also remove their roster rows: otherwise the next Google login's
+    // auto-detect silently re-grants what the admin just revoked.
+    for (const u of affectedUsers || []) {
+      await deleteRosterRowsForEmail(env, u.email);
+    }
+    await logBulkTierChanges(
+      env.DB,
+      (affectedUsers || []).map(u => ({ id: u.id, tier: u.subscription_tier || 'free' })),
+      'free',
+      'admin_revoke'
+    );
   }
 
   return new Response(JSON.stringify({ success: true, affected: user_ids.length }), {
@@ -341,14 +460,25 @@ export async function handleToggleMember(request: Request, env: Env, user: AuthU
     return new Response(JSON.stringify({ error: 'user_id and action are required' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
   }
 
+  const target = await env.DB.prepare(
+    'SELECT id, email, subscription_tier FROM users WHERE id = ?'
+  ).bind(user_id).first<{ id: string; email: string; subscription_tier: string | null }>();
+  if (!target) {
+    return new Response(JSON.stringify({ error: 'User not found' }), { status: 404, headers: { 'Content-Type': 'application/json' } });
+  }
+
   if (action === 'grant') {
     await env.DB.prepare(
       "UPDATE users SET subscription_tier = 'community', is_community_member = 1, updated_at = datetime('now') WHERE id = ?"
     ).bind(user_id).run();
+    await upsertManualRosterRow(env, target.email);
+    await logTierChange(env.DB, target.id, target.subscription_tier || 'free', 'community', 'toggle_grant');
   } else {
     await env.DB.prepare(
       "UPDATE users SET subscription_tier = 'free', is_community_member = 0, updated_at = datetime('now') WHERE id = ?"
     ).bind(user_id).run();
+    await deleteRosterRowsForEmail(env, target.email);
+    await logTierChange(env.DB, target.id, target.subscription_tier || 'free', 'free', 'toggle_revoke');
   }
 
   return new Response(JSON.stringify({ success: true }), {
@@ -369,10 +499,8 @@ export async function handleAddMember(request: Request, env: Env, user: AuthUser
 
   const cleanEmail = email.trim().toLowerCase();
 
-  // Add to community_members table (so auto-detect works)
-  await env.DB.prepare(
-    'INSERT OR IGNORE INTO community_members (email) VALUES (?)'
-  ).bind(cleanEmail).run();
+  // Durable manual roster row (so auto-detect works and CSV uploads keep it)
+  await upsertManualRosterRow(env, cleanEmail);
 
   // Check if user already has an account
   const existingUser = await env.DB.prepare(
