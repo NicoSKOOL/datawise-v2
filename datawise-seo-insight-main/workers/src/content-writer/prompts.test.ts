@@ -130,3 +130,23 @@ describe('outline marker hygiene', () => {
     expect(STEP_INSTRUCTIONS.draft).toContain('NEVER copy these tags into the post');
   });
 });
+
+// Bugs cece731c + 5b6a3029: drafts shipped with internal links only. Internal
+// links had a numeric quota, external citations had none, so the model could
+// satisfy the prompt while citing nothing.
+describe('external citation minimum', () => {
+  it('master prompt sets a hard minimum and calls a zero-link draft incomplete', () => {
+    expect(MASTER_WRITING_PROMPT_BASE).toMatch(/at least 3 inline external citations/i);
+    expect(MASTER_WRITING_PROMPT_BASE).toMatch(/zero external links is incomplete/i);
+    expect(MASTER_WRITING_PROMPT_BASE).toMatch(/\[1\] is the banned pattern/i);
+  });
+
+  it('draft step repeats the minimum', () => {
+    expect(STEP_INSTRUCTIONS.draft).toMatch(/at least 3 external citations/i);
+    expect(STEP_INSTRUCTIONS.draft).toMatch(/zero external links is incomplete/i);
+  });
+
+  it('draft user prompt points at the approved sources block as the url list', () => {
+    expect(POST_STEP_USER_PROMPTS.draft).toMatch(/link at least 3 of them/i);
+  });
+});
