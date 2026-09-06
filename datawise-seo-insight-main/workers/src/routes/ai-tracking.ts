@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
+import { resolveModel } from '../dataforseo/llm-models';
 import { buildRecommendation, type EngineCheck } from './ai-recommendations';
 
 // AI Visibility Tracker: persistent weekly tracking of AI search presence per
@@ -177,29 +178,50 @@ export function classifyAnswer(parsed: ParsedAnswer, projectDomain: string, bran
 
 // --- Engine calls ---------------------------------------------------------
 
-async function callEngine(env: Env, engine: AIEngine, query: string): Promise<any> {
+// Builds the DataForSEO request for one engine. Exported so the model
+// selection is testable without D1: model names come from the live catalog
+// (see dataforseo/llm-models.ts), never from string literals here.
+export async function buildEngineRequest(
+  env: Env,
+  engine: AIEngine,
+  query: string
+): Promise<{ endpoint: string; body: Record<string, unknown>[] }> {
   if (engine === 'google_ai_mode') {
-    return dataforseoRequestCached(env, '/serp/google/ai_mode/live/advanced', [{
-      keyword: query,
-      location_name: 'United States',
-      language_name: 'English',
-      device: 'desktop',
-      os: 'windows',
-    }], { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
+    return {
+      endpoint: '/serp/google/ai_mode/live/advanced',
+      body: [{
+        keyword: query,
+        location_name: 'United States',
+        language_name: 'English',
+        device: 'desktop',
+        os: 'windows',
+      }],
+    };
   }
   if (engine === 'chatgpt') {
-    return dataforseoRequestCached(env, '/ai_optimization/chat_gpt/llm_responses/live', [{
-      user_prompt: query,
-      model_name: 'gpt-4o',
-      web_search: true,
-      max_output_tokens: 2048,
-    }], { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
+    return {
+      endpoint: '/ai_optimization/chat_gpt/llm_responses/live',
+      body: [{
+        user_prompt: query,
+        model_name: await resolveModel(env, 'chat_gpt'),
+        web_search: true,
+        max_output_tokens: 2048,
+      }],
+    };
   }
-  return dataforseoRequestCached(env, '/ai_optimization/perplexity/llm_responses/live', [{
-    user_prompt: query,
-    model_name: 'sonar',
-    max_output_tokens: 2048,
-  }], { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
+  return {
+    endpoint: '/ai_optimization/perplexity/llm_responses/live',
+    body: [{
+      user_prompt: query,
+      model_name: await resolveModel(env, 'perplexity'),
+      max_output_tokens: 2048,
+    }],
+  };
+}
+
+async function callEngine(env: Env, engine: AIEngine, query: string): Promise<any> {
+  const { endpoint, body } = await buildEngineRequest(env, engine, query);
+  return dataforseoRequestCached(env, endpoint, body, { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
 }
 
 interface ProjectRow {

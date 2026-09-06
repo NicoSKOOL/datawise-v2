@@ -10,7 +10,8 @@
     "db:migrate": "wrangler d1 execute datawise-db --file=src/db/schema.sql",
     "db:migrate:staging": "wrangler d1 execute datawise-db-staging --file=src/db/schema.sql",
     "db:migrate:production": "wrangler d1 execute datawise-db-prod --file=src/db/schema.sql",
-    "test": "vitest run"
+    "test": "vitest run",
+    "llm-models:snapshot": "node scripts/refresh-llm-models-snapshot.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241205.0",
