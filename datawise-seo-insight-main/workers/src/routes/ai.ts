@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequest } from '../dataforseo/client';
+import { resolveModel } from '../dataforseo/llm-models';
 
 const LIGHTHOUSE_SEO_TIMEOUT_MS = 55_000;
 const LIGHTHOUSE_HTML_TIMEOUT_MS = 15_000;
@@ -87,7 +88,7 @@ export async function handleChatGPTSearch(request: Request, env: Env): Promise<R
   try {
     const data = await dataforseoRequest(env, '/ai_optimization/chat_gpt/llm_responses/live', [{
       user_prompt: keyword,
-      model_name: 'gpt-4o',
+      model_name: await resolveModel(env, 'chat_gpt'),
       web_search: true,
       max_output_tokens: 2048,
     }]);
@@ -114,7 +115,7 @@ export async function handlePerplexitySearch(request: Request, env: Env): Promis
   try {
     const data = await dataforseoRequest(env, '/ai_optimization/perplexity/llm_responses/live', [{
       user_prompt: keyword,
-      model_name: 'sonar',
+      model_name: await resolveModel(env, 'perplexity'),
       web_search_country_iso_code: isoCode,
       max_output_tokens: 2048,
     }]);
@@ -133,7 +134,7 @@ export async function handleClaudeSearch(request: Request, env: Env): Promise<Re
   try {
     const data = await dataforseoRequest(env, '/ai_optimization/claude/llm_responses/live', [{
       user_prompt: keyword,
-      model_name: 'claude-3-5-sonnet',
+      model_name: await resolveModel(env, 'claude'),
       web_search: true,
       max_output_tokens: 2048,
     }]);
@@ -152,7 +153,7 @@ export async function handleGeminiSearch(request: Request, env: Env): Promise<Re
   try {
     const data = await dataforseoRequest(env, '/ai_optimization/gemini/llm_responses/live', [{
       user_prompt: keyword,
-      model_name: 'gemini-1.5-flash',
+      model_name: await resolveModel(env, 'gemini'),
       web_search: true,
       max_output_tokens: 2048,
     }]);
@@ -515,7 +516,7 @@ export async function handleVisibilityCheck(request: Request, env: Env, userId: 
     // Check ChatGPT Search
     try {
       const chatData = await dataforseoRequest(env, '/ai_optimization/chat_gpt/llm_responses/live', [{
-        user_prompt: keyword, model_name: 'gpt-4o', web_search: true, max_output_tokens: 2048,
+        user_prompt: keyword, model_name: await resolveModel(env, 'chat_gpt'), web_search: true, max_output_tokens: 2048,
       }]);
       const items = chatData?.tasks?.[0]?.result?.[0]?.items || [];
       chatgpt = JSON.stringify(items).includes(domain);
@@ -524,7 +525,7 @@ export async function handleVisibilityCheck(request: Request, env: Env, userId: 
     // Check Perplexity
     try {
       const perpData = await dataforseoRequest(env, '/ai_optimization/perplexity/llm_responses/live', [{
-        user_prompt: keyword, model_name: 'sonar', max_output_tokens: 2048,
+        user_prompt: keyword, model_name: await resolveModel(env, 'perplexity'), max_output_tokens: 2048,
       }]);
       const items = perpData?.tasks?.[0]?.result?.[0]?.items || [];
       perplexity = JSON.stringify(items).includes(domain);
