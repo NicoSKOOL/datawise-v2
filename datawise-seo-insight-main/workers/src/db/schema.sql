@@ -143,6 +143,9 @@ CREATE TABLE IF NOT EXISTS seo_projects (
   location_code INTEGER DEFAULT 2840,
   latitude REAL,
   longitude REAL,
+  ai_tracking_enabled INTEGER DEFAULT 0,
+  ai_brand_terms TEXT,
+  ai_engines TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -748,3 +751,58 @@ CREATE TABLE IF NOT EXISTS resend_contact_sync (
 );
 
 CREATE INDEX IF NOT EXISTS idx_resend_contact_sync_user ON resend_contact_sync(user_id);
+
+-- AI Visibility Tracker (migrations 2026-06-09, 2026-06-10, 2026-09-07).
+CREATE TABLE IF NOT EXISTS ai_tracked_queries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  query_text TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'custom',
+  keyword_id TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (project_id) REFERENCES seo_projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_tracked_queries_project ON ai_tracked_queries(project_id);
+
+CREATE TABLE IF NOT EXISTS ai_visibility_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query_id TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  status TEXT NOT NULL,
+  citation_position INTEGER,
+  cited_url TEXT,
+  answer_excerpt TEXT,
+  run_type TEXT NOT NULL DEFAULT 'scheduled',
+  checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  answer_text TEXT,
+  model TEXT,
+  location_code INTEGER,
+  language_code TEXT,
+  retrieved_url TEXT,
+  FOREIGN KEY (query_id) REFERENCES ai_tracked_queries(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_checks_query_engine ON ai_visibility_checks(query_id, engine, id);
+CREATE INDEX IF NOT EXISTS idx_ai_checks_checked_at ON ai_visibility_checks(checked_at);
+
+CREATE TABLE IF NOT EXISTS ai_check_citations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_id INTEGER NOT NULL,
+  domain TEXT NOT NULL,
+  url TEXT,
+  position INTEGER,
+  kind TEXT NOT NULL DEFAULT 'cited',
+  FOREIGN KEY (check_id) REFERENCES ai_visibility_checks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_citations_check ON ai_check_citations(check_id);
+CREATE INDEX IF NOT EXISTS idx_ai_citations_domain ON ai_check_citations(domain);
+
+CREATE TABLE IF NOT EXISTS ai_check_brands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  category TEXT,
+  is_you INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (check_id) REFERENCES ai_visibility_checks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_check_brands_check ON ai_check_brands(check_id);
