@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { handleClaudeSearch, handleGeminiSearch, handleChatGPTSearch, handlePerplexitySearch } from './ai';
+import { handleChatGPTSearch, handlePerplexitySearch, handleVisibilityCheck } from './ai';
+import aiModeFixture from '../ai-engines/__fixtures__/ai_mode.json';
 import { buildEngineRequest } from './ai-tracking';
 
 // Every LLM Responses call must take its model from the live DataForSEO
@@ -14,6 +15,7 @@ const env = {
   },
   DATAFORSEO_EMAIL: 'x',
   DATAFORSEO_PASSWORD: 'y',
+  DB: { prepare: () => ({ bind: () => ({ first: async () => null }) }) },
 } as any;
 
 const catalogs: Record<string, string[]> = {
@@ -48,23 +50,6 @@ afterEach(() => {
 });
 
 describe('LLM Responses handlers use catalog models', () => {
-  it('Claude search sends a model from the live catalog', async () => {
-    const posted = stubDataForSeo();
-    const res = await handleClaudeSearch(req({ keyword: 'best crm' }), env);
-    expect(res.status).toBe(200);
-    expect(posted[0].url).toContain('/ai_optimization/claude/llm_responses/live');
-    expect(posted[0].body.model_name).toBe('claude-sonnet-4-6');
-    expect(posted[0].body.web_search).toBe(true);
-  });
-
-  it('Gemini search sends a model from the live catalog', async () => {
-    const posted = stubDataForSeo();
-    const res = await handleGeminiSearch(req({ keyword: 'best crm' }), env);
-    expect(res.status).toBe(200);
-    expect(posted[0].url).toContain('/ai_optimization/gemini/llm_responses/live');
-    expect(posted[0].body.model_name).toBe('gemini-3.5-flash');
-  });
-
   it('ChatGPT search sends a model from the live catalog', async () => {
     const posted = stubDataForSeo();
     await handleChatGPTSearch(req({ keyword: 'best crm' }), env);
@@ -100,5 +85,21 @@ describe('buildEngineRequest (AI Visibility Tracker)', () => {
     expect(endpoint).toBe('/serp/google/ai_mode/live/advanced');
     expect(body[0]).toMatchObject({ keyword: 'best crm', location_name: 'United States' });
     expect(body[0].model_name).toBeUndefined();
+  });
+});
+
+describe('POST /api/ai/visibility-check (dashboard card)', () => {
+  it('marks Google AI Mode visible when a reference cites the domain and reports four engines', async () => {
+    const empty = { status_code: 20000, tasks: [{ status_code: 20000, result: [{ items: [] }] }] };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/models')) return new Response(JSON.stringify({ status_code: 20000, tasks: [{ status_code: 20000, result: [{ model_name: 'sonar', web_search_supported: true }] }] }), { status: 200 });
+      if (url.includes('/serp/google/ai_mode/')) return new Response(JSON.stringify(aiModeFixture), { status: 200 });
+      return new Response(JSON.stringify(empty), { status: 200 });
+    }));
+    const res = await handleVisibilityCheck(req({ domain: 'reddit.com', keywords: ['best crm'] }), env, 'user-1');
+    const body = await res.json() as any;
+    expect(body.engines_total).toBe(4);
+    expect(body.results[0]).toMatchObject({ keyword: 'best crm', google_ai: true, chatgpt: false, gemini: false, perplexity: false });
+    expect(body.engines_visible).toBe(1);
   });
 });
