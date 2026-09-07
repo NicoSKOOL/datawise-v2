@@ -1556,7 +1556,7 @@ vi.mock('../../routes/keywords', () => {
     handleKeywordIdeas: vi.fn(async () => json({ tasks: [{ result: [{ items: [labsItem('idea', 20)] }] }] })),
     handleKeywordOverview: vi.fn(async (req: Request) => {
       const body = await req.json() as any;
-      return json({ tasks: [{ result: [{ items: [labsItem(body.keywords[0], 900)] }] }] });
+      return json({ tasks: [{ result: [{ items: [labsItem(body.keyword, 900)] }] }] });
     }),
     handleKeywordDifficulty: vi.fn(async (req: Request) => {
       const body = await req.json() as any;
@@ -1616,8 +1616,6 @@ describe('datawise_keyword_metrics', () => {
   });
 });
 ```
-
-Note: `handleKeywordOverview` in `routes/keywords.ts` reads `keyword` (singular) from the body and wraps it as `keywords: [keyword]` for DataForSEO. The mock above reads `body.keywords[0]` because Task 9 calls the DataForSEO overview endpoint through the handler one keyword at a time; adjust the mock to `body.keyword` if you implement it that way. Both are correct; keep the mock and the implementation consistent.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1788,8 +1786,6 @@ export const keywordMetrics = defineTool({
   },
 });
 ```
-
-Because `handleKeywordOverview` reads `body.keyword` (singular), change the test mock for `handleKeywordOverview` to use `body.keyword` instead of `body.keywords[0]`.
 
 - [ ] **Step 5: Run the tests and typecheck**
 
