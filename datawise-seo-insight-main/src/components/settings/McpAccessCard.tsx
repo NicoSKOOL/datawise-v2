@@ -171,15 +171,15 @@ export function McpAccessCard() {
             <DialogDescription>This is the only time DataWise will show it. Store it somewhere safe.</DialogDescription>
           </DialogHeader>
           {reveal && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 w-full space-y-3">
+              <div className="min-w-0 flex items-center gap-2">
                 <code className="min-w-0 flex-1 whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">{reveal.token}</code>
                 <CopyButton text={reveal.token} />
               </div>
               <div className="min-w-0">
                 <Label className="text-xs">Claude Code command</Label>
-                <div className="mt-1 flex items-start gap-2">
-                  <pre className="min-w-0 flex-1 overflow-x-auto rounded-md bg-muted p-2 text-xs">{claudeCodeCommand(reveal.token)}</pre>
+                <div className="mt-1 min-w-0 flex items-start gap-2">
+                  <pre className="min-w-0 flex-1 whitespace-pre-wrap break-all rounded-md bg-muted p-2 text-xs">{claudeCodeCommand(reveal.token)}</pre>
                   <CopyButton text={claudeCodeCommand(reveal.token)} />
                 </div>
               </div>
