@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { recordCrash } from '@/lib/crash-report';
 
 interface State {
   error: Error | null;
@@ -16,6 +17,7 @@ export class SiteAuditErrorBoundary extends Component<{ children: ReactNode }, S
     this.setState({ error, info });
     // Also surface to the console so we can read it in DevTools
     console.error('[SiteAudit] Render crashed:', error, info?.componentStack);
+    recordCrash(error, info, 'site-audit');
   }
 
   render() {

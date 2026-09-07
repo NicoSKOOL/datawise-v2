@@ -463,3 +463,48 @@ function templatePath(path: string): string {
     })
     .join('/');
 }
+
+
+// --- Client render crashes -------------------------------------------------
+// Posted by the SPA error boundaries (src/lib/crash-report.ts). Stored as a
+// product event so crashes show up in the activity dashboard even when the
+// user never files a feedback report. Metadata is bounded by the route handler.
+
+export interface ClientCrashInput {
+  name: string;
+  message: string;
+  stack: string | null;
+  component_stack: string | null;
+  route: string | null;
+  source: string;
+  user_agent: string | null;
+}
+
+export function buildClientCrashEvent(userId: string, input: ClientCrashInput): InsertActivityInput {
+  const metadata: Record<string, string> = { message: input.message, source: input.source };
+  if (input.stack) metadata.stack = input.stack;
+  if (input.component_stack) metadata.component_stack = input.component_stack;
+  if (input.user_agent) metadata.user_agent = input.user_agent;
+  return {
+    event_name: 'Client Crash',
+    event_category: 'product',
+    feature: 'client',
+    action: 'crash',
+    resource_type: 'route',
+    user_id: userId,
+    route: input.route,
+    method: 'CLIENT',
+    status_code: null,
+    outcome: 'error',
+    error_code: input.name,
+    metadata_json: JSON.stringify(metadata),
+  };
+}
+
+export async function recordClientCrash(env: Env, userId: string, input: ClientCrashInput): Promise<void> {
+  try {
+    await recordActivity(env, buildClientCrashEvent(userId, input));
+  } catch (err) {
+    console.error('recordClientCrash failed:', err);
+  }
+}

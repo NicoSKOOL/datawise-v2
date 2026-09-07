@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { recordCrash } from '@/lib/crash-report';
 
 const CHUNK_ERROR_RE =
   /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError/i;
@@ -47,6 +48,7 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('[AppErrorBoundary] Render crashed:', error, info?.componentStack);
+    if (!isChunkLoadError(error)) recordCrash(error, info, this.props.variant);
     if (isChunkLoadError(error) && tryReloadOnceForStaleChunk()) {
       this.setState({ error, info, reloading: true });
       return;

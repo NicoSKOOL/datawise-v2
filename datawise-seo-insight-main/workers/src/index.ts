@@ -130,6 +130,7 @@ import {
   handleListAllFeedback, handleUpdateFeedback, handleDeleteFeedback,
   handleRoadmap,
 } from './routes/feedback';
+import { handleClientCrash } from './routes/client-crash';
 import { handleGetLLMConfig, handlePutLLMConfig, handleDeleteLLMConfig } from './routes/llm-config';
 import {
   handleListChecklist, handleUpsertChecklist,
@@ -862,6 +863,9 @@ export default {
       }
       if (path === '/api/feedback' && method === 'POST') {
         return addCors(await handleSubmitFeedback(request, env, user));
+      }
+      if (path === '/api/client-crash' && method === 'POST') {
+        return addCors(await handleClientCrash(request, env, user));
       }
       if (path === '/api/feedback' && method === 'GET') {
         return addCors(await handleListMyFeedback(env, user.id));
