@@ -1117,7 +1117,9 @@ export function estimateCostUsd(tool: string, args: Record<string, unknown>): nu
       return 2 * (LABS_TASK + LABS_ITEM * n);
     }
     case 'datawise_domain_overview':
-      return LABS_TASK + TRAFFIC_TASK + 0.0012 + BACKLINKS_REQUEST + BACKLINKS_ROW * 10; // 0.1576, reported as 0.16 in the spec
+      // rank overview (Labs task) + bulk traffic estimation ($0.12 task + $0.0012 per
+      // domain) + backlinks summary, rounded up to the spec's $0.16 figure.
+      return 0.16;
     case 'datawise_ranked_keywords':
     case 'datawise_competitors':
       return LABS_TASK + LABS_ITEM * limit;
