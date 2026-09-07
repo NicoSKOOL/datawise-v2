@@ -47,6 +47,7 @@ The project is being modernized from Supabase to Cloudflare (D1 + KV + Workers).
 - DataForSEO API calls: `src/dataforseo/`
 - DB schema: `src/db/schema.sql`
 - Secrets managed via `wrangler secret put` (see `wrangler.toml` comments)
+- MCP server: `src/mcp/` (separate worker `datawise-mcp`, config `workers/wrangler.mcp.toml`, public URL `https://mcp.datawiseseo.com`). Shares D1 + KV with `datawise-api`. See `DEPLOY.md` "MCP worker".
 
 ### Legacy Backend (`datawise-seo-insight-main/supabase/`)
 - Edge functions in `supabase/functions/` (being migrated to Workers)
@@ -74,10 +75,13 @@ npm run deploy:production
 npm run db:migrate   # Run D1 schema migration (dev)
 npm run db:migrate:staging
 npm run db:migrate:production
+npm run dev:mcp                      # local MCP worker on :8788
+npm run deploy:mcp                   # → wrangler deploy -c wrangler.mcp.toml → datawise-mcp
 ```
 
 ### Environment
 - Frontend: copy `.env.example` to `.env`, set `VITE_API_URL`
+- Frontend `.env` also sets `VITE_MCP_URL=https://mcp.datawiseseo.com` (the SPA falls back to `http://localhost:8788` when unset). CI sets it in the three workflows.
 - Workers: secrets set via `wrangler secret put` (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ENCRYPTION_KEY, DATAFORSEO_EMAIL, DATAFORSEO_PASSWORD, LLM keys)
 
 ## Key API Route Groups

@@ -82,6 +82,39 @@ npm run deploy     # → wrangler deploy → datawise-api (no env flag)
 
 DO NOT use `npm run deploy:production` for the worker — see `~/.claude/projects/-Users-nicolasgorrono-Desktop-DataWise-V2/memory/reference_deployment.md` for the naming trap (creates an orphan `datawise-api-production` worker).
 
+## MCP worker (`datawise-mcp`) deploys
+
+The MCP server for ChatGPT / Claude is a second worker built from the same
+`workers/` tree (`src/mcp/`, config `wrangler.mcp.toml`). Public URL
+`https://mcp.datawiseseo.com`, endpoint `/mcp`. Spec:
+`docs/superpowers/specs/2026-09-07-datawise-mcp-server-design.md`.
+
+```sh
+cd datawise-seo-insight-main/workers
+npm run deploy:mcp     # → wrangler deploy -c wrangler.mcp.toml → datawise-mcp
+```
+
+Rules:
+- If `src/db/schema.sql` changed, run the remote D1 migration first (see the
+  D1 section below). The MCP worker shares `datawise-db` with `datawise-api`.
+- Secrets live in the Cloudflare dashboard on the `datawise-mcp` worker:
+  `DATAFORSEO_EMAIL`, `DATAFORSEO_PASSWORD`, `ENCRYPTION_KEY`. Set them there,
+  not with `wrangler secret put` (empty-paste trap).
+- Kill switch: `mcp-paused` key in KV namespace `2302e0b0369842e799b5f4a144d6dce4`
+  (any value). Early access: `mcp-allowlist` = comma-separated emails.
+  Budgets: `mcp-user-cap-cents` (default 400), `mcp-global-cap-cents` (default 10000).
+
+```sh
+# pause / unpause
+npx wrangler kv key put --namespace-id 2302e0b0369842e799b5f4a144d6dce4 mcp-paused 1
+npx wrangler kv key delete --namespace-id 2302e0b0369842e799b5f4a144d6dce4 mcp-paused
+```
+
+Rollback: `npx wrangler rollback -c wrangler.mcp.toml` (pick the previous
+version), or redeploy the last good tag.
+
+Health: `curl -s https://mcp.datawiseseo.com/health` → `{"ok":true,"service":"datawise-mcp"}`.
+
 ## Rollback (Pages)
 
 If a deploy goes wrong, rollback via Cloudflare API (wrangler CLI does not support Pages rollback):
