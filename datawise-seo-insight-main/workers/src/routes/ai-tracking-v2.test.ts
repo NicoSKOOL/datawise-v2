@@ -91,6 +91,17 @@ describe('runChecksForProject (v2)', () => {
     expect(statuses).toEqual([{ engine: 'chatgpt', status: 'error' }, { engine: 'gemini', status: 'absent' }]);
   });
 
+  it('skips Gemini on the legacy path instead of recording an error', async () => {
+    const { env, kv, raw } = makeEnv();
+    kv.delete(AI_ENGINES_V2_FLAG);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status_code: 20000, tasks: [{ status_code: 20000, result: [{ items: [] }] }] }), { status: 200 })));
+    const summary = await runChecksForProject(env, { ...project, ai_engines: JSON.stringify(['gemini', 'perplexity']) }, [{ id: 'q1', query_text: 'x' }], 'manual');
+    vi.unstubAllGlobals();
+    expect(summary.checks).toBe(1);
+    expect(summary.errors).toBe(0);
+    expect(raw.prepare('SELECT engine FROM ai_visibility_checks').all()).toEqual([{ engine: 'perplexity' }]);
+  });
+
   it('does not touch the engine layer when the flag is off', async () => {
     const { env, kv } = makeEnv();
     kv.delete(AI_ENGINES_V2_FLAG);

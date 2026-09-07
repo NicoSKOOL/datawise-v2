@@ -288,7 +288,8 @@ export async function runChecksForProject(
   budget?: { remaining: number }
 ): Promise<{ checks: number; cited: number; mentioned: number; retrieved: number; errors: number; skipped_fresh: number }> {
   const v2 = await isEnginesV2Enabled(env);
-  const engines = projectEngines(project);
+  // The legacy path has no Gemini adapter: skip it rather than write error rows.
+  const engines = projectEngines(project).filter(e => v2 || e !== 'gemini');
   const brandTerms = parseJsonArray(project.ai_brand_terms) || defaultBrandTerms(project);
   const locale = await resolveProjectLocale(env, project);
   const summary = { checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0 };
