@@ -814,8 +814,12 @@ function ServicePageOptimizer() {
     await copyAsRichText(text, toast, label);
   };
 
+  const analyzing = status === 'fetching' || status === 'analyzing';
+
   const handleAnalyze = async () => {
-    if (!url.trim()) return;
+    // Enter in the URL field used to restart the analysis mid-run, wiping the
+    // results on screen; the Analyze button was already disabled while busy.
+    if (!url.trim() || analyzing) return;
 
     const config = getLLMConfig();
     if (!config) {
@@ -906,7 +910,7 @@ function ServicePageOptimizer() {
             </div>
             <Button
               onClick={handleAnalyze}
-              disabled={!url.trim() || status === 'fetching' || status === 'analyzing'}
+              disabled={!url.trim() || analyzing}
             >
               {(status === 'fetching' || status === 'analyzing') ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-1.5" />

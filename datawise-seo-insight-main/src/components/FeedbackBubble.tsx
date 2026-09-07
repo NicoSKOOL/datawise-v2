@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { withRecentCrash } from '@/lib/crash-report';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -95,7 +96,7 @@ export function FeedbackBubble() {
         body: {
           ...data,
           page_url: window.location.href,
-          browser_info: navigator.userAgent,
+          browser_info: withRecentCrash(navigator.userAgent),
           screenshot_data,
           screenshot_name,
         },
