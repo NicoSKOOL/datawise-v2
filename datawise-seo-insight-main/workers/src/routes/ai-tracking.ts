@@ -22,6 +22,12 @@ export const MAX_AI_QUERIES_PER_PROJECT = 20;
 // weekly cycle share one DataForSEO call. 6 days so it never spans two runs.
 const ENGINE_CACHE_TTL_SECONDS = 6 * 24 * 3600;
 const ENGINE_TIMEOUT_MS = 60_000;
+// v2 scraper engines (ChatGPT, Gemini) can take most of DataForSEO's 120s
+// live window; give them room, retry once on a transient failure, and run
+// prompts in parallel so a manual check does not get slower.
+const V2_ENGINE_TIMEOUT_MS = 100_000;
+const V2_RETRY_DELAY_MS = 1_500;
+const V2_QUERY_CONCURRENCY = 5;
 // Hard ceiling on engine calls per scheduled run, so a runaway project list
 // can never blow up the DataForSEO bill or the cron's subrequest budget.
 const MAX_CHECKS_PER_SCHEDULED_RUN = 1000;
@@ -259,6 +265,17 @@ export async function buildEngineRequest(
   };
 }
 
+async function runEngineWithRetry(env: Env, engine: AIEngine, query: string, locale: Locale): Promise<NormalizedAnswer> {
+  const opts = { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: V2_ENGINE_TIMEOUT_MS };
+  try {
+    return await runEngine(env, engine, query, locale, opts);
+  } catch (first) {
+    console.warn(`AI check retry [${engine}] "${query}":`, first instanceof Error ? first.message : first);
+    await new Promise(resolve => setTimeout(resolve, V2_RETRY_DELAY_MS));
+    return await runEngine(env, engine, query, locale, opts);
+  }
+}
+
 async function callEngine(env: Env, engine: AIEngine, query: string): Promise<any> {
   const { endpoint, body } = await buildEngineRequest(env, engine, query);
   return dataforseoRequestCached(env, endpoint, body, { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
@@ -308,17 +325,23 @@ export async function runChecksForProject(
     | { kind: 'v2'; answer: NormalizedAnswer; classification: Classification }
     | { kind: 'legacy'; parsed: ParsedAnswer; classification: LegacyClassification };
 
+  // Budget is applied in order before anything runs, so parallel dispatch
+  // cannot overspend it.
+  const plan: Array<{ query: QueryRow; due: AIEngine[] }> = [];
   for (const query of queries) {
     const due = engines.filter(e => !fresh.has(`${query.id}|${e}`));
     summary.skipped_fresh += engines.length - due.length;
     if (!due.length) continue;
     if (budget && budget.remaining < due.length) break;
     if (budget) budget.remaining -= due.length;
+    plan.push({ query, due });
+  }
 
+  const processQuery = async ({ query, due }: { query: QueryRow; due: AIEngine[] }) => {
     const checkedAt = nowSql();
     const settled = await Promise.allSettled(due.map(async (engine): Promise<Outcome> => {
       if (v2) {
-        const answer = await runEngine(env, engine, query.query_text, locale, { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
+        const answer = await runEngineWithRetry(env, engine, query.query_text, locale);
         return { kind: 'v2', answer, classification: classify(answer, project.domain, brandTerms) };
       }
       const data = await callEngine(env, engine, query.query_text);
@@ -334,10 +357,11 @@ export async function runChecksForProject(
       if (outcome.status === 'rejected') {
         summary.errors++;
         const reason = outcome.reason;
-        console.error(`AI check failed [${engine}] "${query.query_text}":`, reason instanceof Error ? reason.message : reason);
+        const message = reason instanceof Error ? reason.message : String(reason);
+        console.error(`AI check failed [${engine}] "${query.query_text}":`, message);
         await env.DB.prepare(
-          'INSERT INTO ai_visibility_checks (query_id, engine, status, run_type, checked_at, location_code, language_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
-        ).bind(query.id, engine, 'error', runType, checkedAt, locale.location_code, locale.language_code).run();
+          'INSERT INTO ai_visibility_checks (query_id, engine, status, answer_excerpt, run_type, checked_at, location_code, language_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(query.id, engine, 'error', message.slice(0, 300), runType, checkedAt, locale.location_code, locale.language_code).run();
         continue;
       }
 
@@ -352,6 +376,14 @@ export async function runChecksForProject(
         await persistLegacyCheck(env, query.id, engine, outcome.value.parsed, outcome.value.classification, runType, checkedAt);
       }
     }
+  };
+
+  if (v2) {
+    for (let i = 0; i < plan.length; i += V2_QUERY_CONCURRENCY) {
+      await Promise.all(plan.slice(i, i + V2_QUERY_CONCURRENCY).map(processQuery));
+    }
+  } else {
+    for (const item of plan) await processQuery(item);
   }
 
   return summary;

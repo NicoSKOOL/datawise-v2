@@ -28,7 +28,8 @@ function makeEnv() {
 }
 const project = { id: 'p1', user_id: 'u1', name: 'DataWise', domain: 'datawiseseo.com', ai_tracking_enabled: 1, ai_brand_terms: null, ai_engines: JSON.stringify(['chatgpt', 'gemini']), location_code: 2724 };
 
-beforeEach(() => runEngineMock.mockReset());
+// mockClear, not mockReset: vitest 3 re-raises rejected promises a reset spy had recorded.
+beforeEach(() => runEngineMock.mockClear());
 
 describe('resolveProjectLocale', () => {
   it('uses the project location and the dominant tracked-keyword language', async () => {
@@ -89,6 +90,27 @@ describe('runChecksForProject (v2)', () => {
     expect(summary.errors).toBe(1);
     const statuses = raw.prepare('SELECT engine, status FROM ai_visibility_checks ORDER BY engine').all();
     expect(statuses).toEqual([{ engine: 'chatgpt', status: 'error' }, { engine: 'gemini', status: 'absent' }]);
+  });
+
+  it('retries a failed engine once before recording an error, and stores the reason', async () => {
+    const { env, raw } = makeEnv();
+    let chatgptCalls = 0;
+    runEngineMock.mockImplementation(async (_e: unknown, engine: string) => {
+      if (engine === 'chatgpt') {
+        chatgptCalls += 1;
+        if (chatgptCalls === 1) throw new Error('Internal Error - Timeout.');
+        return answer({ engine: 'chatgpt' });
+      }
+      throw new Error('gemini scraper failed');
+    });
+    const summary = await runChecksForProject(env, project, [{ id: 'q1', query_text: 'x' }], 'manual');
+    expect(chatgptCalls).toBe(2);
+    expect(summary).toMatchObject({ checks: 2, errors: 1 });
+    const rows = raw.prepare('SELECT engine, status, answer_excerpt FROM ai_visibility_checks ORDER BY engine').all();
+    expect(rows).toEqual([
+      { engine: 'chatgpt', status: 'absent', answer_excerpt: null },
+      { engine: 'gemini', status: 'error', answer_excerpt: 'gemini scraper failed' },
+    ]);
   });
 
   it('skips Gemini on the legacy path instead of recording an error', async () => {

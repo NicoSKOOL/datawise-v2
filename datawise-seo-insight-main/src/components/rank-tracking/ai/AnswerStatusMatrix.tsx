@@ -51,7 +51,7 @@ function Cell({ result }: { result?: AIEngineResult }) {
     case 'no_answer':
       return <div className={`${base} border border-border text-muted-foreground/70`} style={{ background: AI_OUTCOME_COLORS.absent }} title="The engine returned no usable answer">n/a</div>;
     default:
-      return <div className={`${base} border border-red-200 bg-red-50 text-red-500`} title="Check failed; it will retry on the next run">err</div>;
+      return <div className={`${base} border border-red-200 bg-red-50 text-red-500`} title={result.answer_excerpt ? `Check failed: ${result.answer_excerpt}. It retries on the next run.` : 'Check failed; it will retry on the next run'}>err</div>;
   }
 }
 
