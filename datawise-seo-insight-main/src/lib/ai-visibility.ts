@@ -7,6 +7,7 @@ export interface VisibilitySummary {
     keyword: string;
     google_ai: boolean;
     chatgpt: boolean;
+    gemini: boolean;
     perplexity: boolean;
   }>;
   engines_visible: number;
