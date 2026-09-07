@@ -1,0 +1,106 @@
+{
+  "version": "0.1.20260902",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "cost": 0.004,
+  "tasks": [
+    {
+      "id": "fixture",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "result": [
+        {
+          "keyword": "best crm for small business",
+          "location_code": 2840,
+          "language_code": "en",
+          "datetime": "2026-09-07 10:52:38 +00:00",
+          "item_types": [
+            "ai_overview"
+          ],
+          "items": [
+            {
+              "type": "ai_overview",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "markdown": "The **best CRM for your small business** depends entirely on whether your primary bottleneck is **sales pipeline tracking, inbound marketing, or managing custom data on a tight budget** . While enterprise businesses often default to complex setups, small teams succeed most with platforms that prioritize quick onboarding and high daily adoption.[](https://slack.com/blog/crm/best-crm-for-small-business) [[1]](https://slack.com/blog/crm/best-crm-for-small-business)[[2]](https://www.youtube.com/watch?v=Zq1kfwRWkmk)[[3]](https://www.zoho.com/crm/small-business-crm-software/)[[4]](https://fayedigita",
+              "references": [
+                {
+                  "type": "ai_overview_reference",
+                  "source": "Reddit",
+                  "domain": "www.reddit.com",
+                  "url": "https://www.reddit.com/r/CRM/comments/1e5141p/best_and_inexpensive_crm_for_small_business/",
+                  "title": "Best and inexpensive CRM for small business - Reddit"
+                },
+                {
+                  "type": "ai_overview_reference",
+                  "source": "Slack",
+                  "domain": "slack.com",
+                  "url": "https://slack.com/blog/crm/best-crm-for-small-business",
+                  "title": "Best CRM for Small Business in 2026 - Slack"
+                },
+                {
+                  "type": "ai_overview_reference",
+                  "source": "Salesforce",
+                  "domain": "www.salesforce.com",
+                  "url": "https://www.salesforce.com/crm/crm-for-small-business/",
+                  "title": "CRM For Small Business (Your Complete Guide) - Salesforce"
+                },
+                {
+                  "type": "ai_overview_reference",
+                  "source": "U.S. Chamber of Commerce",
+                  "domain": "www.uschamber.com",
+                  "url": "https://www.uschamber.com/co/start/strategy/low-cost-crm-tools",
+                  "title": "10 Free or Low-Cost CRM Tools for Small Businesses"
+                }
+              ],
+              "items": [
+                {
+                  "type": "ai_overview_element",
+                  "position": "left",
+                  "title": null,
+                  "text": "The best CRM for your small business depends entirely on whether your primary bottleneck is sales pipeline tracking, inbound marketing, or managing custom data on a tight budget. While enterprise busi",
+                  "markdown": "The **best CRM for your small business** depends entirely on whether your primary bottleneck is **sales pipeline tracking, inbound marketing, or managing custom data on a tight budget** . While enterp",
+                  "references": [
+                    {
+                      "type": "ai_overview_reference",
+                      "source": "Slack",
+                      "domain": "slack.com",
+                      "url": "https://slack.com/blog/crm/best-crm-for-small-business",
+                      "title": "Best CRM for Small Business in 2026 - Slack"
+                    },
+                    {
+                      "type": "ai_overview_reference",
+                      "source": "YouTube",
+                      "domain": "www.youtube.com",
+                      "url": "https://www.youtube.com/watch?v=Zq1kfwRWkmk",
+                      "title": "BEST CRM Software | Tested 15 CRMs for 2026 (HONEST Opinion)"
+                    }
+                  ]
+                },
+                {
+                  "type": "ai_overview_paid",
+                  "position": "left",
+                  "text": null,
+                  "markdown": null,
+                  "items": [
+                    {
+                      "type": "ai_overview_paid_element",
+                      "title": "Monday CRM",
+                      "url": "https://monday.com/",
+                      "domain": "monday.com",
+                      "ad_aclk": "x",
+                      "website_name": "monday.com",
+                      "breadcrumb": null,
+                      "snippet": "sponsored",
+                      "images": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

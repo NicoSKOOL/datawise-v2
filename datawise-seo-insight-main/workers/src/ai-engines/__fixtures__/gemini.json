@@ -1,0 +1,69 @@
+{
+  "version": "0.1.20260902",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "cost": 0.004,
+  "tasks": [
+    {
+      "id": "fixture",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "result": [
+        {
+          "keyword": "best crm for small business",
+          "location_code": 2840,
+          "language_code": "en",
+          "model": "3.5 Flash-Lite",
+          "datetime": "2026-09-07 10:52:33 +00:00",
+          "markdown": "Choosing the best Customer Relationship Management (CRM) software for a small business depends on your budget, team size, and what you need it to do most.\n\nThe top-rated CRMs for small businesses are categorized below by their biggest strengths:\n\n### 1. Best for Beginners & Generous Free Plan: HubSpot CRM\n\n* **Best For:** Teams wanting an all-in-one platform that is easy to pick up.\n* **Why it\u2019s great:** HubSpot is famous for its powerful free-forever tier that supports unlimited users.[www.techradar.com](https://www.techradar.com/best/best-crm-for-small-business#:~:text=3.%20Zoho%20CRM.%20Get",
+          "sources": [
+            {
+              "type": "gemini_source",
+              "title": "Best small business CRM of 2026 - TechRadar",
+              "domain": "www.techradar.com",
+              "url": "https://www.techradar.com/best/best-crm-for-small-business#:~:text=3.%20Zoho%20CRM.%20Get%20to%20grips%20with,300%20third-party%20app%20integrations.%20Reasons%20to%20avoid.",
+              "source_name": "TechRadar",
+              "publication_date": null
+            },
+            {
+              "type": "gemini_source",
+              "title": "Best small business CRM of 2026 - TechRadar",
+              "domain": "www.techradar.com",
+              "url": "https://www.techradar.com/best/best-crm-for-small-business#:~:text=3.%20Zoho%20CRM.%20Get%20to%20grips%20with,300%20third-party%20app%20integrations.%20Reasons%20to%20avoid.",
+              "source_name": "TechRadar",
+              "publication_date": null
+            },
+            {
+              "type": "gemini_source",
+              "title": "7 Best CRM Software Picks for Small Business 2026",
+              "domain": "ustechautomations.com",
+              "url": "https://ustechautomations.com/resources/blog/best-crm-for-small-business-2026#:~:text=Zia%20on%20paid%20plans.%20Limitations%3A%203.2%20ease-of-use,free%20forever%20plan%20or%20a%20full%20MAP.",
+              "source_name": "US Tech Automations",
+              "publication_date": null
+            },
+            {
+              "type": "gemini_source",
+              "title": "7 Best CRM Software Picks for Small Business 2026",
+              "domain": "ustechautomations.com",
+              "url": "https://ustechautomations.com/resources/blog/best-crm-for-small-business-2026#:~:text=Disqualify%20if%20you%20will%20never%20connect%20an,software.%20*%20Pipedrive%20%E2%80%94%20easiest%20B2B%20pipeline.",
+              "source_name": "US Tech Automations",
+              "publication_date": null
+            }
+          ],
+          "item_types": [
+            "gemini_text"
+          ],
+          "items": [
+            {
+              "type": "gemini_text",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "markdown": "Choosing the best Customer Relationship Management (CRM) software for a small business depends on your budget, team size, and what you need it to do most.",
+              "sources": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
