@@ -1,5 +1,14 @@
 const DATAFORSEO_BASE = 'https://api.dataforseo.com/v3';
 
+// Optional per-request meter. The MCP worker attaches one to the env it hands
+// to route handlers so it can bill the member for the exact DataForSEO cost
+// the API reported (0 on a KV cache hit). Nothing else sets it.
+export interface DfsMeter {
+  costUsd: number;
+  liveCalls: number;
+  cacheHits: number;
+}
+
 // Structural env subset this client actually needs. The full worker Env
 // (and blueprint's BlueprintProviderEnv) both satisfy this, so callers keep
 // passing their full env objects unchanged; this just lets code that only
@@ -9,6 +18,7 @@ export interface DataForSeoEnv {
   KV: KVNamespace;
   DATAFORSEO_EMAIL: string;
   DATAFORSEO_PASSWORD: string;
+  dfsMeter?: DfsMeter;
 }
 
 export interface DataForSeoCacheOptions {
@@ -33,6 +43,17 @@ function getCredentials(env: DataForSeoEnv): string {
 
 function isAbortError(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'name' in err && err.name === 'AbortError';
+}
+
+function meterLive(env: DataForSeoEnv, data: any): void {
+  if (!env.dfsMeter) return;
+  const cost = typeof data?.cost === 'number' ? data.cost : 0;
+  env.dfsMeter.costUsd += cost;
+  env.dfsMeter.liveCalls += 1;
+}
+
+function meterHit(env: DataForSeoEnv): void {
+  if (env.dfsMeter) env.dfsMeter.cacheHits += 1;
 }
 
 // Short-circuit guard: once a 402 has been observed today, every subsequent
@@ -88,6 +109,7 @@ async function fetchDataForSeo(
       throw new Error(`DataForSEO API error: ${response.status}`);
     }
 
+    meterLive(env, data);
     return data;
   } catch (err) {
     if (isAbortError(err)) {
@@ -153,7 +175,10 @@ export async function dataforseoRequestCached(
 
   const key = await dataforseoCacheKey('POST', endpoint, body);
   const cached = await env.KV.get(key);
-  if (cached) return JSON.parse(cached);
+  if (cached) {
+    meterHit(env);
+    return JSON.parse(cached);
+  }
 
   const data = await dataforseoRequest(env, endpoint, body, options.timeoutMs);
   if (isCacheableDfsResponse(data)) {
@@ -174,7 +199,10 @@ export async function dataforseoGetCached(
 
   const key = await dataforseoCacheKey('GET', endpoint);
   const cached = await env.KV.get(key);
-  if (cached) return JSON.parse(cached);
+  if (cached) {
+    meterHit(env);
+    return JSON.parse(cached);
+  }
 
   const data = await dataforseoGet(env, endpoint, options.timeoutMs);
   if (isCacheableDfsResponse(data)) {
