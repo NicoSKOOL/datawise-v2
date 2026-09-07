@@ -44,6 +44,8 @@ function Cell({ result }: { result?: AIEngineResult }) {
       );
     case 'mentioned':
       return <div className={`${base} text-[#0F4A28]`} style={{ background: AI_OUTCOME_COLORS.mentioned }} title={result.answer_excerpt || 'Mentioned, not linked'}>Ment.</div>;
+    case 'retrieved':
+      return <div className={`${base} text-[#7A5A12]`} style={{ background: AI_OUTCOME_COLORS.retrieved }} title={result.retrieved_url ? `Fetched ${result.retrieved_url}, not cited` : 'Fetched, not cited'}>Fetch.</div>;
     case 'absent':
       return <div className={`${base} border border-border text-muted-foreground/70`} style={{ background: AI_OUTCOME_COLORS.absent }}>-</div>;
     case 'no_answer':
@@ -62,6 +64,7 @@ const PRIORITY_PILL: Record<string, { bg: string; fg: string }> = {
 const STATUS_META: Record<string, { text: string; fg: string }> = {
   cited: { text: 'Cited', fg: '#166337' },
   mentioned: { text: 'Mentioned', fg: '#3A7A55' },
+  retrieved: { text: 'Fetched, not cited', fg: '#A67A12' },
   absent: { text: 'Absent', fg: '#7E8C8A' },
   no_answer: { text: 'No answer', fg: '#7E8C8A' },
   error: { text: 'Error', fg: '#DC2626' },
@@ -104,6 +107,11 @@ function EngineDetail({ engine, result, projectDomain }: { engine: AIEngine; res
         {!result && <span className="font-semibold text-muted-foreground">· not checked yet</span>}
       </div>
 
+      {result?.status === 'retrieved' && result.retrieved_url && (
+        <p className="text-xs text-muted-foreground">
+          Fetched but not cited: <a className="underline" href={result.retrieved_url} target="_blank" rel="noreferrer">{result.retrieved_url}</a>
+        </p>
+      )}
       {result?.answer_excerpt && (
         <div className="rounded-lg border bg-card px-3 py-2 text-xs italic leading-relaxed text-foreground/80">{result.answer_excerpt}</div>
       )}
@@ -240,7 +248,7 @@ export default function AnswerStatusMatrix({
 
                 {isOpen && (
                   <div className="mx-1 mt-1 flex flex-col gap-4 rounded-xl bg-secondary/40 p-4">
-                    <div className="grid gap-5 md:grid-cols-3">
+                    <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
                       {orderedEngines.map(engine => (
                         <EngineDetail key={engine} engine={engine} result={query.engines[engine]} projectDomain={projectDomain} />
                       ))}
