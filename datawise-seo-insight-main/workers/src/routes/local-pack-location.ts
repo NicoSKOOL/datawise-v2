@@ -7,8 +7,14 @@
 // unstable and unrelated to what a searcher in the business's city sees.
 // Anchoring the query at the business coordinates (the same center the
 // geo-grid uses) reproduces a local searcher's viewport.
+//
+// Zoom calibration (live DataForSEO, 2026-09-07, "ai marketing agency in
+// cumming"): business pin at 14z ranked the business #1 (proximity flattery),
+// 12z and 11z gave #3, DataForSEO's canonical city location gave #3, downtown
+// Cumming at 12z gave #4, nationwide gave #7. Zoom 12 is the city-scale view
+// that agrees with the canonical city result without standing on the pin.
 
-export const LOCAL_PACK_ZOOM = 14;
+export const LOCAL_PACK_ZOOM = 12;
 export const DEFAULT_LOCATION_CODE = 2840;
 
 export interface GeoPoint {

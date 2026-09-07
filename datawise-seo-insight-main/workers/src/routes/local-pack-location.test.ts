@@ -8,8 +8,8 @@ describe('mapsSearchAnchor', () => {
     const anchor = mapsSearchAnchor(APPIXI, 2840);
     expect(anchor).toEqual({
       kind: 'coordinate',
-      location_coordinate: '34.147757399999996,-84.1743362,14z',
-      key: 'coord:34.147757399999996,-84.1743362,14z',
+      location_coordinate: '34.147757399999996,-84.1743362,12z',
+      key: 'coord:34.147757399999996,-84.1743362,12z',
     });
   });
 
