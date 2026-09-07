@@ -122,7 +122,13 @@ export const localReviews = defineTool({
     const locale = { location_code: args.location_code ?? ctx.identity.defaultLocationCode, language_code: args.language_code ?? ctx.identity.defaultLanguageCode };
     return guarded(async () => {
       const [profile, reviews] = await Promise.all([
-        callJson(ctx.env, uid, handleGBPProfile, { ...ident, ...locale }).catch((err) => ({ error: err instanceof Error ? err.message : String(err) })),
+        // Profile lookup is best-effort only for client errors (e.g. business
+        // not found): a 5xx or unexpected throw propagates so guarded/the
+        // gate surfaces it, instead of being silently hidden in {error}.
+        callJson(ctx.env, uid, handleGBPProfile, { ...ident, ...locale }).catch((err) => {
+          if (err instanceof HandlerError && err.status < 500) return { error: err.message };
+          throw err;
+        }),
         callJson(ctx.env, uid, handleReviews, { ...ident, ...locale, project_id: args.project_id, depth: args.limit, sort_by: 'newest' }),
       ]);
       return toolResult(
@@ -141,9 +147,9 @@ export const searchConsole = defineTool({
   inputSchema: z.object({
     action: z.enum(['list_properties', 'overview', 'queries']),
     property_id: z.string().min(1).optional().describe('Required for overview and queries. From list_properties.'),
-    range: z.string().max(10).optional().describe('Date range token accepted by the DataWise dashboard, e.g. 28d or 3m. Omit for the default.'),
+    range_days: z.union([z.literal(7), z.literal(14), z.literal(30), z.literal(90)]).optional().describe('Days of history for the overview: 7, 14, 30, or 90. Omit for the dashboard default.'),
     search: z.string().max(200).optional().describe('queries only: keep queries containing this text.'),
-    sort: z.enum(['clicks', 'impressions', 'ctr', 'position']).default('clicks'),
+    sort: z.enum(['clicks', 'impressions', 'avg_position', 'avg_ctr']).default('clicks'),
     limit: z.number().int().min(1).max(200).default(50),
     offset: z.number().int().min(0).default(0),
     response_format: responseFormat,
@@ -155,12 +161,14 @@ export const searchConsole = defineTool({
     return guarded(async () => {
       if (args.action === 'list_properties') {
         const data = await readJson<any>(await handleGSCProperties(env, uid));
-        const properties = (data.properties ?? []).map((p: any) => pick(p, ['id', 'site_url', 'kind', 'last_synced_at', 'is_enabled', 'data_missing']));
-        return toolResult({ connected: Boolean(data.connected), needs_reconnect: Boolean(data.needs_reconnect), properties }, `${properties.length} Search Console properties.`);
+        const properties = args.response_format === 'detailed'
+          ? compact(data.properties ?? [], shape)
+          : (data.properties ?? []).map((p: any) => pick(p, ['id', 'site_url', 'kind', 'last_synced_at', 'is_enabled', 'data_missing']));
+        return toolResult({ connected: Boolean(data.connected), needs_reconnect: Boolean(data.needs_reconnect), properties }, `${(properties as unknown[]).length} Search Console properties.`);
       }
       if (args.action === 'overview') {
-        const data = await readJson<any>(await handleGSCData(getRequest('/gsc/data', { property_id: args.property_id, range: args.range }), env, uid));
-        return toolResult({ property_id: args.property_id, range: args.range ?? 'default', overview: compact(data, shape) as Record<string, unknown> }, `Search Console overview for property ${args.property_id}.`);
+        const data = await readJson<any>(await handleGSCData(getRequest('/gsc/data', { property_id: args.property_id, range: args.range_days }), env, uid));
+        return toolResult({ property_id: args.property_id, range_days: args.range_days ?? 'default', overview: compact(data, shape) as Record<string, unknown> }, `Search Console overview for property ${args.property_id}.`);
       }
       const data = await readJson<any>(await handleGSCQueries(
         getRequest('/gsc/queries', { property_id: args.property_id, search: args.search, sort: args.sort, order: 'desc', limit: args.limit, offset: args.offset }), env, uid));

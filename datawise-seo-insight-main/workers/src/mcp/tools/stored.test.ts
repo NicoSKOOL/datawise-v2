@@ -23,16 +23,23 @@ vi.mock('../../routes/local-seo', () => ({
     const b = await req.clone().json() as any;
     return json({ items: [{ rating: 5, review_text: '<b>Great</b>', timestamp: '2026-08-01' }], depth: b.depth, project_id: b.project_id ?? null });
   }),
-  handleGBPProfile: vi.fn(async () => json({ title: 'Acme Plumbing', rating: { value: 4.7, votes_count: 88 }, category: 'Plumber' })),
+  handleGBPProfile: vi.fn(async (req: Request) => {
+    const b = await req.clone().json() as any;
+    if (b.business_name === '__boom__') return json({ error: 'Internal error' }, 500);
+    return json({ title: 'Acme Plumbing', rating: { value: 4.7, votes_count: 88 }, category: 'Plumber' });
+  }),
 }));
 vi.mock('../../gsc/oauth', () => ({
-  handleGSCProperties: vi.fn(async () => json({ connected: true, properties: [{ id: 'gp1', site_url: 'sc-domain:me.com', kind: 'google', last_synced_at: '2026-09-06' }] })),
+  handleGSCProperties: vi.fn(async () => json({ connected: true, properties: [{ id: 'gp1', site_url: 'sc-domain:me.com', kind: 'google', last_synced_at: '2026-09-06', notes: 'extra column' }] })),
 }));
 vi.mock('../../gsc/sync', () => ({
-  handleGSCData: vi.fn(async (req: Request) => json({ property_id: new URL(req.url).searchParams.get('property_id'), totals: { clicks: 100, impressions: 5000 } })),
+  handleGSCData: vi.fn(async (req: Request) => {
+    const u = new URL(req.url);
+    return json({ property_id: u.searchParams.get('property_id'), range: u.searchParams.get('range'), totals: { clicks: 100, impressions: 5000 } });
+  }),
   handleGSCQueries: vi.fn(async (req: Request) => {
     const u = new URL(req.url);
-    return json({ queries: [{ query: u.searchParams.get('search') ?? 'any', clicks: 5 }], limit: Number(u.searchParams.get('limit')) });
+    return json({ queries: [{ query: u.searchParams.get('search') ?? 'any', clicks: 5 }], limit: Number(u.searchParams.get('limit')), sort: u.searchParams.get('sort') });
   }),
 }));
 
@@ -92,19 +99,49 @@ describe('datawise_local_reviews', () => {
     expect(s.reviews.depth).toBe(40);
     expect(s.reviews.project_id).toBe('p9');
   });
+
+  it('rethrows a 5xx from the profile lookup instead of swallowing it into an {error} field', async () => {
+    // guarded() only converts HandlerError with status < 500 into an isError
+    // tool result (see stored.ts); a 500 is deliberately left to propagate so
+    // the caller of run() (the gate) reports it as an internal error, rather
+    // than this tool silently returning a 200-shaped {error} field for it.
+    const { env } = makeMcpTestEnv();
+    await expect(
+      localReviews.run(localReviews.inputSchema.parse({ business_name: '__boom__' }), { env, identity })
+    ).rejects.toThrow('Internal error');
+  });
 });
 
 describe('datawise_search_console', () => {
-  it('list_properties, overview and queries', async () => {
+  it('list_properties honours response_format: concise picks fields, detailed keeps everything', async () => {
     const { env } = makeMcpTestEnv();
     const props = await searchConsole.run(searchConsole.inputSchema.parse({ action: 'list_properties' }), { env, identity });
-    expect((props.structuredContent as any).properties[0].site_url).toBe('sc-domain:me.com');
+    const concise = (props.structuredContent as any).properties[0];
+    expect(concise.site_url).toBe('sc-domain:me.com');
+    expect(Object.keys(concise).sort()).toEqual(['id', 'kind', 'last_synced_at', 'site_url']);
+    const detailedProps = await searchConsole.run(searchConsole.inputSchema.parse({ action: 'list_properties', response_format: 'detailed' }), { env, identity });
+    const detailed = (detailedProps.structuredContent as any).properties[0];
+    expect(detailed.site_url).toBe('sc-domain:me.com');
+    expect(detailed.notes).toBe('extra column');
+  });
+
+  it('overview sends range_days as the handler-accepted range value', async () => {
+    const { env } = makeMcpTestEnv();
     expect(() => searchConsole.inputSchema.parse({ action: 'overview' })).toThrow();
-    const ov = await searchConsole.run(searchConsole.inputSchema.parse({ action: 'overview', property_id: 'gp1' }), { env, identity });
-    expect((ov.structuredContent as any).overview.totals.clicks).toBe(100);
-    const qs = await searchConsole.run(searchConsole.inputSchema.parse({ action: 'queries', property_id: 'gp1', search: 'plumber', limit: 50 }), { env, identity });
-    expect((qs.structuredContent as any).queries.queries[0].query).toBe('plumber');
-    expect((qs.structuredContent as any).queries.limit).toBe(50);
+    const ov = await searchConsole.run(searchConsole.inputSchema.parse({ action: 'overview', property_id: 'gp1', range_days: 30 }), { env, identity });
+    const s = (ov.structuredContent as any);
+    expect(s.overview.totals.clicks).toBe(100);
+    expect(s.overview.range).toBe('30');
+    expect(s.range_days).toBe(30);
+  });
+
+  it('queries sends the handler-accepted sort value', async () => {
+    const { env } = makeMcpTestEnv();
+    const qs = await searchConsole.run(searchConsole.inputSchema.parse({ action: 'queries', property_id: 'gp1', search: 'plumber', sort: 'avg_ctr', limit: 50 }), { env, identity });
+    const s = (qs.structuredContent as any);
+    expect(s.queries.queries[0].query).toBe('plumber');
+    expect(s.queries.limit).toBe(50);
+    expect(s.queries.sort).toBe('avg_ctr');
   });
 });
 
