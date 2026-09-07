@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequest, dataforseoRequestCached, dataforseoGet } from '../dataforseo/client';
+import { buildMapsSerpTask, isGeoPoint, mapsSearchAnchor, type GeoPoint, type MapsSearchAnchor } from './local-pack-location';
 
 // Slow-changing local SEO datasets: keyword_suggestions for a category is
 // effectively monthly upstream; GBP profile state is live but acceptable to
@@ -42,6 +43,66 @@ function findLocalPackPosition(items: any[], project: LocalProject) {
     if (project.business_name && item.title?.toLowerCase().includes(project.business_name.toLowerCase())) return item;
   }
   return null;
+}
+
+type GeoAnchoredProject = LocalProject & {
+  location_code?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+};
+
+// Business coordinates for a local project: stored value first, then the GBP
+// profile (KV cached), then a Maps name search. Whatever is found is persisted
+// so later checks skip the lookups. Shared by the geo-grid, the Local Pack
+// rank check, and keyword discovery so all three "stand" in the same place.
+export async function resolveProjectCoordinates(env: Env, project: GeoAnchoredProject): Promise<GeoPoint | null> {
+  if (isGeoPoint(project)) return { latitude: project.latitude, longitude: project.longitude };
+
+  const gbpKeyword = project.place_id ? `place_id:${project.place_id}` : project.business_name;
+  if (!gbpKeyword) return null;
+  let found: GeoPoint | null = null;
+
+  try {
+    const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
+      keyword: gbpKeyword,
+      location_code: project.location_code || 2840,
+      language_code: 'en',
+    }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
+    const biz = pickMyBusinessInfo(data);
+    if (isGeoPoint(biz)) found = { latitude: biz.latitude, longitude: biz.longitude };
+  } catch { /* fall through */ }
+
+  if (!found) {
+    try {
+      const searchData = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
+        keyword: project.business_name || project.name,
+        location_code: project.location_code || 2840,
+        language_code: 'en',
+        device: 'desktop',
+        os: 'windows',
+        depth: 5,
+      }]);
+      const items = searchData?.tasks?.[0]?.result?.[0]?.items || [];
+      const match = findLocalPackPosition(items, project);
+      if (isGeoPoint(match)) found = { latitude: match.latitude, longitude: match.longitude };
+    } catch { /* fall through */ }
+  }
+
+  if (found) {
+    try {
+      await env.DB.prepare(
+        'UPDATE seo_projects SET latitude = ?, longitude = ? WHERE id = ?'
+      ).bind(found.latitude, found.longitude, project.id).run();
+    } catch (err) {
+      console.error(`Failed to persist coordinates for project ${project.id}:`, err);
+    }
+  }
+  return found;
+}
+
+async function resolveMapsAnchor(env: Env, project: GeoAnchoredProject, ...locationCodes: Array<number | null | undefined>): Promise<MapsSearchAnchor> {
+  const point = await resolveProjectCoordinates(env, project);
+  return mapsSearchAnchor(point, ...locationCodes, project.location_code);
 }
 
 // DataForSEO's business_data/google/my_business_info/live nests the business
@@ -92,8 +153,8 @@ export async function handleBusinessSearch(request: Request, env: Env): Promise<
 // POST /api/local-seo/projects/:id/check
 export async function handleLocalRankCheck(env: Env, userId: string, projectId: string): Promise<Response> {
   const project = await env.DB.prepare(
-    'SELECT id, user_id, name, domain, project_type, place_id, cid, business_name FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
-  ).bind(projectId, userId, 'local').first() as LocalProject | null;
+    'SELECT id, user_id, name, domain, project_type, place_id, cid, business_name, location_code, latitude, longitude FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as GeoAnchoredProject | null;
 
   if (!project) return json({ error: 'Local project not found' }, 404);
 
@@ -102,6 +163,9 @@ export async function handleLocalRankCheck(env: Env, userId: string, projectId: 
   ).bind(projectId).all() as { results: any[] };
 
   if (!keywords.length) return json({ error: 'No keywords to check' }, 400);
+
+  // Stand at the business, not at the country centroid (bug e2fc2a9c).
+  const anchor = await resolveMapsAnchor(env, project);
 
   const stmts: D1PreparedStatement[] = [];
   const checkedAt = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
@@ -116,14 +180,8 @@ export async function handleLocalRankCheck(env: Env, userId: string, projectId: 
   for (let i = 0; i < keywords.length; i += CONCURRENCY) {
     const batch = keywords.slice(i, i + CONCURRENCY);
     const results = await Promise.allSettled(batch.map(async (kw) => {
-      const payload = [{
-        keyword: kw.keyword,
-        location_code: kw.location_code || 2840,
-        language_code: kw.language_code || 'en',
-        device: 'desktop',
-        os: 'windows',
-        depth: 20,
-      }];
+      const keywordAnchor = anchor.kind === 'coordinate' ? anchor : mapsSearchAnchor(null, kw.location_code, project.location_code);
+      const payload = [buildMapsSerpTask(kw.keyword, keywordAnchor, kw.language_code || 'en', 20)];
       const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', payload);
       return data?.tasks?.[0]?.result?.[0]?.items || [];
     }));
@@ -951,15 +1009,18 @@ export async function handleLocalKeywordSuggestions(request: Request, env: Env):
 // (4-20) / "expansion" (no presence). Cached in KV for 24h per project.
 export async function handleLocalKeywordDiscovery(env: Env, userId: string, projectId: string): Promise<Response> {
   const project = await env.DB.prepare(
-    'SELECT id, user_id, name, domain, project_type, place_id, cid, business_name, location_code FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
-  ).bind(projectId, userId, 'local').first() as (LocalProject & { location_code: number }) | null;
+    'SELECT id, user_id, name, domain, project_type, place_id, cid, business_name, location_code, latitude, longitude FROM seo_projects WHERE id = ? AND user_id = ? AND project_type = ?'
+  ).bind(projectId, userId, 'local').first() as (GeoAnchoredProject & { location_code: number }) | null;
   if (!project) return json({ error: 'Local project not found' }, 404);
   if (!project.place_id && !project.business_name) {
     return json({ error: 'Link a Google Business Profile first.' }, 400);
   }
 
   const locationCode = project.location_code || 2840;
-  const cacheKey = `local-discovery:${projectId}:${locationCode}`;
+  // Probe Maps from the business location so "already ranking" means ranking
+  // where the customers are, not in a nationwide zoom-4 render (bug e2fc2a9c).
+  const anchor = await resolveMapsAnchor(env, project);
+  const cacheKey = `local-discovery:${projectId}:${anchor.key}`;
   const cached = await env.KV.get(cacheKey, 'json');
   if (cached) return json(cached);
 
@@ -1026,14 +1087,9 @@ export async function handleLocalKeywordDiscovery(env: Env, userId: string, proj
     const chunk = candidates.slice(i, i + CONCURRENCY);
     const probes = chunk.map(async ({ keyword, search_volume }) => {
       try {
-        const data = await dataforseoRequestCached(env, '/serp/google/maps/live/advanced', [{
-          keyword,
-          location_code: locationCode,
-          language_code: 'en',
-          device: 'desktop',
-          os: 'windows',
-          depth: 20,
-        }], { ttlSeconds: LOCAL_KEYWORDS_TTL_SECONDS });
+        const data = await dataforseoRequestCached(env, '/serp/google/maps/live/advanced', [
+          buildMapsSerpTask(keyword, anchor, 'en', 20),
+        ], { ttlSeconds: LOCAL_KEYWORDS_TTL_SECONDS });
         const items = data?.tasks?.[0]?.result?.[0]?.items || [];
         const match = findLocalPackPosition(items, project);
         const rank = match ? (match.rank_absolute ?? match.rank_group ?? null) : null;
@@ -1254,58 +1310,15 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
 
   if (!project) return json({ error: 'Local project not found' }, 404);
 
-  let centerLat = typeof project.latitude === 'number' ? project.latitude : null;
-  let centerLng = typeof project.longitude === 'number' ? project.longitude : null;
-
-  // If no stored coordinates, try fetching from GBP profile
-  if (centerLat == null || centerLng == null) {
-    const gbpKeyword = project.place_id ? `place_id:${project.place_id}` : project.business_name;
-    if (!gbpKeyword) return json({ error: 'Business has no location data. Update project with coordinates.' }, 400);
-
-    try {
-      const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
-        keyword: gbpKeyword,
-        location_code: project.location_code || 2840,
-        language_code: 'en',
-      }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-      const biz = pickMyBusinessInfo(data);
-      if (biz?.latitude && biz?.longitude) {
-        centerLat = biz.latitude;
-        centerLng = biz.longitude;
-        // Store for future use
-        await env.DB.prepare(
-          'UPDATE seo_projects SET latitude = ?, longitude = ? WHERE id = ?'
-        ).bind(centerLat, centerLng, projectId).run();
-      }
-    } catch { /* fall through */ }
-
-    // Fallback: Maps SERP search
-    if (centerLat == null || centerLng == null) {
-      try {
-        const searchData = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
-          keyword: project.business_name || project.name,
-          location_code: project.location_code || 2840,
-          language_code: 'en',
-          device: 'desktop',
-          os: 'windows',
-          depth: 5,
-        }]);
-        const items = searchData?.tasks?.[0]?.result?.[0]?.items || [];
-        const match = findLocalPackPosition(items, project);
-        if (match?.latitude && match?.longitude) {
-          centerLat = match.latitude;
-          centerLng = match.longitude;
-          await env.DB.prepare(
-            'UPDATE seo_projects SET latitude = ?, longitude = ? WHERE id = ?'
-          ).bind(centerLat, centerLng, projectId).run();
-        }
-      } catch { /* fall through */ }
-    }
-
-    if (centerLat == null || centerLng == null) {
-      return json({ error: 'Could not determine business location. Please check the business profile.' }, 400);
-    }
+  if (!isGeoPoint(project) && !project.place_id && !project.business_name) {
+    return json({ error: 'Business has no location data. Update project with coordinates.' }, 400);
   }
+  const center = await resolveProjectCoordinates(env, project);
+  if (!center) {
+    return json({ error: 'Could not determine business location. Please check the business profile.' }, 400);
+  }
+  const centerLat = center.latitude;
+  const centerLng = center.longitude;
 
   // Generate grid points
   const gridPoints = generateGridPoints(centerLat, centerLng, size, radius);
