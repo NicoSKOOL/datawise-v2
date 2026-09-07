@@ -1044,7 +1044,7 @@ describe('caps and ledger', () => {
     expect(denied).toEqual({ ok: false, reason: 'user_cap', spentUsd: 0.15, capUsd: 0.2 });
     expect(budgetMessage(denied as any)).toContain('$0.20');
     expect(budgetMessage(denied as any)).toContain('00:00 UTC');
-    expect((await checkBudget(env, admin, 999)).ok).toBe(true);
+    expect((await checkBudget(env, admin, 50)).ok).toBe(true); // above the $0.20 user cap, below the $100 global cap
   });
 
   it('refuses when the global cap is hit, even for admins', async () => {
