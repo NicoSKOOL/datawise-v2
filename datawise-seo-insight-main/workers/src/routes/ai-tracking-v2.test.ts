@@ -2,10 +2,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createTestDb } from '../test-support/d1';
 import type { NormalizedAnswer } from '../ai-engines';
 
-const runEngineMock = vi.fn();
+// A plain closure instead of vi.fn(): vitest 3 spies re-raise rejected
+// promises they recorded once the spy is reset, which fails retry tests.
+const engineStub = { impl: null as null | ((...args: any[]) => Promise<any>), calls: [] as any[][] };
 vi.mock('../ai-engines', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../ai-engines')>();
-  return { ...actual, runEngine: (...args: unknown[]) => runEngineMock(...args) };
+  return {
+    ...actual,
+    runEngine: (...args: unknown[]) => {
+      engineStub.calls.push(args);
+      if (!engineStub.impl) throw new Error('runEngine stub not configured');
+      return engineStub.impl(...args);
+    },
+  };
 });
 
 import { runChecksForProject, resolveProjectLocale, isEnginesV2Enabled, AI_ENGINES_V2_FLAG } from './ai-tracking';
@@ -28,8 +37,7 @@ function makeEnv() {
 }
 const project = { id: 'p1', user_id: 'u1', name: 'DataWise', domain: 'datawiseseo.com', ai_tracking_enabled: 1, ai_brand_terms: null, ai_engines: JSON.stringify(['chatgpt', 'gemini']), location_code: 2724 };
 
-// mockClear, not mockReset: vitest 3 re-raises rejected promises a reset spy had recorded.
-beforeEach(() => runEngineMock.mockClear());
+beforeEach(() => { engineStub.impl = null; engineStub.calls = []; });
 
 describe('resolveProjectLocale', () => {
   it('uses the project location and the dominant tracked-keyword language', async () => {
@@ -57,7 +65,7 @@ describe('isEnginesV2Enabled', () => {
 describe('runChecksForProject (v2)', () => {
   it('runs each enabled engine in the project locale and stores status, model, locale, citations by kind and brands', async () => {
     const { env, raw } = makeEnv();
-    runEngineMock.mockImplementation(async (_env: unknown, engine: string) => {
+    engineStub.impl = (async (_env: unknown, engine: string) => {
       if (engine === 'chatgpt') return answer({ engine: 'chatgpt', retrieved: [{ url: 'https://datawiseseo.com/g', domain: 'datawiseseo.com', title: null, position: 1 }], cited: [{ url: 'https://reddit.com/r', domain: 'reddit.com', title: null, position: 1 }], brands: [{ name: 'HubSpot', category: 'company', urls: [] }] });
       // A brand entity naming the project counts as mentioned, but a citation wins.
       return answer({ engine: 'gemini', model: '3.5 Flash-Lite', cited: [{ url: 'https://blog.datawiseseo.com/p', domain: 'blog.datawiseseo.com', title: null, position: 2 }], brands: [{ name: 'DataWise', category: 'company', urls: [] }] });
@@ -65,8 +73,8 @@ describe('runChecksForProject (v2)', () => {
 
     const summary = await runChecksForProject(env, project, [{ id: 'q1', query_text: 'mejor herramienta seo' }], 'manual');
     expect(summary).toMatchObject({ checks: 2, cited: 1, mentioned: 0, retrieved: 1, errors: 0 });
-    expect(runEngineMock).toHaveBeenCalledTimes(2);
-    expect(runEngineMock.mock.calls[0][3]).toEqual({ location_code: 2724, language_code: 'es' });
+    expect(engineStub.calls.length).toBe(2);
+    expect(engineStub.calls[0][3]).toEqual({ location_code: 2724, language_code: 'es' });
 
     const rows = raw.prepare('SELECT engine, status, model, location_code, language_code, retrieved_url, cited_url, citation_position FROM ai_visibility_checks ORDER BY engine').all() as any[];
     expect(rows).toEqual([
@@ -82,7 +90,7 @@ describe('runChecksForProject (v2)', () => {
   it('records a task-level engine error as status error', async () => {
     const { env, raw } = makeEnv();
     const { EngineTaskError } = await import('../ai-engines');
-    runEngineMock.mockImplementation(async (_e: unknown, engine: string) => {
+    engineStub.impl = (async (_e: unknown, engine: string) => {
       if (engine === 'chatgpt') throw new EngineTaskError('chatgpt', 'Internal Error - Timeout.');
       return answer({ engine: 'gemini' });
     });
@@ -95,7 +103,7 @@ describe('runChecksForProject (v2)', () => {
   it('retries a failed engine once before recording an error, and stores the reason', async () => {
     const { env, raw } = makeEnv();
     let chatgptCalls = 0;
-    runEngineMock.mockImplementation(async (_e: unknown, engine: string) => {
+    engineStub.impl = (async (_e: unknown, engine: string) => {
       if (engine === 'chatgpt') {
         chatgptCalls += 1;
         if (chatgptCalls === 1) throw new Error('Internal Error - Timeout.');
@@ -129,7 +137,7 @@ describe('runChecksForProject (v2)', () => {
     kv.delete(AI_ENGINES_V2_FLAG);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status_code: 20000, tasks: [{ status_code: 20000, result: [{ items: [] }] }] }), { status: 200 })));
     await runChecksForProject(env, { ...project, ai_engines: JSON.stringify(['perplexity']) }, [{ id: 'q1', query_text: 'x' }], 'manual');
-    expect(runEngineMock).not.toHaveBeenCalled();
+    expect(engineStub.calls.length).toBe(0);
     vi.unstubAllGlobals();
   });
 });
