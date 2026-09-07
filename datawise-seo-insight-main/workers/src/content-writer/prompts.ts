@@ -583,8 +583,10 @@ CITING SOURCES
 - Citations are inline hyperlinks on a SHORT contextual keyword phrase. NEVER footnotes, NEVER a references section at the bottom, NEVER a link list under each heading.
 - ANCHOR TEXT RULES: max 3 words (2 better, 1 fine). Must be the contextual keyword phrase, NOT generic words like "here", "this study", "click here", "research shows", "according to this", or the publication name alone. Must read naturally.
 - FORMAT: standard markdown link syntax: [anchor text](https://full-url.com)
+- MINIMUM: include at least 3 inline external citations that link to URLs from the Approved sources list (use every approved source if fewer than 3 were approved). Spread them across different sections. A draft with zero external links is incomplete and fails review.
 - Only use sources approved in the research step.
 - Use OFFER DETAILS for business-specific claims (no external citation needed for what the business itself does).
+- Do not confuse the two link styles: [anchor text](https://full-url.com) is REQUIRED for every citation; a bare bracketed number such as [1] is the banned pattern.
 - Never output citation footnotes, superscript citations, bracketed citation numbers, bare citation indexes, or source markers like [1], [16], ^16, <sup>16</sup>, or inline numbers glued to words.
 - If a source provider returns numbered references, translate them into normal markdown links and remove the numbers completely.
 
@@ -670,7 +672,7 @@ Write the full blog post in markdown for {{business_name}}, following the approv
 - Use the Content Capsule format on H2s the outline marks with [CAPSULE].
 - The outline's [CAPSULE], [TABLE], and [NARRATIVE] tags are writing instructions only. NEVER copy these tags into the post: every heading in the final post must be clean reader-facing text with no bracketed tags.
 - For any H2 the outline marks with [TABLE], render the section's body as a markdown table (with a header row) — use it for comparisons, specs, or grids that read better as a table than prose. Add a 1-2 sentence intro before the table.
-- Cite every external claim inline as [anchor](url) with anchor text 1-3 contextual words. NEVER a references list at the bottom.
+- Cite every external claim inline as [anchor](url) with anchor text 1-3 contextual words. Include at least 3 external citations from the Approved sources (all of them if fewer than 3 were approved), spread across different sections. A draft with zero external links is incomplete. NEVER a references list at the bottom.
 - Never output citation footnotes, superscript citations, bracketed citation numbers, bare citation indexes, or source markers like [1], [16], ^16, <sup>16</sup>, or inline numbers glued to words.
 - Internal links: up to 3 to 5, only from WEBSITE PAGES and only where genuinely relevant. If no website page fits the topic, include none. Never invent or force internal links.
 - Pull stories and opinions from EXPERIENCE NOTES (or run in research-only mode).
@@ -753,6 +755,7 @@ Use this context as the factual frame:
 - Service facts: {{service_facts}}
 - Brand rules: {{brand_rules}}
 
+The Approved sources block above holds the exact URLs to cite. Link at least 3 of them inline (all of them if fewer were approved), each on a short contextual anchor.
 Keep all citations as clean inline markdown links only. Do not include numbered citation markers, footnotes, superscripts, bracketed references, source indexes, or inline numbers glued to words.`,
 
   review: `Review the draft for {{business_name}} against the full checklist. If anything fails, include a corrected version below the checklist. Pay special attention to citation-marker artifacts such as word16, )16, [16], ^16, and <sup>16</sup>.`,

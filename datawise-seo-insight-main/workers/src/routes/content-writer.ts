@@ -27,6 +27,14 @@ import {
   resolvePromptFromMap,
 } from '../content-writer/prompt-registry';
 import { repairWriterOutputIfNeeded, stripOutlineMarkers } from '../content-writer/quality';
+import {
+  buildCitationRepairPrompt,
+  countMarkdownLinks,
+  extractApprovedSourceUrls,
+  missingCitationsWarning,
+  shouldRepairMissingCitations,
+  validateCitationRepair,
+} from '../content-writer/citations';
 import { buildWriterPromptContext, renderPromptTemplate, type WriterPromptContext } from '../content-writer/prompt-template';
 import { buildPostStepPersistenceUpdate, pruneDownstreamStepUsage } from '../content-writer/post-step-persistence';
 import { extractNeverCiteTerms, filterExcludedSources, filterCitationsByDomains } from '../content-writer/source-filter';
@@ -1825,6 +1833,43 @@ export async function handlePostStep(
     const repair = repairWriterOutputIfNeeded(text);
     text = repair.text;
     qualityWarnings = repair.warnings;
+  }
+
+  // External-citation guard (bugs cece731c, 5b6a3029): about one draft in
+  // four came back with internal links only despite 5 to 11 approved source
+  // URLs in the prompt. Run one corrective turn that may only add inline
+  // links; if it changes anything else, keep the original and warn instead.
+  if (step === 'draft') {
+    const approvedUrls = extractApprovedSourceUrls(priorContext.sources, workspace.website_url);
+    const linkCounts = countMarkdownLinks(text, workspace.website_url);
+    if (shouldRepairMissingCitations({ externalLinks: linkCounts.external, approvedUrls: approvedUrls.length })) {
+      console.warn(`[content-writer] step=draft no external citations post=${postId} approved=${approvedUrls.length} model=${stepConfig.model}`);
+      let repaired = false;
+      try {
+        const repairMessages: ChatMessage[] = [
+          ...messages,
+          { role: 'assistant', content: text },
+          { role: 'user', content: `${buildCitationRepairPrompt(approvedUrls)}${languageReminder}` },
+        ];
+        const repairRes = await provider.chatComplete(repairMessages, env, stepConfig, maxTokens);
+        usage = {
+          input_tokens: usage.input_tokens + repairRes.usage.input_tokens,
+          output_tokens: usage.output_tokens + repairRes.usage.output_tokens,
+        };
+        const candidate = stripOutlineMarkers(stripBannedTypography(stripWrappingCodeFence(repairRes.text)));
+        const verdict = validateCitationRepair(text, candidate, workspace.website_url);
+        if (verdict.ok && repairRes.finishReason !== 'length') {
+          text = candidate;
+          repaired = true;
+          console.log(`[content-writer] step=draft citation-repair ok post=${postId} external=${verdict.externalLinks}`);
+        } else {
+          console.warn(`[content-writer] step=draft citation-repair rejected post=${postId} reason=${verdict.ok ? 'truncated' : verdict.reason}`);
+        }
+      } catch (repairErr) {
+        console.warn(`[content-writer] step=draft citation-repair failed post=${postId} err=${String(repairErr)}`);
+      }
+      if (!repaired) qualityWarnings = [...qualityWarnings, missingCitationsWarning(approvedUrls.length)];
+    }
   }
 
   const sourceSearch = step === 'research'
