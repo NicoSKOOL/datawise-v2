@@ -1,0 +1,38 @@
+# datawise-mcp: the MCP server for ChatGPT / Claude. Separate worker from
+# datawise-api on purpose (spec 3.1). Deploy ONLY with `npm run deploy:mcp`.
+name = "datawise-mcp"
+main = "src/mcp/index.ts"
+compatibility_date = "2026-07-02"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+# Daily purge of mcp_calls older than 30 days (src/mcp/index.ts scheduled()).
+[triggers]
+crons = ["0 3 * * *"]
+
+[vars]
+FRONTEND_URL = "https://datawiseseo.com"
+ADMIN_EMAILS = "nico@airankingskool.com"
+MCP_PUBLIC_URL = "https://mcp.datawiseseo.com"
+# Secrets (set in the Cloudflare dashboard, see memory feedback_cloudflare_secrets_dashboard):
+# DATAFORSEO_EMAIL, DATAFORSEO_PASSWORD, ENCRYPTION_KEY
+
+# Same database and KV namespace as datawise-api: sessions and users live
+# there, and the dataforseo:* cache must be shared so MCP calls hit it.
+[[d1_databases]]
+binding = "DB"
+database_name = "datawise-db"
+database_id = "b9355723-e02c-4877-8dce-c57cc1965068"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "2302e0b0369842e799b5f4a144d6dce4"
+preview_id = "30288cb442c84e038406b0e174f90398"
+
+# Custom domain on the datawiseseo.com zone. Wrangler creates the DNS record
+# on first deploy. The workers.dev URL keeps working but is never advertised.
+[[routes]]
+pattern = "mcp.datawiseseo.com"
+custom_domain = true
