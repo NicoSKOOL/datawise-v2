@@ -68,6 +68,19 @@ describe('datawise_keyword_research', () => {
   it('rejects limit above 100 at the schema', () => {
     expect(() => keywordResearch.inputSchema.parse({ keyword: 'x', limit: 101 })).toThrow();
   });
+
+  it('detailed response_format adds a raw payload; concise omits it', async () => {
+    const { env } = makeMcpTestEnv();
+    const detailedArgs = keywordResearch.inputSchema.parse({ keyword: 'seo tools', response_format: 'detailed' });
+    const detailedOut = await keywordResearch.run(detailedArgs, { env, identity });
+    const detailed = detailedOut.structuredContent as any;
+    expect(detailed.raw).toHaveLength(detailed.keywords.length);
+    expect(detailed.raw[0]).toHaveProperty('keyword_info');
+
+    const conciseArgs = keywordResearch.inputSchema.parse({ keyword: 'seo tools' });
+    const conciseOut = await keywordResearch.run(conciseArgs, { env, identity });
+    expect((conciseOut.structuredContent as any).raw).toBeUndefined();
+  });
 });
 
 describe('datawise_keyword_metrics', () => {

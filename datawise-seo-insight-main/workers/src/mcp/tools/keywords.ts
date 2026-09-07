@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineTool, localeInputs, resolveLocale } from './types';
 import { callJson } from '../call-handler';
-import { toolResult } from '../shape';
+import { toolResult, compact, DETAILED } from '../shape';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
   handleKeywordOverview, handleKeywordDifficulty,
@@ -57,17 +57,32 @@ export const keywordResearch = defineTool({
     const locale = resolveLocale(args, ctx.identity);
     const uid = ctx.identity.userId;
     const body = { keyword: args.keyword, limit: args.limit, ...locale };
+    let rawItems: any[];
     let rows: KeywordRow[];
     if (args.mode === 'related') {
-      rows = items(await callJson(ctx.env, uid, handleRelatedKeywords, body)).map(fromRelated);
+      rawItems = items(await callJson(ctx.env, uid, handleRelatedKeywords, body));
+      rows = rawItems.map(fromRelated);
     } else if (args.mode === 'suggestions') {
-      rows = items(await callJson(ctx.env, uid, handleKeywordSuggestions, body)).map(fromLabs);
+      rawItems = items(await callJson(ctx.env, uid, handleKeywordSuggestions, body));
+      rows = rawItems.map(fromLabs);
     } else {
-      rows = items(await callJson(ctx.env, uid, handleKeywordIdeas, body)).map(fromLabs);
+      rawItems = items(await callJson(ctx.env, uid, handleKeywordIdeas, body));
+      rows = rawItems.map(fromLabs);
     }
-    rows = rows.filter((r) => r.keyword).slice(0, args.limit);
+    // Keep the raw source in step with rows through the same filter+slice, so
+    // detailed mode's raw payload matches the flat keywords rows one-to-one.
+    const kept = rows
+      .map((row, i) => ({ row, source: args.mode === 'related' ? rawItems[i]?.keyword_data ?? {} : rawItems[i] }))
+      .filter((x) => x.row.keyword)
+      .slice(0, args.limit);
+    rows = kept.map((x) => x.row);
+
+    const structured: Record<string, unknown> = { seed: args.keyword, mode: args.mode, ...locale, keywords: rows };
+    if (args.response_format === 'detailed') {
+      structured.raw = compact(kept.map((x) => x.source), DETAILED);
+    }
     return toolResult(
-      { seed: args.keyword, mode: args.mode, ...locale, keywords: rows },
+      structured,
       `${rows.length} keywords for "${args.keyword}" (${args.mode}, location ${locale.location_code}).`,
     );
   },
@@ -99,8 +114,14 @@ export const keywordMetrics = defineTool({
       const kd = kdByKeyword.get(keyword.toLowerCase());
       return { ...row, keyword, difficulty: kd ?? row.difficulty };
     });
+
+    const structured: Record<string, unknown> = { ...locale, keywords: rows };
+    if (args.response_format === 'detailed') {
+      const rawOverviews = args.keywords.map((_, i) => items(overviews[i])[0] ?? null);
+      structured.raw = compact(rawOverviews, DETAILED);
+    }
     return toolResult(
-      { ...locale, keywords: rows },
+      structured,
       `Metrics for ${rows.length} keywords (location ${locale.location_code}).`,
     );
   },
