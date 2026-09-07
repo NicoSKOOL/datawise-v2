@@ -2,17 +2,19 @@
 
 import { api } from './api';
 
-export type AIEngine = 'google_ai_mode' | 'chatgpt' | 'perplexity';
+export type AIEngine = 'google_ai_mode' | 'chatgpt' | 'gemini' | 'perplexity';
 
 export const AI_ENGINE_LABELS: Record<AIEngine, string> = {
   google_ai_mode: 'Google AI Mode',
   chatgpt: 'ChatGPT',
+  gemini: 'Gemini',
   perplexity: 'Perplexity',
 };
 
 export const AI_ENGINE_SHORT_LABELS: Record<AIEngine, string> = {
   google_ai_mode: 'Google AI',
   chatgpt: 'ChatGPT',
+  gemini: 'Gemini',
   perplexity: 'Perplexity',
 };
 
@@ -20,19 +22,22 @@ export const AI_ENGINE_SHORT_LABELS: Record<AIEngine, string> = {
 export const AI_ENGINE_COLORS: Record<AIEngine, string> = {
   google_ai_mode: '#1F7A43',
   chatgpt: '#2563EB',
+  gemini: '#7C3AED',
   perplexity: '#D97706',
 };
 
-export const AI_ENGINE_ORDER: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
+export const AI_ENGINE_ORDER: AIEngine[] = ['google_ai_mode', 'chatgpt', 'gemini', 'perplexity'];
 
 // Answer-outcome ramp: dark to light equals strong to no visibility.
+// `retrieved` sits between mentioned and absent: fetched, not used.
 export const AI_OUTCOME_COLORS = {
   cited: '#1F7A43',
   mentioned: '#8FC5A6',
+  retrieved: '#F3E3B8',
   absent: '#EDF1EE',
 } as const;
 
-export type AICheckStatus = 'cited' | 'mentioned' | 'absent' | 'no_answer' | 'error';
+export type AICheckStatus = 'cited' | 'mentioned' | 'retrieved' | 'absent' | 'no_answer' | 'error';
 
 export interface AICitation {
   domain: string;
@@ -50,10 +55,13 @@ export interface AIEngineResult {
   status: AICheckStatus;
   citation_position: number | null;
   cited_url: string | null;
+  retrieved_url?: string | null;
+  model?: string | null;
   answer_excerpt: string | null;
   checked_at: string;
   check_id?: number;
   citations?: AICitation[];
+  retrieved?: AICitation[];
 }
 
 export interface AITrackedQuery {
@@ -84,6 +92,8 @@ export interface AITrendPoint {
   total: number;
   cited: number;
   mentioned: number;
+  retrieved?: number;
+  legacy?: number;
   score?: number;
 }
 
@@ -121,7 +131,7 @@ export async function deleteAIQuery(queryId: string) {
 }
 
 export async function runAICheck(projectId: string) {
-  return api(`/api/rank-tracking/projects/${projectId}/ai/check`, { method: 'POST' }) as Promise<{ checks: number; cited: number; mentioned: number; errors: number; skipped_fresh: number }>;
+  return api(`/api/rank-tracking/projects/${projectId}/ai/check`, { method: 'POST' }) as Promise<{ checks: number; cited: number; mentioned: number; retrieved: number; errors: number; skipped_fresh: number }>;
 }
 
 export async function fetchAIReport(projectId: string, period = 90) {

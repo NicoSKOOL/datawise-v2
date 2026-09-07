@@ -64,10 +64,10 @@ import {
 } from './routes/competitors';
 import {
   handleGoogleAIMode, handleChatGPTSearch, handlePerplexitySearch,
-  handleClaudeSearch, handleGeminiSearch,
   handlePeopleAlsoAsk, handleLighthouseSEO, handleGeoAnalyzer,
   handleVisibilitySummary, handleVisibilityCheck,
 } from './routes/ai';
+import { handleEngineCheck } from './routes/ai-engine-check';
 import {
   handleListProjects, handleCreateProject, handleUpdateProject, handleDeleteProject,
   handleListKeywords, handleAddKeywords, handleDeleteKeyword,
@@ -733,11 +733,8 @@ export default {
       if (path === '/api/ai/perplexity' && method === 'POST') {
         return await withCredit(() => handlePerplexitySearch(request, env));
       }
-      if (path === '/api/ai/claude-search' && method === 'POST') {
-        return await withCredit(() => handleClaudeSearch(request, env));
-      }
-      if (path === '/api/ai/gemini-search' && method === 'POST') {
-        return await withCredit(() => handleGeminiSearch(request, env));
+      if (path === '/api/ai/engine-check' && method === 'POST') {
+        return await withCredit(() => handleEngineCheck(request, env));
       }
       if (path === '/api/ai/people-also-ask' && method === 'POST') {
         return await withCredit(() => handlePeopleAlsoAsk(request, env));

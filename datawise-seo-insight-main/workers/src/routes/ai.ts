@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { dataforseoRequest } from '../dataforseo/client';
 import { resolveModel } from '../dataforseo/llm-models';
+import { runEngine, classify, isVisibleStatus, ALL_ENGINES, DEFAULT_LOCALE, type EngineId } from '../ai-engines';
 
 const LIGHTHOUSE_SEO_TIMEOUT_MS = 55_000;
 const LIGHTHOUSE_HTML_TIMEOUT_MS = 15_000;
@@ -123,44 +124,6 @@ export async function handlePerplexitySearch(request: Request, env: Env): Promis
   } catch (err) {
     console.error('Perplexity Search error:', err);
     return new Response(JSON.stringify({ error: err instanceof Error ? err.message : 'Failed to fetch Perplexity data' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-  }
-}
-
-// POST /api/ai/claude-search
-export async function handleClaudeSearch(request: Request, env: Env): Promise<Response> {
-  const { keyword } = await request.json() as any;
-  if (!keyword) return json({ error: 'Keyword is required' }, 400);
-
-  try {
-    const data = await dataforseoRequest(env, '/ai_optimization/claude/llm_responses/live', [{
-      user_prompt: keyword,
-      model_name: await resolveModel(env, 'claude'),
-      web_search: true,
-      max_output_tokens: 2048,
-    }]);
-    return json(data);
-  } catch (err) {
-    console.error('Claude Search error:', err);
-    return json({ error: err instanceof Error ? err.message : 'Failed to fetch Claude data' }, 500);
-  }
-}
-
-// POST /api/ai/gemini-search
-export async function handleGeminiSearch(request: Request, env: Env): Promise<Response> {
-  const { keyword } = await request.json() as any;
-  if (!keyword) return json({ error: 'Keyword is required' }, 400);
-
-  try {
-    const data = await dataforseoRequest(env, '/ai_optimization/gemini/llm_responses/live', [{
-      user_prompt: keyword,
-      model_name: await resolveModel(env, 'gemini'),
-      web_search: true,
-      max_output_tokens: 2048,
-    }]);
-    return json(data);
-  } catch (err) {
-    console.error('Gemini Search error:', err);
-    return json({ error: err instanceof Error ? err.message : 'Failed to fetch Gemini data' }, 500);
   }
 }
 
@@ -496,49 +459,36 @@ export async function handleVisibilityCheck(request: Request, env: Env, userId: 
   }
 
   const limitedKeywords = keywords.slice(0, 3);
-  const results: Array<{ keyword: string; google_ai: boolean; chatgpt: boolean; perplexity: boolean }> = [];
+  const engineKeys: Record<EngineId, 'google_ai' | 'chatgpt' | 'gemini' | 'perplexity'> = {
+    google_ai_mode: 'google_ai', chatgpt: 'chatgpt', gemini: 'gemini', perplexity: 'perplexity',
+  };
+  // Use the matching rank-tracking project's location when there is one, so
+  // the card and the tracker look at the same market.
+  const project = await env.DB.prepare(
+    'SELECT location_code FROM seo_projects WHERE user_id = ? AND lower(domain) = lower(?) ORDER BY ai_tracking_enabled DESC, created_at ASC LIMIT 1'
+  ).bind(userId, domain).first() as { location_code?: number | null } | null;
+  const locale = {
+    location_code: project?.location_code && project.location_code > 0 ? project.location_code : DEFAULT_LOCALE.location_code,
+    language_code: DEFAULT_LOCALE.language_code,
+  };
 
+  const results: Array<{ keyword: string; google_ai: boolean; chatgpt: boolean; gemini: boolean; perplexity: boolean }> = [];
   for (const keyword of limitedKeywords) {
-    let googleAI = false;
-    let chatgpt = false;
-    let perplexity = false;
-
-    // Check Google AI Mode
-    try {
-      const aiData = await dataforseoRequest(env, '/serp/google/ai_mode/live/advanced', [{ keyword, location_name: 'United States', language_name: 'English', device: 'desktop', os: 'windows' }]);
-      const items = aiData?.tasks?.[0]?.result?.[0]?.items || [];
-      googleAI = items.some((item: any) => {
-        const url = item.url || item.source_url || '';
-        return url.includes(domain);
-      });
-    } catch { /* skip */ }
-
-    // Check ChatGPT Search
-    try {
-      const chatData = await dataforseoRequest(env, '/ai_optimization/chat_gpt/llm_responses/live', [{
-        user_prompt: keyword, model_name: await resolveModel(env, 'chat_gpt'), web_search: true, max_output_tokens: 2048,
-      }]);
-      const items = chatData?.tasks?.[0]?.result?.[0]?.items || [];
-      chatgpt = JSON.stringify(items).includes(domain);
-    } catch { /* skip */ }
-
-    // Check Perplexity
-    try {
-      const perpData = await dataforseoRequest(env, '/ai_optimization/perplexity/llm_responses/live', [{
-        user_prompt: keyword, model_name: await resolveModel(env, 'perplexity'), max_output_tokens: 2048,
-      }]);
-      const items = perpData?.tasks?.[0]?.result?.[0]?.items || [];
-      perplexity = JSON.stringify(items).includes(domain);
-    } catch { /* skip */ }
-
-    results.push({ keyword, google_ai: googleAI, chatgpt, perplexity });
+    const row = { keyword, google_ai: false, chatgpt: false, gemini: false, perplexity: false };
+    await Promise.all(ALL_ENGINES.map(async (engine) => {
+      try {
+        const answer = await runEngine(env, engine, keyword, locale, { ttlSeconds: 86400, timeoutMs: 60_000 });
+        row[engineKeys[engine]] = isVisibleStatus(classify(answer, domain, []).status);
+      } catch (err) {
+        console.error(`visibility-check [${engine}] "${keyword}":`, err instanceof Error ? err.message : err);
+      }
+    }));
+    results.push(row);
   }
 
   const enginesVisible = new Set<string>();
   for (const r of results) {
-    if (r.google_ai) enginesVisible.add('google_ai');
-    if (r.chatgpt) enginesVisible.add('chatgpt');
-    if (r.perplexity) enginesVisible.add('perplexity');
+    for (const key of ['google_ai', 'chatgpt', 'gemini', 'perplexity'] as const) if (r[key]) enginesVisible.add(key);
   }
 
   const summary = {
@@ -546,7 +496,7 @@ export async function handleVisibilityCheck(request: Request, env: Env, userId: 
     keywords_checked: limitedKeywords,
     results,
     engines_visible: enginesVisible.size,
-    engines_total: 3,
+    engines_total: ALL_ENGINES.length,
     checked_at: new Date().toISOString(),
   };
 

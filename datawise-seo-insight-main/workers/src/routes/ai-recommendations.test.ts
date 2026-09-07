@@ -94,3 +94,15 @@ describe('buildRecommendation', () => {
     expect(buildRecommendation(q, checks).title).toContain('Perplexity');
   });
 });
+
+describe('retrieved recommendation', () => {
+  it('ranks a retrieved-not-cited engine between absent and mentioned', () => {
+    const rec = buildRecommendation('best crm', [
+      { engine: 'gemini', status: 'cited', citation_position: 1, citations: [] },
+      { engine: 'chatgpt', status: 'retrieved', citation_position: null, citations: [{ domain: 'datawiseseo.com', url: 'https://datawiseseo.com/crm', position: 1 }] },
+    ], 'datawiseseo.com');
+    expect(rec.title).toMatch(/fetched|not cited/i);
+    expect(rec.body).toContain('https://datawiseseo.com/crm');
+    expect(rec.body).toContain('ChatGPT');
+  });
+});
