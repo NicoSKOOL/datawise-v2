@@ -1546,22 +1546,22 @@ vi.mock('../../routes/keywords', () => {
   });
   return {
     handleRelatedKeywords: vi.fn(async (req: Request) => {
-      const body = await req.json() as any;
+      const body = await req.clone().json() as any;
       return json({ tasks: [{ result: [{ items: Array.from({ length: Math.min(body.limit, 3) }, (_, i) => ({
         keyword_data: { keyword: `${body.keyword} ${i}`, keyword_info: { search_volume: 100 - i, cpc: 0.5, competition: 0.1, competition_level: 'LOW' } },
       })) }] }] });
     }),
     handleKeywordSuggestions: vi.fn(async (req: Request) => {
-      const body = await req.json() as any;
+      const body = await req.clone().json() as any;
       return json({ tasks: [{ result: [{ items: [labsItem(`${body.keyword} suggestion`, 50)] }] }] });
     }),
     handleKeywordIdeas: vi.fn(async () => json({ tasks: [{ result: [{ items: [labsItem('idea', 20)] }] }] })),
     handleKeywordOverview: vi.fn(async (req: Request) => {
-      const body = await req.json() as any;
+      const body = await req.clone().json() as any;
       return json({ tasks: [{ result: [{ items: [labsItem(body.keyword, 900)] }] }] });
     }),
     handleKeywordDifficulty: vi.fn(async (req: Request) => {
-      const body = await req.json() as any;
+      const body = await req.clone().json() as any;
       return json({ tasks: [{ result: [{ items: body.keywords.map((k: string) => ({ keyword: k, keyword_difficulty: 33 })) }] }] });
     }),
   };
@@ -1838,7 +1838,7 @@ const ranked = (keyword: string, vol: number, pos: number) => ({
 
 vi.mock('../../routes/competitors', () => ({
   handleRankedKeywords: vi.fn(async (req: Request) => {
-    const b = await req.json() as any;
+    const b = await req.clone().json() as any;
     if (b.target === 'me.com') return json(labs([ranked('shared kw', 500, 3), ranked('mine only', 100, 8)]));
     if (b.target === 'rival.com') return json(labs([ranked('shared kw', 500, 1), ranked('gap kw', 900, 5), ranked('gap kw 2', 50, 30)]));
     return json(labs(Array.from({ length: Math.min(b.limit, 4) }, (_, i) => ranked(`k${i}`, 1000 - i * 100, i + 1))));
@@ -2176,7 +2176,7 @@ const json = (d: unknown) => new Response(JSON.stringify(d), { headers: { 'Conte
 vi.mock('../../routes/backlinks', () => ({
   handleBacklinksSummary: vi.fn(async () => json({ data: { backlinks: 10, referring_domains: 4, referring_main_domains: 4, rank: 50, broken_backlinks: 0, referring_ips: 3 }, cost: 0.02 })),
   handleBacklinksList: vi.fn(async (req: Request) => {
-    const b = await req.json() as any;
+    const b = await req.clone().json() as any;
     return json({ data: { items: Array.from({ length: Math.min(b.limit, 3) }, (_, i) => ({
       url_from: `https://from${i}.com/<b>p</b>`, url_to: 'https://t.com/', domain_from: `from${i}.com`, anchor: 'click', dofollow: i !== 1,
       domain_from_rank: 100 + i, first_seen: '2026-01-0' + (i + 1), last_seen: '2026-09-01', extra: 'x',
@@ -2229,11 +2229,11 @@ import type { McpIdentity } from '../env';
 const json = (d: unknown) => new Response(JSON.stringify(d), { headers: { 'Content-Type': 'application/json' } });
 vi.mock('../../routes/llm-mentions', () => ({
   handleAggregate: vi.fn(async (req: Request) => {
-    const b = await req.json() as any;
+    const b = await req.clone().json() as any;
     return json({ data: { target: b.target, platform: b.platform, items: [{ metric: 'mentions', value: 12, note: '<i>x</i>' }] }, cost: 0.1 });
   }),
   handleCrossAggregate: vi.fn(async (req: Request) => {
-    const b = await req.json() as any;
+    const b = await req.clone().json() as any;
     return json({ data: { targets: b.targets, items: [{ target: 'a.com', mentions: 3 }, { target: 'b.com', mentions: 9 }] }, cost: 0.1 });
   }),
 }));
@@ -2432,7 +2432,7 @@ vi.mock('../../routes/ai-tracking', () => ({
 }));
 vi.mock('../../routes/local-seo', () => ({
   handleReviews: vi.fn(async (req: Request) => {
-    const b = await req.json() as any;
+    const b = await req.clone().json() as any;
     return json({ items: [{ rating: 5, review_text: '<b>Great</b>', timestamp: '2026-08-01' }], depth: b.depth, project_id: b.project_id ?? null });
   }),
   handleGBPProfile: vi.fn(async () => json({ title: 'Acme Plumbing', rating: { value: 4.7, votes_count: 88 }, category: 'Plumber' })),
