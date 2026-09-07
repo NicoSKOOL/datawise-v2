@@ -42,19 +42,25 @@ function fromRanked(item: any): RankedRow {
   };
 }
 
-// Returns both the flattened rows and the raw DataForSEO items they came
-// from (same order), so callers that need response_format=detailed's raw
-// payload don't have to re-fetch or re-derive it.
+interface RankedPair {
+  row: RankedRow;
+  raw: any;
+}
+
+// Returns index-aligned {row, raw} pairs (the flattened row and the raw
+// DataForSEO item it came from), so callers that need response_format
+// detailed's raw payload can carry the raw item alongside its row through
+// any later filter/sort/slice and stay aligned with what's actually returned.
 async function fetchRanked(
   ctx: { env: any; identity: any },
   target: string,
   limit: number,
   locale: object,
-): Promise<{ rows: RankedRow[]; raw: any[] }> {
+): Promise<RankedPair[]> {
   const data = await callJson(ctx.env, ctx.identity.userId, handleRankedKeywords, { target, limit, ...locale });
-  const raw = items(data);
-  const rows = raw.map(fromRanked).filter((r) => r.keyword);
-  return { rows, raw };
+  return items(data)
+    .map((it) => ({ row: fromRanked(it), raw: it }))
+    .filter((x) => x.row.keyword);
 }
 
 export const domainOverview = defineTool({
@@ -213,42 +219,51 @@ export const keywordGap = defineTool({
     const locale = resolveLocale(args, ctx.identity);
     const mine = bareDomain(args.my_domain);
     const theirs = bareDomain(args.competitor_domain);
-    const [myFetch, theirFetch] = await Promise.all([
+    const [myPairs, theirPairs] = await Promise.all([
       fetchRanked(ctx, mine, GAP_ROWS_PER_SIDE, locale),
       fetchRanked(ctx, theirs, GAP_ROWS_PER_SIDE, locale),
     ]);
-    const myRows = myFetch.rows;
-    const theirRows = theirFetch.rows;
     const norm = (k: string) => k.trim().replace(/\s+/g, ' ').toLowerCase();
-    const myByKw = new Map(myRows.map((r) => [norm(r.keyword), r]));
-    const theirByKw = new Map(theirRows.map((r) => [norm(r.keyword), r]));
+    const myByKw = new Map(myPairs.map((p) => [norm(p.row.keyword), p]));
+    const theirByKw = new Map(theirPairs.map((p) => [norm(p.row.keyword), p]));
 
-    const gaps = theirRows
-      .filter((r) => !myByKw.has(norm(r.keyword)))
-      .sort((a, b) => b.search_volume - a.search_volume)
-      .map((r) => ({ keyword: r.keyword, search_volume: r.search_volume, competitor_position: r.position }));
-    const shared = myRows
-      .filter((r) => theirByKw.has(norm(r.keyword)))
-      .sort((a, b) => b.search_volume - a.search_volume)
-      .map((r) => ({ keyword: r.keyword, search_volume: r.search_volume, my_position: r.position, competitor_position: theirByKw.get(norm(r.keyword))!.position }));
-    const myAdvantages = myRows.filter((r) => !theirByKw.has(norm(r.keyword))).length;
+    // Keep the raw item paired with its row through the same filter+sort
+    // used for the returned gaps/shared arrays, so a later slice to
+    // args.limit keeps raw index-aligned with what's actually returned.
+    const gapPairs = theirPairs
+      .filter((p) => !myByKw.has(norm(p.row.keyword)))
+      .sort((a, b) => b.row.search_volume - a.row.search_volume);
+    const sharedPairs = myPairs
+      .filter((p) => theirByKw.has(norm(p.row.keyword)))
+      .sort((a, b) => b.row.search_volume - a.row.search_volume);
+    const myAdvantages = myPairs.filter((p) => !theirByKw.has(norm(p.row.keyword))).length;
+
+    const slicedGapPairs = gapPairs.slice(0, args.limit);
+    const slicedSharedPairs = sharedPairs.slice(0, args.limit);
+    const gaps = slicedGapPairs.map((p) => ({ keyword: p.row.keyword, search_volume: p.row.search_volume, competitor_position: p.row.position }));
+    const shared = slicedSharedPairs.map((p) => ({
+      keyword: p.row.keyword,
+      search_volume: p.row.search_volume,
+      my_position: p.row.position,
+      competitor_position: theirByKw.get(norm(p.row.keyword))!.row.position,
+    }));
 
     const structured: Record<string, unknown> = {
       my_domain: mine, competitor_domain: theirs, ...locale,
-      summary: { gaps: gaps.length, shared: shared.length, my_advantages: myAdvantages },
-      gaps: gaps.slice(0, args.limit),
-      shared: shared.slice(0, args.limit),
+      summary: { gaps: gapPairs.length, shared: sharedPairs.length, my_advantages: myAdvantages },
+      gaps,
+      shared,
     };
     if (args.response_format === 'detailed') {
       structured.raw = {
-        my: compact(myFetch.raw.slice(0, args.limit), DETAILED),
-        competitor: compact(theirFetch.raw.slice(0, args.limit), DETAILED),
+        gaps: compact(slicedGapPairs.map((p) => p.raw), DETAILED),
+        shared: compact(slicedSharedPairs.map((p) => p.raw), DETAILED),
       };
     }
 
     return toolResult(
       structured,
-      `${theirs} ranks for ${gaps.length} keywords that ${mine} does not (top ${Math.min(args.limit, gaps.length)} shown); ${shared.length} shared.`,
+      `${theirs} ranks for ${gapPairs.length} keywords that ${mine} does not (top ${gaps.length} shown); ${sharedPairs.length} shared.`,
     );
   },
 });

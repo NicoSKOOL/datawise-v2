@@ -129,16 +129,17 @@ describe('datawise_keyword_gap', () => {
     expect(sent.limit).toBe(300);
   });
 
-  it('includes raw ranked-keyword items for each side in detailed mode, omits raw in concise mode', async () => {
+  it('includes raw items index-aligned with the returned gaps and shared rows in detailed mode, omits raw in concise mode', async () => {
     const { env } = makeMcpTestEnv();
     const concise = await keywordGap.run(keywordGap.inputSchema.parse({ my_domain: 'me.com', competitor_domain: 'rival.com' }), { env, identity });
     expect((concise.structuredContent as any).raw).toBeUndefined();
 
     const detailed = await keywordGap.run(keywordGap.inputSchema.parse({ my_domain: 'me.com', competitor_domain: 'rival.com', limit: 1, response_format: 'detailed' }), { env, identity });
     const s = detailed.structuredContent as any;
-    expect(s.raw.my).toHaveLength(1);
-    expect(s.raw.my[0].keyword_data.keyword).toBe('shared kw');
-    expect(s.raw.competitor).toHaveLength(1);
-    expect(s.raw.competitor[0].keyword_data.keyword).toBe('shared kw');
+    expect(s.gaps[0].keyword).toBe('gap kw');
+    expect(s.raw.gaps).toHaveLength(1);
+    expect(s.raw.gaps[0].keyword_data.keyword).toBe('gap kw');
+    expect(s.shared[0].keyword).toBe('shared kw');
+    expect(s.raw.shared[0].keyword_data.keyword).toBe('shared kw');
   });
 });
