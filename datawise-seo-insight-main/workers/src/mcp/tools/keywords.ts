@@ -4,8 +4,9 @@ import { callJson } from '../call-handler';
 import { toolResult, compact, DETAILED } from '../shape';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
-  handleKeywordOverview, handleKeywordDifficulty,
+  handleKeywordDifficulty,
 } from '../../routes/keywords';
+import { dataforseoRequestCached } from '../../dataforseo/client';
 
 interface KeywordRow {
   keyword: string;
@@ -100,24 +101,33 @@ export const keywordMetrics = defineTool({
   async run(args, ctx) {
     const locale = resolveLocale(args, ctx.identity);
     const uid = ctx.identity.userId;
-    // handleKeywordOverview takes one keyword per call; run them in parallel.
-    const [overviews, difficulty] = await Promise.all([
-      Promise.all(args.keywords.map((keyword) => callJson(ctx.env, uid, handleKeywordOverview, { keyword, ...locale }))),
+    // Bypass handleKeywordOverview (one keyword per DataForSEO task) and call the
+    // client directly with the whole batch in a single task, since the estimate
+    // in budget.ts assumes one overview task per call, not one per keyword.
+    const [overview, difficulty] = await Promise.all([
+      dataforseoRequestCached(ctx.env, '/dataforseo_labs/google/keyword_overview/live', [{
+        keywords: args.keywords,
+        location_code: locale.location_code,
+        language_code: locale.language_code,
+      }], { ttlSeconds: 86400 }),
       callJson(ctx.env, uid, handleKeywordDifficulty, { keywords: args.keywords, ...locale }),
     ]);
     const kdByKeyword = new Map<string, number>();
     for (const it of items(difficulty)) kdByKeyword.set(String(it.keyword).toLowerCase(), it.keyword_difficulty);
 
-    const rows: KeywordRow[] = args.keywords.map((keyword, i) => {
-      const first = items(overviews[i])[0];
-      const row: KeywordRow = first ? fromLabs(first) : { keyword, search_volume: 0, cpc: 0, competition_level: 'UNKNOWN' };
+    const overviewByKeyword = new Map<string, any>();
+    for (const it of items(overview)) overviewByKeyword.set(String(it.keyword).toLowerCase(), it);
+
+    const rows: KeywordRow[] = args.keywords.map((keyword) => {
+      const item = overviewByKeyword.get(keyword.toLowerCase());
+      const row: KeywordRow = item ? fromLabs(item) : { keyword, search_volume: 0, cpc: 0, competition_level: 'UNKNOWN' };
       const kd = kdByKeyword.get(keyword.toLowerCase());
       return { ...row, keyword, difficulty: kd ?? row.difficulty };
     });
 
     const structured: Record<string, unknown> = { ...locale, keywords: rows };
     if (args.response_format === 'detailed') {
-      const rawOverviews = args.keywords.map((_, i) => items(overviews[i])[0] ?? null);
+      const rawOverviews = args.keywords.map((keyword) => overviewByKeyword.get(keyword.toLowerCase()) ?? null);
       structured.raw = compact(rawOverviews, DETAILED);
     }
     return toolResult(

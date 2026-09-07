@@ -17,6 +17,7 @@ describe('estimateCostUsd', () => {
     expect(estimateCostUsd('datawise_keyword_research', { mode: 'ideas', limit: 25 })).toBeCloseTo(0.015, 6);
     expect(estimateCostUsd('datawise_keyword_metrics', { keywords: new Array(50).fill('k') })).toBeCloseTo(0.036, 6);
     expect(estimateCostUsd('datawise_domain_overview', {})).toBeCloseTo(0.16, 6);
+    expect(estimateCostUsd('datawise_ranked_keywords', { limit: 100, offset: 900 })).toBeCloseTo(0.012 + 0.00012 * 1000, 6);
     expect(estimateCostUsd('datawise_keyword_gap', {})).toBeCloseTo(0.096, 6);
     expect(estimateCostUsd('datawise_backlinks', { view: 'summary' })).toBeCloseTo(0.02436, 6);
     expect(estimateCostUsd('datawise_backlinks', { view: 'list', limit: 100 })).toBeCloseTo(0.0276, 6);
@@ -84,6 +85,19 @@ describe('caps and ledger', () => {
     expect(await checkRateLimit(env, 'u1', now)).toBe(false);
     expect(await checkRateLimit(env, 'u2', now)).toBe(true);
     expect(await checkRateLimit(env, 'u1', new Date('2026-09-07T10:01:00Z'))).toBe(true);
+  });
+
+  it('rate limit fails open when KV put rejects (parallel-write contention)', async () => {
+    const { env } = makeMcpTestEnv();
+    const brokenEnv = {
+      ...env,
+      KV: {
+        get: async () => '0',
+        put: async () => { throw new Error('KV put rejected: one write per second per key'); },
+        delete: async () => {},
+      } as unknown as typeof env.KV,
+    };
+    expect(await checkRateLimit(brokenEnv, 'u1', new Date('2026-09-07T10:00:30Z'))).toBe(true);
   });
 
   it('utcDay formats YYYY-MM-DD', () => {

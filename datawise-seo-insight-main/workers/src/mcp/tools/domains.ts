@@ -144,7 +144,7 @@ export const rankedKeywords = defineTool({
   inputSchema: z.object({
     domain: domainInput,
     limit: z.number().int().min(1).max(100).default(25),
-    offset: z.number().int().min(0).default(0).describe('Skip this many rows (pagination).'),
+    offset: z.number().int().min(0).max(900).default(0).describe('Skip this many rows (pagination). DataForSEO caps limit + offset at 1000 rows.'),
     min_volume: z.number().int().min(0).optional().describe('Keep only keywords with at least this monthly volume.'),
     max_position: z.number().int().min(1).max(100).optional().describe('Keep only keywords ranking at or above this position.'),
     ...localeInputs,

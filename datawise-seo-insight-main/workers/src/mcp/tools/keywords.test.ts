@@ -22,10 +22,6 @@ vi.mock('../../routes/keywords', () => {
       return json({ tasks: [{ result: [{ items: [labsItem(`${body.keyword} suggestion`, 50)] }] }] });
     }),
     handleKeywordIdeas: vi.fn(async () => json({ tasks: [{ result: [{ items: [labsItem('idea', 20)] }] }] })),
-    handleKeywordOverview: vi.fn(async (req: Request) => {
-      const body = await req.clone().json() as any;
-      return json({ tasks: [{ result: [{ items: [labsItem(body.keyword, 900)] }] }] });
-    }),
     handleKeywordDifficulty: vi.fn(async (req: Request) => {
       const body = await req.clone().json() as any;
       return json({ tasks: [{ result: [{ items: body.keywords.map((k: string) => ({ keyword: k, keyword_difficulty: 33 })) }] }] });
@@ -33,8 +29,23 @@ vi.mock('../../routes/keywords', () => {
   };
 });
 
+vi.mock('../../dataforseo/client', () => ({
+  // datawise_keyword_metrics bypasses handleKeywordOverview and calls this
+  // directly with the whole batch in one task; default fixture returns one
+  // labs item per requested keyword.
+  dataforseoRequestCached: vi.fn(async (_env: any, _endpoint: string, body: any[]) => ({
+    tasks: [{ result: [{ items: body[0].keywords.map((keyword: string) => ({
+      keyword,
+      keyword_info: { search_volume: 900, cpc: 1.5, competition: 0.3, competition_level: 'LOW' },
+      keyword_properties: { keyword_difficulty: 42 },
+      search_intent_info: { main_intent: 'informational' },
+    })) }] }],
+  })),
+}));
+
 import { keywordResearch, keywordMetrics } from './keywords';
 import * as routes from '../../routes/keywords';
+import { dataforseoRequestCached } from '../../dataforseo/client';
 
 const identity: McpIdentity = {
   userId: 'u1', email: 'a@b.c', tier: 'community', isAdmin: false, isCommunityMember: true,
@@ -90,6 +101,35 @@ describe('datawise_keyword_metrics', () => {
     const out = await keywordMetrics.run(args, { env, identity });
     const rows = (out.structuredContent as any).keywords;
     expect(rows).toEqual([{ keyword: 'seo audit', search_volume: 900, cpc: 1.5, competition_level: 'LOW', difficulty: 33, intent: 'informational' }]);
+  });
+
+  it('issues exactly one DataForSEO overview task for a multi-keyword batch', async () => {
+    const { env } = makeMcpTestEnv();
+    (dataforseoRequestCached as any).mockClear();
+    const args = keywordMetrics.inputSchema.parse({ keywords: ['seo audit', 'local seo', 'link building'] });
+    await keywordMetrics.run(args, { env, identity });
+    expect(dataforseoRequestCached).toHaveBeenCalledTimes(1);
+    const [, endpoint, body] = (dataforseoRequestCached as any).mock.calls[0];
+    expect(endpoint).toBe('/dataforseo_labs/google/keyword_overview/live');
+    expect(body[0].keywords).toEqual(['seo audit', 'local seo', 'link building']);
+  });
+
+  it('falls back to zeros and a null raw slot when the overview omits a keyword', async () => {
+    const { env } = makeMcpTestEnv();
+    (dataforseoRequestCached as any).mockImplementationOnce(async () => ({
+      tasks: [{ result: [{ items: [{
+        keyword: 'seo audit',
+        keyword_info: { search_volume: 900, cpc: 1.5, competition: 0.3, competition_level: 'LOW' },
+        keyword_properties: { keyword_difficulty: 42 },
+        search_intent_info: { main_intent: 'informational' },
+      }] }] }],
+    }));
+    const args = keywordMetrics.inputSchema.parse({ keywords: ['seo audit', 'missing keyword'], response_format: 'detailed' });
+    const out = await keywordMetrics.run(args, { env, identity });
+    const rows = (out.structuredContent as any).keywords;
+    expect(rows[1]).toEqual({ keyword: 'missing keyword', search_volume: 0, cpc: 0, competition_level: 'UNKNOWN', difficulty: 33 });
+    const raw = (out.structuredContent as any).raw;
+    expect(raw[1]).toBeNull();
   });
 
   it('caps at 50 keywords', () => {

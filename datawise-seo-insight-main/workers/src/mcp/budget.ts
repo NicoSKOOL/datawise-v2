@@ -40,7 +40,10 @@ export function estimateCostUsd(tool: string, args: Record<string, unknown>): nu
       // rank overview (Labs task) + bulk traffic estimation ($0.12 task + $0.0012 per
       // domain) + backlinks summary, rounded up to the spec's $0.16 figure.
       return 0.16;
-    case 'datawise_ranked_keywords':
+    case 'datawise_ranked_keywords': {
+      const offset = num(args.offset, 0);
+      return LABS_TASK + LABS_ITEM * (limit + offset);
+    }
     case 'datawise_competitors':
       return LABS_TASK + LABS_ITEM * limit;
     case 'datawise_keyword_gap':
@@ -107,14 +110,22 @@ export async function checkBudget(env: McpEnv, identity: McpIdentity, estimateUs
 }
 
 // Non-atomic KV counter: two concurrent calls may both see 29 and both pass.
-// Acceptable; the dollar budget is the real guard.
+// Acceptable; the dollar budget is the real guard. KV also allows only one
+// write per second per key, so parallel tool calls in the same second can
+// make the put reject; fail open rather than surface an internal error to
+// the model, since the dollar budget is the real guard either way.
 export async function checkRateLimit(env: McpEnv, userId: string, now: Date = new Date()): Promise<boolean> {
   const minute = now.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
   const key = `mcprate:${userId}:${minute}`;
-  const current = Number((await env.KV.get(key)) ?? '0');
-  if (current >= RATE_LIMIT_PER_MINUTE) return false;
-  await env.KV.put(key, String(current + 1), { expirationTtl: 120 });
-  return true;
+  try {
+    const current = Number((await env.KV.get(key)) ?? '0');
+    if (current >= RATE_LIMIT_PER_MINUTE) return false;
+    await env.KV.put(key, String(current + 1), { expirationTtl: 120 });
+    return true;
+  } catch (err) {
+    console.error('[mcp] rate limit KV error, failing open:', err);
+    return true;
+  }
 }
 
 export interface UsageEntry {

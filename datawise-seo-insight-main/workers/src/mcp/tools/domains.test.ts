@@ -92,6 +92,11 @@ describe('datawise_ranked_keywords', () => {
     expect(s.raw).toHaveLength(3);
     expect(s.raw.map((r: any) => r.keyword_data.keyword)).toEqual(['k0', 'k1', 'k2']);
   });
+
+  it('rejects offset above 900 at the schema', () => {
+    expect(() => rankedKeywords.inputSchema.parse({ domain: 'z.com', offset: 901 })).toThrow();
+    expect(() => rankedKeywords.inputSchema.parse({ domain: 'z.com', offset: 900 })).not.toThrow();
+  });
 });
 
 describe('datawise_competitors', () => {
