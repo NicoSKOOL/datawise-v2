@@ -74,7 +74,7 @@ Docs: `DEPLOY.md`, root `CLAUDE.md`.
 - Modify (only if tsc complains): `datawise-seo-insight-main/workers/src/blueprint/domain/brief.ts:49`
 
 **Interfaces:**
-- Produces: installed packages `agents@^0.22.0`, `@modelcontextprotocol/server@2.0.0`, `@modelcontextprotocol/sdk@1.30.0`, `zod@^4.4.0`, `wrangler@^4.129.0`.
+- Produces: installed packages `agents@^0.22.0`, `@modelcontextprotocol/server@2.0.0`, `@modelcontextprotocol/sdk@1.30.0`, `zod@^4.4.0`, `wrangler@~4.107.1`, `@cloudflare/workers-types@^4.20260702.1` (wrangler 4.108+ requires the workers-types 5.x line as a peer; 4.107.1 is the newest release that stays on 4.x types).
 
 Why: `@modelcontextprotocol/server` 2.0 requires `zod ^4.2` as a peer and `agents` 0.22 requires `zod ^4`. The worker pins `zod ^3.25`, used in exactly one file (`src/blueprint/domain/brief.ts`). `agents` also expects wrangler 4 and a 2026 `compatibility_date`, which wrangler 3.99 cannot run locally.
 
@@ -102,12 +102,12 @@ Edit `package.json`:
   "llm-models:snapshot": "node scripts/refresh-llm-models-snapshot.mjs"
 },
 "devDependencies": {
-  "@cloudflare/workers-types": "^4.20241205.0",
+  "@cloudflare/workers-types": "^4.20260702.1",
   "@types/better-sqlite3": "^7.6.13",
   "better-sqlite3": "^12.11.1",
   "typescript": "^5.8.3",
   "vitest": "^3.2.6",
-  "wrangler": "^4.129.0"
+  "wrangler": "~4.107.1"
 },
 "dependencies": {
   "@modelcontextprotocol/sdk": "1.30.0",
