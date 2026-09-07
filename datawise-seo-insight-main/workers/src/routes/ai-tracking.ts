@@ -1,13 +1,21 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
 import { resolveModel } from '../dataforseo/llm-models';
+import { runEngine, classify, ALL_ENGINES, DEFAULT_LOCALE, type EngineId, type Locale, type NormalizedAnswer, type Classification } from '../ai-engines';
 import { buildRecommendation, type EngineCheck } from './ai-recommendations';
 
 // AI Visibility Tracker: persistent weekly tracking of AI search presence per
 // rank-tracking project. See docs/specs/2026-06-09-ai-visibility-tracker-design.md.
 
-export type AIEngine = 'google_ai_mode' | 'chatgpt' | 'perplexity';
-export const ALL_AI_ENGINES: AIEngine[] = ['google_ai_mode', 'chatgpt', 'perplexity'];
+export type AIEngine = EngineId;
+export const ALL_AI_ENGINES: AIEngine[] = ALL_ENGINES;
+// KV flag: set any value to route checks through the v2 engine layer (real
+// ChatGPT/Gemini scraper answers, project locale, retrieved status). Unset =
+// legacy path. Removed after one clean Monday run in production.
+export const AI_ENGINES_V2_FLAG = 'ai-engines-v2';
+export async function isEnginesV2Enabled(env: Env): Promise<boolean> {
+  return !!(await env.KV.get(AI_ENGINES_V2_FLAG));
+}
 
 export const MAX_AI_QUERIES_PER_PROJECT = 20;
 // Cross-user dedup window: identical query+engine payloads within the same
@@ -16,7 +24,7 @@ const ENGINE_CACHE_TTL_SECONDS = 6 * 24 * 3600;
 const ENGINE_TIMEOUT_MS = 60_000;
 // Hard ceiling on engine calls per scheduled run, so a runaway project list
 // can never blow up the DataForSEO bill or the cron's subrequest budget.
-const MAX_CHECKS_PER_SCHEDULED_RUN = 600;
+const MAX_CHECKS_PER_SCHEDULED_RUN = 1000;
 // Skip-if-fresh: a query+engine checked in the last 24h is not re-checked.
 const FRESHNESS_HOURS = 24;
 // KV kill switch: set any value at this key to pause all scheduled AI checks.
@@ -47,6 +55,35 @@ function normalizeDomain(raw: string): string | null {
 
 function domainsMatch(candidate: string, target: string): boolean {
   return candidate === target || candidate.endsWith(`.${target}`) || target.endsWith(`.${candidate}`);
+}
+
+// seo_projects stores a location but no language. Rank tracking keeps the
+// language per tracked keyword and falls back to the account default, so AI
+// checks follow the same chain: project location, then the project's most
+// common keyword language, then the user's default language, then US/EN.
+export async function resolveProjectLocale(
+  env: Env,
+  project: { id: string; user_id: string; location_code?: number | null }
+): Promise<Locale> {
+  const location = Number(project.location_code);
+  const keywordLang = await env.DB.prepare(
+    `SELECT language_code, COUNT(*) as n FROM tracked_keywords
+     WHERE project_id = ? AND language_code IS NOT NULL AND language_code != ''
+     GROUP BY language_code ORDER BY n DESC LIMIT 1`
+  ).bind(project.id).first() as { language_code?: string } | null;
+  let language = (keywordLang?.language_code || '').trim().toLowerCase();
+  let locationCode = Number.isFinite(location) && location > 0 ? location : 0;
+  if (!language || !locationCode) {
+    const user = await env.DB.prepare(
+      'SELECT default_location_code, default_language_code FROM users WHERE id = ?'
+    ).bind(project.user_id).first() as { default_location_code?: number; default_language_code?: string } | null;
+    if (!language) language = (user?.default_language_code || '').trim().toLowerCase();
+    if (!locationCode) locationCode = Number(user?.default_location_code) || 0;
+  }
+  return {
+    location_code: locationCode || DEFAULT_LOCALE.location_code,
+    language_code: language || DEFAULT_LOCALE.language_code,
+  };
 }
 
 function parseJsonArray(raw: unknown): string[] | null {
@@ -139,14 +176,14 @@ export function parseEngineResponse(data: any): ParsedAnswer {
   return { answerText: texts.join('\n'), citations };
 }
 
-export interface Classification {
+export interface LegacyClassification {
   status: 'cited' | 'mentioned' | 'absent' | 'no_answer';
   citation_position: number | null;
   cited_url: string | null;
   answer_excerpt: string | null;
 }
 
-export function classifyAnswer(parsed: ParsedAnswer, projectDomain: string, brandTerms: string[]): Classification {
+export function classifyAnswer(parsed: ParsedAnswer, projectDomain: string, brandTerms: string[]): LegacyClassification {
   const target = normalizeDomain(projectDomain);
   if (target) {
     for (const cite of parsed.citations) {
@@ -198,6 +235,9 @@ export async function buildEngineRequest(
       }],
     };
   }
+  if (engine === 'gemini') {
+    throw new Error('gemini checks require the ai-engines-v2 flag');
+  }
   if (engine === 'chatgpt') {
     return {
       endpoint: '/ai_optimization/chat_gpt/llm_responses/live',
@@ -232,6 +272,7 @@ interface ProjectRow {
   ai_tracking_enabled: number;
   ai_brand_terms: string | null;
   ai_engines: string | null;
+  location_code?: number | null;
 }
 
 interface QueryRow {
@@ -239,16 +280,18 @@ interface QueryRow {
   query_text: string;
 }
 
-async function runChecksForProject(
+export async function runChecksForProject(
   env: Env,
   project: ProjectRow,
   queries: QueryRow[],
   runType: 'scheduled' | 'manual',
   budget?: { remaining: number }
-): Promise<{ checks: number; cited: number; mentioned: number; errors: number; skipped_fresh: number }> {
+): Promise<{ checks: number; cited: number; mentioned: number; retrieved: number; errors: number; skipped_fresh: number }> {
+  const v2 = await isEnginesV2Enabled(env);
   const engines = projectEngines(project);
   const brandTerms = parseJsonArray(project.ai_brand_terms) || defaultBrandTerms(project);
-  const summary = { checks: 0, cited: 0, mentioned: 0, errors: 0, skipped_fresh: 0 };
+  const locale = await resolveProjectLocale(env, project);
+  const summary = { checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0 };
   if (!queries.length || !engines.length) return summary;
 
   // One D1 read covers freshness for every query+engine in this project.
@@ -260,6 +303,10 @@ async function runChecksForProject(
   `).bind(...queries.map(q => q.id)).all();
   const fresh = new Set((freshRows as any[] || []).map(r => `${r.query_id}|${r.engine}`));
 
+  type Outcome =
+    | { kind: 'v2'; answer: NormalizedAnswer; classification: Classification }
+    | { kind: 'legacy'; parsed: ParsedAnswer; classification: LegacyClassification };
+
   for (const query of queries) {
     const due = engines.filter(e => !fresh.has(`${query.id}|${e}`));
     summary.skipped_fresh += engines.length - due.length;
@@ -268,10 +315,14 @@ async function runChecksForProject(
     if (budget) budget.remaining -= due.length;
 
     const checkedAt = nowSql();
-    const settled = await Promise.allSettled(due.map(async (engine) => {
+    const settled = await Promise.allSettled(due.map(async (engine): Promise<Outcome> => {
+      if (v2) {
+        const answer = await runEngine(env, engine, query.query_text, locale, { ttlSeconds: ENGINE_CACHE_TTL_SECONDS, timeoutMs: ENGINE_TIMEOUT_MS });
+        return { kind: 'v2', answer, classification: classify(answer, project.domain, brandTerms) };
+      }
       const data = await callEngine(env, engine, query.query_text);
       const parsed = parseEngineResponse(data);
-      return { engine, parsed, classification: classifyAnswer(parsed, project.domain, brandTerms) };
+      return { kind: 'legacy', parsed, classification: classifyAnswer(parsed, project.domain, brandTerms) };
     }));
 
     for (let i = 0; i < settled.length; i++) {
@@ -281,42 +332,90 @@ async function runChecksForProject(
 
       if (outcome.status === 'rejected') {
         summary.errors++;
-        console.error(`AI check failed [${engine}] "${query.query_text}":`, outcome.reason instanceof Error ? outcome.reason.message : outcome.reason);
+        const reason = outcome.reason;
+        console.error(`AI check failed [${engine}] "${query.query_text}":`, reason instanceof Error ? reason.message : reason);
         await env.DB.prepare(
-          'INSERT INTO ai_visibility_checks (query_id, engine, status, run_type, checked_at) VALUES (?, ?, ?, ?, ?)'
-        ).bind(query.id, engine, 'error', runType, checkedAt).run();
+          'INSERT INTO ai_visibility_checks (query_id, engine, status, run_type, checked_at, location_code, language_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(query.id, engine, 'error', runType, checkedAt, locale.location_code, locale.language_code).run();
         continue;
       }
 
-      const { parsed, classification } = outcome.value;
-      if (classification.status === 'cited') summary.cited++;
-      if (classification.status === 'mentioned') summary.mentioned++;
+      const status = outcome.value.classification.status;
+      if (status === 'cited') summary.cited++;
+      if (status === 'mentioned') summary.mentioned++;
+      if (status === 'retrieved') summary.retrieved++;
 
-      const inserted = await env.DB.prepare(`
-        INSERT INTO ai_visibility_checks (query_id, engine, status, citation_position, cited_url, answer_excerpt, answer_text, run_type, checked_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        query.id, engine, classification.status, classification.citation_position,
-        classification.cited_url, classification.answer_excerpt,
-        parsed.answerText ? parsed.answerText.slice(0, 10_000) : null,
-        runType, checkedAt,
-      ).run();
-
-      const checkId = inserted.meta?.last_row_id;
-      if (checkId && parsed.citations.length) {
-        const stmts = parsed.citations.slice(0, 30).map(cite =>
-          env.DB.prepare(
-            'INSERT INTO ai_check_citations (check_id, domain, url, position) VALUES (?, ?, ?, ?)'
-          ).bind(checkId, cite.domain, cite.url, cite.position)
-        );
-        for (let j = 0; j < stmts.length; j += 50) {
-          await env.DB.batch(stmts.slice(j, j + 50));
-        }
+      if (outcome.value.kind === 'v2') {
+        await persistV2Check(env, query.id, engine, outcome.value.answer, outcome.value.classification, runType, checkedAt, locale, project.domain, brandTerms);
+      } else {
+        await persistLegacyCheck(env, query.id, engine, outcome.value.parsed, outcome.value.classification, runType, checkedAt);
       }
     }
   }
 
   return summary;
+}
+
+async function persistLegacyCheck(
+  env: Env, queryId: string, engine: AIEngine, parsed: ParsedAnswer, classification: LegacyClassification,
+  runType: 'scheduled' | 'manual', checkedAt: string
+): Promise<void> {
+  const inserted = await env.DB.prepare(`
+    INSERT INTO ai_visibility_checks (query_id, engine, status, citation_position, cited_url, answer_excerpt, answer_text, run_type, checked_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    queryId, engine, classification.status, classification.citation_position,
+    classification.cited_url, classification.answer_excerpt,
+    parsed.answerText ? parsed.answerText.slice(0, 10_000) : null,
+    runType, checkedAt,
+  ).run();
+
+  const checkId = inserted.meta?.last_row_id;
+  if (checkId && parsed.citations.length) {
+    const stmts = parsed.citations.slice(0, 30).map(cite =>
+      env.DB.prepare(
+        'INSERT INTO ai_check_citations (check_id, domain, url, position) VALUES (?, ?, ?, ?)'
+      ).bind(checkId, cite.domain, cite.url, cite.position)
+    );
+    for (let j = 0; j < stmts.length; j += 50) {
+      await env.DB.batch(stmts.slice(j, j + 50));
+    }
+  }
+}
+
+async function persistV2Check(
+  env: Env, queryId: string, engine: AIEngine, answer: NormalizedAnswer, c: Classification,
+  runType: 'scheduled' | 'manual', checkedAt: string, locale: Locale, projectDomain: string, brandTerms: string[]
+): Promise<void> {
+  const inserted = await env.DB.prepare(`
+    INSERT INTO ai_visibility_checks
+      (query_id, engine, status, citation_position, cited_url, retrieved_url, answer_excerpt, answer_text, run_type, checked_at, model, location_code, language_code)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    queryId, engine, c.status, c.citation_position, c.cited_url, c.retrieved_url, c.answer_excerpt,
+    answer.answerText ? answer.answerText.slice(0, 10_000) : null,
+    runType, checkedAt, answer.model, locale.location_code, locale.language_code,
+  ).run();
+  const checkId = inserted.meta?.last_row_id;
+  if (!checkId) return;
+
+  const stmts: D1PreparedStatement[] = [];
+  for (const cite of answer.cited.slice(0, 30)) {
+    stmts.push(env.DB.prepare('INSERT INTO ai_check_citations (check_id, domain, url, position, kind) VALUES (?, ?, ?, ?, ?)').bind(checkId, cite.domain, cite.url, cite.position, 'cited'));
+  }
+  for (const page of answer.retrieved.slice(0, 30)) {
+    stmts.push(env.DB.prepare('INSERT INTO ai_check_citations (check_id, domain, url, position, kind) VALUES (?, ?, ?, ?, ?)').bind(checkId, page.domain, page.url, page.position, 'retrieved'));
+  }
+  const target = normalizeDomain(projectDomain);
+  const termKeys = new Set(brandTerms.map(t => t.trim().toLowerCase()).filter(t => t.length >= 3));
+  for (const brand of answer.brands.slice(0, 50)) {
+    const isYou = termKeys.has(brand.name.trim().toLowerCase())
+      || (!!target && brand.urls.some(u => { const d = normalizeDomain(u); return !!d && domainsMatch(d, target); }));
+    stmts.push(env.DB.prepare('INSERT INTO ai_check_brands (check_id, name, category, is_you) VALUES (?, ?, ?, ?)').bind(checkId, brand.name, brand.category, isYou ? 1 : 0));
+  }
+  for (let j = 0; j < stmts.length; j += 50) {
+    await env.DB.batch(stmts.slice(j, j + 50));
+  }
 }
 
 // --- Cron entry -----------------------------------------------------------
@@ -329,7 +428,7 @@ export async function runScheduledAIChecks(env: Env): Promise<void> {
   }
 
   const { results: projects } = await env.DB.prepare(
-    'SELECT id, user_id, name, domain, ai_tracking_enabled, ai_brand_terms, ai_engines FROM seo_projects WHERE ai_tracking_enabled = 1'
+    'SELECT id, user_id, name, domain, ai_tracking_enabled, ai_brand_terms, ai_engines, location_code FROM seo_projects WHERE ai_tracking_enabled = 1'
   ).all() as { results: ProjectRow[] };
 
   if (!projects?.length) {
@@ -338,7 +437,7 @@ export async function runScheduledAIChecks(env: Env): Promise<void> {
   }
 
   const budget = { remaining: MAX_CHECKS_PER_SCHEDULED_RUN };
-  let totals = { projects: 0, checks: 0, cited: 0, mentioned: 0, errors: 0, skipped_fresh: 0 };
+  let totals = { projects: 0, checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0 };
 
   for (const project of projects) {
     if (budget.remaining <= 0) {
@@ -355,19 +454,20 @@ export async function runScheduledAIChecks(env: Env): Promise<void> {
       checks: totals.checks + summary.checks,
       cited: totals.cited + summary.cited,
       mentioned: totals.mentioned + summary.mentioned,
+      retrieved: totals.retrieved + summary.retrieved,
       errors: totals.errors + summary.errors,
       skipped_fresh: totals.skipped_fresh + summary.skipped_fresh,
     };
   }
 
-  console.log(`AI tracking weekly run: ${JSON.stringify(totals)}`);
+  console.log(`AI tracking weekly run: ${JSON.stringify({ ...totals, projects_skipped_by_budget: projects.length - totals.projects })}`);
 }
 
 // --- Routes -----------------------------------------------------------------
 
 async function getOwnedProject(env: Env, userId: string, projectId: string): Promise<ProjectRow | null> {
   return await env.DB.prepare(
-    'SELECT id, user_id, name, domain, ai_tracking_enabled, ai_brand_terms, ai_engines FROM seo_projects WHERE id = ? AND user_id = ?'
+    'SELECT id, user_id, name, domain, ai_tracking_enabled, ai_brand_terms, ai_engines, location_code FROM seo_projects WHERE id = ? AND user_id = ?'
   ).bind(projectId, userId).first() as ProjectRow | null;
 }
 
@@ -378,7 +478,7 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
 
   const { results: queryRows } = await env.DB.prepare(`
     SELECT q.id, q.query_text, q.source, q.keyword_id, q.created_at,
-      c.engine, c.status, c.citation_position, c.cited_url, c.answer_excerpt, c.checked_at,
+      c.engine, c.status, c.citation_position, c.cited_url, c.retrieved_url, c.model, c.answer_excerpt, c.checked_at,
       c.id as check_id
     FROM ai_tracked_queries q
     LEFT JOIN ai_visibility_checks c ON c.query_id = q.id
@@ -390,16 +490,19 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
   // Citations for each latest check (the per-engine evidence lists).
   const checkIds = [...new Set((queryRows as any[] || []).map(r => r.check_id).filter(Boolean))];
   const citationsByCheck = new Map<number, Array<{ domain: string; url: string | null; position: number }>>();
+  const retrievedByCheck = new Map<number, Array<{ domain: string; url: string | null; position: number }>>();
   if (checkIds.length) {
     const placeholders2 = checkIds.map(() => '?').join(',');
     const { results: citeRows } = await env.DB.prepare(
-      `SELECT check_id, domain, url, position FROM ai_check_citations
+      `SELECT check_id, domain, url, position, kind FROM ai_check_citations
        WHERE check_id IN (${placeholders2}) ORDER BY position ASC`
     ).bind(...checkIds).all();
     for (const row of (citeRows as any[] || [])) {
-      if (!citationsByCheck.has(row.check_id)) citationsByCheck.set(row.check_id, []);
-      const list = citationsByCheck.get(row.check_id)!;
-      if (list.length < 10) list.push({ domain: row.domain, url: row.url, position: row.position });
+      const bucket = row.kind === 'retrieved' ? retrievedByCheck : citationsByCheck;
+      const cap = row.kind === 'retrieved' ? 5 : 10;
+      if (!bucket.has(row.check_id)) bucket.set(row.check_id, []);
+      const list = bucket.get(row.check_id)!;
+      if (list.length < cap) list.push({ domain: row.domain, url: row.url, position: row.position });
     }
   }
 
@@ -420,17 +523,21 @@ export async function handleGetAITracking(env: Env, userId: string, projectId: s
         status: row.status,
         citation_position: row.citation_position,
         cited_url: row.cited_url,
+        retrieved_url: row.retrieved_url,
+        model: row.model,
         answer_excerpt: row.answer_excerpt,
         checked_at: row.checked_at,
         check_id: row.check_id,
         citations: citationsByCheck.get(row.check_id) || [],
+        retrieved: retrievedByCheck.get(row.check_id) || [],
       };
     }
   }
 
   for (const q of byQuery.values()) {
     const checks: EngineCheck[] = Object.entries(q.engines).map(([engine, e]: [string, any]) => ({
-      engine, status: e.status, citation_position: e.citation_position, citations: e.citations || [],
+      engine, status: e.status, citation_position: e.citation_position,
+      citations: e.status === 'retrieved' ? (e.retrieved || []) : (e.citations || []),
     }));
     q.recommendation = buildRecommendation(q.query_text, checks, project.domain);
   }
@@ -569,7 +676,9 @@ export async function handleAIReport(request: Request, env: Env, userId: string,
     SELECT date(c.checked_at) as date, c.engine,
       COUNT(*) as total,
       SUM(CASE WHEN c.status = 'cited' THEN 1 ELSE 0 END) as cited,
-      SUM(CASE WHEN c.status = 'mentioned' THEN 1 ELSE 0 END) as mentioned
+      SUM(CASE WHEN c.status = 'mentioned' THEN 1 ELSE 0 END) as mentioned,
+      SUM(CASE WHEN c.status = 'retrieved' THEN 1 ELSE 0 END) as retrieved,
+      SUM(CASE WHEN c.model IS NULL THEN 1 ELSE 0 END) as legacy
     FROM ai_visibility_checks c
     JOIN ai_tracked_queries q ON q.id = c.query_id
     WHERE q.project_id = ? AND c.status != 'error'
@@ -587,7 +696,7 @@ export async function handleAIReport(request: Request, env: Env, userId: string,
     FROM ai_check_citations cc
     JOIN ai_visibility_checks c ON c.id = cc.check_id
     JOIN ai_tracked_queries q ON q.id = c.query_id
-    WHERE q.project_id = ? AND c.checked_at >= datetime('now', '-' || ? || ' days')
+    WHERE q.project_id = ? AND cc.kind = 'cited' AND c.checked_at >= datetime('now', '-' || ? || ' days')
     GROUP BY cc.domain
     ORDER BY citations DESC, queries_cited DESC
     LIMIT 15
