@@ -36,6 +36,7 @@ preview_id = "30288cb442c84e038406b0e174f90398"
 [[kv_namespaces]]
 binding = "OAUTH_KV"
 id = "991a27d75c304529910720aef008ffe7"
+preview_id = "154af21df4f64812bdd65ecca071f3be"
 
 # Custom domain on the datawiseseo.com zone. Wrangler creates the DNS record
 # on first deploy. The workers.dev URL keeps working but is never advertised.

@@ -75,6 +75,10 @@ export function oauthOptions(publicUrl: string): OAuthProviderOptions<McpEnv> {
     resolveExternalToken,
     onError: ({ code, description, status, internal }) => {
       if (status >= 500 || internal) console.error('[mcp-oauth]', status, code, description, internal ?? '');
+      // Deliberate: log 4xx at warn level while connectors (claude.ai, ChatGPT)
+      // are still being attached for the first time, so a rejected authorize/
+      // token/register call is diagnosable from worker logs during rollout.
+      else if (status >= 400) console.warn('[mcp-oauth]', status, code, description);
     },
   };
 }

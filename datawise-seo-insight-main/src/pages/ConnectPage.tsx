@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Loader2, ShieldCheck, Laptop, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ function Shell({ children }: { children: ReactNode }) {
 
 export default function ConnectPage() {
   const { user, loading, signOut } = useAuth();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const req = params.get('req') ?? '';
 
@@ -43,6 +44,12 @@ export default function ConnectPage() {
     return () => { cancelled = true; };
   }, [user, req]);
 
+  useEffect(() => {
+    if (loading || user || !req) return;
+    setReturnTo(`/connect?req=${encodeURIComponent(req)}`);
+    navigate('/auth', { replace: true });
+  }, [loading, user, req, navigate]);
+
   if (loading) {
     return <Shell><div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div></Shell>;
   }
@@ -52,8 +59,7 @@ export default function ConnectPage() {
   }
 
   if (!user) {
-    setReturnTo(`/connect?req=${encodeURIComponent(req)}`);
-    return <Navigate to="/auth" replace />;
+    return <Shell><div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div></Shell>;
   }
 
   const finish = async (action: 'approve' | 'deny') => {
@@ -95,13 +101,13 @@ export default function ConnectPage() {
       </p>
 
       <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm space-y-1">
-        <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-green-700" /> Read-only access, revocable any time in Settings.</div>
+        <div className="flex items-center gap-2"><ShieldCheck aria-hidden="true" className="h-4 w-4 text-green-700" /> Read-only access, revocable any time in Settings.</div>
         <div className="flex items-center gap-2">
-          {info.loopback ? <Laptop className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4 text-green-700" />}
+          {info.loopback ? <Laptop aria-hidden="true" className="h-4 w-4" /> : <ShieldCheck aria-hidden="true" className="h-4 w-4 text-green-700" />}
           <span>You will return to <code className="text-xs">{info.redirect_host}</code>{info.loopback ? ' (an app running on this computer, such as Claude Code)' : ''}.</span>
         </div>
         {info.loopback && (
-          <div className="flex items-start gap-2 text-amber-800"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> Only continue if you started this connection yourself from a tool on this computer.</div>
+          <div className="flex items-start gap-2 text-amber-800"><AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" /> Only continue if you started this connection yourself from a tool on this computer.</div>
         )}
       </div>
 

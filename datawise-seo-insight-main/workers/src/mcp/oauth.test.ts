@@ -94,4 +94,60 @@ describe('OAuth provider wiring', () => {
     expect((await worker.fetch(new Request(`${BASE}/account/tokens`), env, ctx)).status).toBe(401);
     expect((await worker.fetch(new Request(`${BASE}/nope`), env, ctx)).status).toBe(404);
   });
+
+  it("a revoked grant's unexpired access token gets 401 on /mcp", async () => {
+    const { env } = makeMcpTestEnv();
+    const userId = await seedUser(env, { email: 'revoke@test.dev' });
+    const client = await env.OAUTH_PROVIDER.createClient({ clientName: 'Claude', redirectUris: ['https://claude.ai/api/mcp/auth_callback'], tokenEndpointAuthMethod: 'none' });
+    const { verifier, challenge } = await pkce();
+    const authUrl = `${BASE}/authorize?response_type=code&client_id=${encodeURIComponent(client.clientId)}&redirect_uri=${encodeURIComponent(client.redirectUris[0])}&scope=read&state=s1&code_challenge=${challenge}&code_challenge_method=S256&resource=${encodeURIComponent(`${BASE}/mcp`)}`;
+    const authRequest = await env.OAUTH_PROVIDER.parseAuthRequest(new Request(authUrl));
+    const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
+      request: authRequest, userId, metadata: { clientName: 'Claude' }, scope: ['read'],
+      props: { userId, email: 'revoke@test.dev', clientName: 'Claude', authKind: 'oauth', tokenId: `oauth:${client.clientId}` },
+    });
+    const code = new URL(redirectTo).searchParams.get('code')!;
+    const tokenRes = await worker.fetch(new Request(`${BASE}/oauth/token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code, client_id: client.clientId, redirect_uri: client.redirectUris[0], code_verifier: verifier, resource: `${BASE}/mcp` }),
+    }), env, ctx);
+    const { access_token } = await tokenRes.json() as any;
+    const before = await worker.fetch(new Request(`${BASE}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${access_token}` } }), env, ctx);
+    expect(before.status).toBe(200);
+
+    const { items } = await env.OAUTH_PROVIDER.listUserGrants(userId, { limit: 10 });
+    await env.OAUTH_PROVIDER.revokeGrant(items[0].id, userId);
+
+    const after = await worker.fetch(new Request(`${BASE}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${access_token}` } }), env, ctx);
+    expect(after.status).toBe(401);
+  });
+
+  it('a token is rejected when presented on a different host (audience mismatch)', async () => {
+    const { env } = makeMcpTestEnv();
+    const userId = await seedUser(env, { email: 'aud@test.dev' });
+    const { token } = await createApiToken(env, userId, 'laptop');
+    const res = await worker.fetch(new Request('http://127.0.0.1:8788/mcp', { method: 'POST', headers: { Authorization: `Bearer ${token}` } }), env, ctx);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('WWW-Authenticate')).toContain('invalid_token');
+  });
+
+  it('dynamic client registration round trip', async () => {
+    const { env } = makeMcpTestEnv();
+    const res = await worker.fetch(new Request(`${BASE}/oauth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'ChatGPT',
+        redirect_uris: ['https://chatgpt.com/connector_platform_oauth_redirect'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code'],
+      }),
+    }), env, ctx);
+    expect(res.status).toBe(201);
+    const body = await res.json() as any;
+    expect(body.client_id).toBeTruthy();
+    const client = await env.OAUTH_PROVIDER.lookupClient(body.client_id);
+    expect(client?.clientName).toBe('ChatGPT');
+  });
 });

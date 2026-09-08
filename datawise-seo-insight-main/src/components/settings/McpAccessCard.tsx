@@ -44,7 +44,7 @@ export function McpAccessCard() {
   const queryClient = useQueryClient();
   const { data: tokens = [], isLoading: tokensLoading } = useMcpTokens();
   const { data: usage } = useMcpUsage();
-  const { data: grants = [], isLoading: grantsLoading } = useMcpGrants();
+  const { data: grants = [], isLoading: grantsLoading, isError: grantsError } = useMcpGrants();
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
 
   const handleDisconnect = async (id: string, clientName: string) => {
@@ -128,6 +128,8 @@ export function McpAccessCard() {
         <Label className="flex items-center gap-1"><Link2 className="h-4 w-4" /> Connected apps</Label>
         {grantsLoading ? (
           <Loader2 className="h-4 w-4 animate-spin" />
+        ) : grantsError ? (
+          <p className="text-sm text-destructive">Could not load connected apps. Reload the page to try again.</p>
         ) : grants.length === 0 ? (
           <p className="text-sm text-muted-foreground">No apps connected yet. Follow the steps below for your assistant.</p>
         ) : (
