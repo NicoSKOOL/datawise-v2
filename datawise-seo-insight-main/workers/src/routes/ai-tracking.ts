@@ -22,10 +22,15 @@ export const MAX_AI_QUERIES_PER_PROJECT = 20;
 // weekly cycle share one DataForSEO call. 6 days so it never spans two runs.
 const ENGINE_CACHE_TTL_SECONDS = 6 * 24 * 3600;
 const ENGINE_TIMEOUT_MS = 60_000;
-// v2 scraper engines (ChatGPT, Gemini) can take most of DataForSEO's 120s
-// live window; give them room, retry once on a transient failure, and run
-// prompts in parallel so a manual check does not get slower.
-const V2_ENGINE_TIMEOUT_MS = 100_000;
+// v2 scraper engines (ChatGPT, Gemini) run inside DataForSEO's live window,
+// documented as "up to 120 seconds". Give them the whole window: DataForSEO
+// returns task status 50401 (Internal Error - Timeout) on its own overrun,
+// which runEngine raises and the retry below handles. Aborting earlier on our
+// side (it was 100s) turned ordinary slow answers into error rows: measured
+// 2026-09-08, single calls took 8-114s, and 2 of 10 concurrent calls passed
+// 60s. Retry once on a transient failure and run prompts in parallel so a
+// manual check does not get slower.
+const V2_ENGINE_TIMEOUT_MS = 120_000;
 const V2_RETRY_DELAY_MS = 1_500;
 const V2_QUERY_CONCURRENCY = 5;
 // Hard ceiling on engine calls per scheduled run, so a runaway project list
