@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
+    "dev:mcp": "wrangler dev -c wrangler.mcp.toml --port 8788 --host localhost:8788",
     "deploy": "wrangler deploy",
+    "deploy:mcp": "wrangler deploy -c wrangler.mcp.toml",
     "deploy:staging": "wrangler deploy --env staging",
     "deploy:production": "wrangler deploy --env production",
     "db:migrate": "wrangler d1 execute datawise-db --file=src/db/schema.sql",
@@ -14,14 +16,18 @@
     "llm-models:snapshot": "node scripts/refresh-llm-models-snapshot.mjs"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241205.0",
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.11.1",
     "typescript": "^5.8.3",
     "vitest": "^3.2.6",
-    "wrangler": "^3.99.0"
+    "wrangler": "~4.107.1"
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "@cloudflare/workers-oauth-provider": "0.10.3",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "agents": "^0.22.0",
+    "zod": "^4.4.0"
   }
 }

@@ -17,7 +17,10 @@ import type { LLMProvider } from '../../llm/provider';
 
 export interface BlueprintQueueEnv {
   BLUEPRINT_DB: D1Database;
-  BLUEPRINT_QUEUE: { send(body: unknown, options?: { delaySeconds?: number }): Promise<void> };
+  // Return type left open (not Promise<void>): newer @cloudflare/workers-types
+  // has the real Queue.send() resolve to QueueSendResponse, and nothing here
+  // consumes the resolved value.
+  BLUEPRINT_QUEUE: { send(body: unknown, options?: { delaySeconds?: number }): Promise<unknown> };
 }
 
 // Widens BlueprintQueueEnv with the provider bindings/credentials real stage

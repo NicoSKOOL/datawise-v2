@@ -16,9 +16,11 @@ const skipBuild = args.has('--skip-build');
 
 const EXPECTED_BRANCH = 'production';
 const EXPECTED_API_URL = 'https://datawise-api.nico-510.workers.dev';
+const EXPECTED_MCP_URL = 'https://mcp.datawiseseo.com';
 const FORBIDDEN_BUNDLE_MARKERS = [
   ['Local development API URL', 'http://localhost:8787'],
   ['Removed Site Audit browser-polling wording', 'completion no longer depends on browser polling'],
+  ['Local MCP worker URL', 'http://localhost:8788'],
 ];
 const REQUIRED_BUNDLE_MARKERS = [
   ['Content Writer route', '/content-writer'],
@@ -35,6 +37,9 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric amber state', 'bg-amber-50'],
   ['Keyword metric red state', 'bg-red-50'],
   ['Blueprint canvas lazy chunk present', 'BlueprintCanvas'],
+  ['MCP settings card', 'MCP & AI assistants'],
+  ['MCP connected apps', 'Connected apps'],
+  ['Production MCP worker URL', EXPECTED_MCP_URL],
 ];
 const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
@@ -277,6 +282,10 @@ async function main() {
 
   if (process.env.VITE_API_URL !== EXPECTED_API_URL) {
     throw new Error(`VITE_API_URL must be ${EXPECTED_API_URL}; received ${process.env.VITE_API_URL || 'unset'}.`);
+  }
+
+  if (process.env.VITE_MCP_URL !== EXPECTED_MCP_URL) {
+    throw new Error(`VITE_MCP_URL must be ${EXPECTED_MCP_URL}; received ${process.env.VITE_MCP_URL || 'unset'}.`);
   }
 
   if (deploy) {

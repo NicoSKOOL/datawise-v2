@@ -34,6 +34,7 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: 510d0ac03a3a8f5ebeac39be4926ed77
       VITE_API_URL: https://datawise-api.nico-510.workers.dev
+      VITE_MCP_URL: https://mcp.datawiseseo.com
     steps:
       - name: Checkout
         uses: actions/checkout@v4

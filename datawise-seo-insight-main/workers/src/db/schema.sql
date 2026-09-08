@@ -806,3 +806,47 @@ CREATE TABLE IF NOT EXISTS ai_check_brands (
   FOREIGN KEY (check_id) REFERENCES ai_visibility_checks(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_ai_check_brands_check ON ai_check_brands(check_id);
+
+-- ---------------------------------------------------------------------------
+-- MCP server (workers/src/mcp). Personal API tokens for the datawise-mcp
+-- worker, the per-day DataForSEO dollar ledger, and a per-call log.
+-- Spec: docs/superpowers/specs/2026-09-07-datawise-mcp-server-design.md
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  token_hash    TEXT NOT NULL UNIQUE,
+  token_suffix  TEXT NOT NULL,
+  scopes        TEXT NOT NULL DEFAULT 'read',
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at  TEXT,
+  expires_at    TEXT,
+  revoked_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+-- One row per user per UTC day. A new day means a new row, so there is no
+-- rollover. user_id '_global' is the whole-server row.
+CREATE TABLE IF NOT EXISTS mcp_usage_daily (
+  user_id   TEXT NOT NULL,
+  day       TEXT NOT NULL,
+  cost_usd  REAL NOT NULL DEFAULT 0,
+  calls     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS mcp_calls (
+  id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id     TEXT NOT NULL,
+  tool        TEXT NOT NULL,
+  cost_usd    REAL NOT NULL DEFAULT 0,
+  cached      INTEGER NOT NULL DEFAULT 0,
+  ok          INTEGER NOT NULL DEFAULT 1,
+  duration_ms INTEGER,
+  auth_kind   TEXT NOT NULL,
+  client_name TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_user_day ON mcp_calls(user_id, created_at);

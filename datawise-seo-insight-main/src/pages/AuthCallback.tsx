@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { setSessionToken } from '@/lib/api';
+import { consumeReturnTo } from '@/lib/return-to';
 
 // Handles the redirect from Google OAuth callback
 // The worker redirects to /auth/callback?token=xxx
@@ -14,7 +15,7 @@ export default function AuthCallback() {
 
     if (token) {
       setSessionToken(token);
-      navigate('/', { replace: true });
+      navigate(consumeReturnTo() ?? '/', { replace: true });
     } else {
       navigate(`/auth?error=${error || 'unknown'}`, { replace: true });
     }

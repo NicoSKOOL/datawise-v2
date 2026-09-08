@@ -82,6 +82,54 @@ npm run deploy     # → wrangler deploy → datawise-api (no env flag)
 
 DO NOT use `npm run deploy:production` for the worker — see `~/.claude/projects/-Users-nicolasgorrono-Desktop-DataWise-V2/memory/reference_deployment.md` for the naming trap (creates an orphan `datawise-api-production` worker).
 
+## MCP worker (`datawise-mcp`) deploys
+
+The MCP server for ChatGPT / Claude is a second worker built from the same
+`workers/` tree (`src/mcp/`, config `wrangler.mcp.toml`). Public URL
+`https://mcp.datawiseseo.com`, endpoint `/mcp`. Spec:
+`docs/superpowers/specs/2026-09-07-datawise-mcp-server-design.md`.
+
+```sh
+cd datawise-seo-insight-main/workers
+npm run deploy:mcp     # → wrangler deploy -c wrangler.mcp.toml → datawise-mcp
+```
+
+Rules:
+- If `src/db/schema.sql` changed, run the remote D1 migration first (see the
+  D1 section below). The MCP worker shares `datawise-db` with `datawise-api`.
+- Secrets live in the Cloudflare dashboard on the `datawise-mcp` worker:
+  `DATAFORSEO_EMAIL`, `DATAFORSEO_PASSWORD`, `ENCRYPTION_KEY`. Set them there,
+  not with `wrangler secret put` (empty-paste trap).
+- Kill switch: `mcp-paused` key in KV namespace `2302e0b0369842e799b5f4a144d6dce4`
+  (any value). Early access: `mcp-allowlist` = comma-separated emails.
+  Budgets: `mcp-user-cap-cents` (default 400), `mcp-global-cap-cents` (default 10000).
+
+```sh
+# pause / unpause
+npx wrangler kv key put --namespace-id 2302e0b0369842e799b5f4a144d6dce4 mcp-paused 1
+npx wrangler kv key delete --namespace-id 2302e0b0369842e799b5f4a144d6dce4 mcp-paused
+```
+
+Rollback: `npx wrangler rollback -c wrangler.mcp.toml` (pick the previous
+version), or redeploy the last good tag.
+
+Health: `curl -s https://mcp.datawiseseo.com/health` → `{"ok":true,"service":"datawise-mcp"}`.
+
+#### OAuth (stage 2)
+
+The worker is also the OAuth 2.1 authorization server for `mcp.datawiseseo.com` (library `@cloudflare/workers-oauth-provider`).
+
+- KV namespace `OAUTH_KV` (dedicated; id in `wrangler.mcp.toml`). Holds hashed grant tokens, grants and registered clients. Never point it at the main KV.
+- Compatibility flag `global_fetch_strictly_public` is required for Client ID Metadata Documents (claude.ai). Do not remove it.
+- No new secrets. `MCP_PUBLIC_URL` must equal the host requests arrive on (audience check); production is `https://mcp.datawiseseo.com`.
+- Endpoints: `/authorize` (ours, redirects to the SPA `/connect`), `/oauth/token`, `/oauth/register`, `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` (library).
+- Consent stash: main KV `mcp_authreq:<nonce>`, 10 minutes.
+- Local: `workers/.dev.vars` (never committed) with `MCP_PUBLIC_URL=http://localhost:8788` and `FRONTEND_URL=http://localhost:8080`, then `npm run dev:mcp` and the SPA on :8080. The dev:mcp script passes --host localhost:8788 because wrangler dev would otherwise present requests as http://mcp.datawiseseo.com (the custom-domain route) and the OAuth issuer and audience checks would fail locally.
+- Kill switch `mcp-paused` also blocks consent (Approve returns 403).
+- Rollback: `npm run deploy:mcp` from the previous commit. Existing grants keep working across deploys because state is in KV.
+- Order: the SPA (Pages) must be live with the /connect route before deploy:mcp, otherwise /authorize sends members to a NotFound page.
+- Clients registered through /oauth/register (Dynamic Client Registration, the ChatGPT path) expire after 90 days (library default) and the daily sweep then revokes their grants; the member reconnects from the assistant. Claude uses Client ID Metadata Documents and is not affected.
+
 ## Rollback (Pages)
 
 If a deploy goes wrong, rollback via Cloudflare API (wrangler CLI does not support Pages rollback):
