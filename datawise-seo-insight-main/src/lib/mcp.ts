@@ -26,6 +26,37 @@ export interface McpUsage {
   max_tokens: number;
 }
 
+export interface McpGrant {
+  id: string;
+  client_id: string;
+  client_name: string;
+  created_at: string;
+  scope: string[];
+}
+
+export interface AuthorizeRequestInfo {
+  client_name: string;
+  client_uri: string | null;
+  redirect_host: string;
+  loopback: boolean;
+  scope: string[];
+  email: string;
+  access: boolean;
+  denial: McpUsage['denial'];
+  denial_message: string | null;
+}
+
+export class McpApiError extends Error {
+  status: number;
+  code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = 'McpApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
 interface McpApiOptions {
   method?: string;
   body?: unknown;
@@ -43,7 +74,7 @@ export async function mcpApi<T = unknown>(path: string, options: McpApiOptions =
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({})) as { message?: string; error?: string };
-    throw new Error(data.message || data.error || `Request failed (${response.status})`);
+    throw new McpApiError(data.message || data.error || `Request failed (${response.status})`, response.status, data.error ?? null);
   }
   return response.json() as Promise<T>;
 }
@@ -69,4 +100,32 @@ export function createMcpToken(name: string): Promise<McpToken & { token: string
 
 export async function revokeMcpToken(id: string): Promise<void> {
   await mcpApi(`/account/tokens/${id}`, { method: 'DELETE' });
+}
+
+// Stage 2: OAuth sign-in from Claude Code. No token in the command; Claude
+// Code opens the browser for consent when you run /mcp.
+export function claudeCodeOauthCommand(): string {
+  return `claude mcp add --transport http datawise ${MCP_SERVER_URL}`;
+}
+
+export const MCP_GRANTS_KEY = ['mcp', 'grants'] as const;
+
+export function useMcpGrants() {
+  return useQuery({ queryKey: MCP_GRANTS_KEY, queryFn: () => mcpApi<{ grants: McpGrant[] }>('/account/grants').then((r) => r.grants) });
+}
+
+export async function revokeMcpGrant(id: string): Promise<void> {
+  await mcpApi(`/account/grants/${id}`, { method: 'DELETE' });
+}
+
+export function getAuthorizeRequest(req: string): Promise<AuthorizeRequestInfo> {
+  return mcpApi<AuthorizeRequestInfo>(`/account/authorize-request?req=${encodeURIComponent(req)}`);
+}
+
+export function approveAuthorizeRequest(req: string): Promise<{ redirect_to: string }> {
+  return mcpApi<{ redirect_to: string }>('/account/authorize-request/approve', { method: 'POST', body: { req } });
+}
+
+export function denyAuthorizeRequest(req: string): Promise<{ redirect_to: string }> {
+  return mcpApi<{ redirect_to: string }>('/account/authorize-request/deny', { method: 'POST', body: { req } });
 }
