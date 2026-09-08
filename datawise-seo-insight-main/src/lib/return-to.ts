@@ -17,13 +17,23 @@ function isAppPath(path: string): boolean {
 
 export function setReturnTo(path: string): void {
   if (!isAppPath(path)) return;
-  storage()?.setItem(RETURN_TO_KEY, path);
+  const s = storage();
+  if (!s) return;
+  try {
+    s.setItem(RETURN_TO_KEY, path);
+  } catch {
+    // quota or security error: nothing we can do, just skip storing it
+  }
 }
 
 export function consumeReturnTo(): string | null {
   const s = storage();
   if (!s) return null;
-  const value = s.getItem(RETURN_TO_KEY);
-  s.removeItem(RETURN_TO_KEY);
-  return value && isAppPath(value) ? value : null;
+  try {
+    const value = s.getItem(RETURN_TO_KEY);
+    s.removeItem(RETURN_TO_KEY);
+    return value && isAppPath(value) ? value : null;
+  } catch {
+    return null;
+  }
 }

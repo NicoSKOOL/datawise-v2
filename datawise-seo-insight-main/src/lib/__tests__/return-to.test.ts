@@ -35,4 +35,17 @@ describe('return-to', () => {
     expect(() => setReturnTo('/x')).not.toThrow();
     expect(consumeReturnTo()).toBeNull();
   });
+
+  it('survives a sessionStorage whose calls throw', () => {
+    (globalThis as any).sessionStorage = {
+      getItem: () => { throw new Error('boom'); },
+      setItem: () => { throw new Error('boom'); },
+      removeItem: () => { throw new Error('boom'); },
+      clear: () => { throw new Error('boom'); },
+      key: () => { throw new Error('boom'); },
+      length: 0,
+    } as Storage;
+    expect(() => setReturnTo('/x')).not.toThrow();
+    expect(consumeReturnTo()).toBeNull();
+  });
 });
