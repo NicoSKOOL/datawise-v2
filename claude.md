@@ -47,7 +47,7 @@ The project is being modernized from Supabase to Cloudflare (D1 + KV + Workers).
 - DataForSEO API calls: `src/dataforseo/`
 - DB schema: `src/db/schema.sql`
 - Secrets managed via `wrangler secret put` (see `wrangler.toml` comments)
-- MCP server: `src/mcp/` (separate worker `datawise-mcp`, config `workers/wrangler.mcp.toml`, public URL `https://mcp.datawiseseo.com`). Shares D1 + KV with `datawise-api`. See `DEPLOY.md` "MCP worker".
+- MCP server: `src/mcp/` (separate worker `datawise-mcp`, config `workers/wrangler.mcp.toml`, public URL `https://mcp.datawiseseo.com`). Shares D1 + KV with `datawise-api`. See `DEPLOY.md` "MCP worker". Stage 2 adds OAuth (spec 4.2): the worker is its own authorization server, consent page at SPA `/connect`, grants in `OAUTH_KV`.
 
 ### Legacy Backend (`datawise-seo-insight-main/supabase/`)
 - Edge functions in `supabase/functions/` (being migrated to Workers)

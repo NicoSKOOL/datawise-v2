@@ -115,6 +115,19 @@ version), or redeploy the last good tag.
 
 Health: `curl -s https://mcp.datawiseseo.com/health` → `{"ok":true,"service":"datawise-mcp"}`.
 
+#### OAuth (stage 2)
+
+The worker is also the OAuth 2.1 authorization server for `mcp.datawiseseo.com` (library `@cloudflare/workers-oauth-provider`).
+
+- KV namespace `OAUTH_KV` (dedicated; id in `wrangler.mcp.toml`). Holds hashed grant tokens, grants and registered clients. Never point it at the main KV.
+- Compatibility flag `global_fetch_strictly_public` is required for Client ID Metadata Documents (claude.ai). Do not remove it.
+- No new secrets. `MCP_PUBLIC_URL` must equal the host requests arrive on (audience check); production is `https://mcp.datawiseseo.com`.
+- Endpoints: `/authorize` (ours, redirects to the SPA `/connect`), `/oauth/token`, `/oauth/register`, `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` (library).
+- Consent stash: main KV `mcp_authreq:<nonce>`, 10 minutes.
+- Local: `workers/.dev.vars` (never committed) with `MCP_PUBLIC_URL=http://localhost:8788` and `FRONTEND_URL=http://localhost:8080`, then `npm run dev:mcp` and the SPA on :8080.
+- Kill switch `mcp-paused` also blocks consent (Approve returns 403).
+- Rollback: `npm run deploy:mcp` from the previous commit. Existing grants keep working across deploys because state is in KV.
+
 ## Rollback (Pages)
 
 If a deploy goes wrong, rollback via Cloudflare API (wrangler CLI does not support Pages rollback):
