@@ -18,7 +18,7 @@
 - Deploy only with `npm run deploy:mcp`. Never `npm run deploy:production`.
 - Public URL `https://mcp.datawiseseo.com`. Canonical resource `https://mcp.datawiseseo.com/mcp`. Authorization server issuer `https://mcp.datawiseseo.com`.
 - OAuth endpoints: `/authorize` (ours), `/oauth/token` and `/oauth/register` (library), `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` (library).
-- Single scope `read`. Access token TTL 3600 s. Refresh token TTL library default (30 days). CIMD and DCR both enabled. PKCE S256 only (library default).
+- Single grant scope `read`. Authorization server metadata also advertises `offline_access` (Claude asks for a refresh token only when it is listed); resource metadata lists `read` only. Access token TTL 3600 s. Refresh token TTL library default (30 days). CIMD and DCR both enabled. PKCE S256 only (library default).
 - The provider's KV binding is `OAUTH_KV` (a dedicated namespace, never the main `KV`). The consent stash lives in the main `KV` under `mcp_authreq:<nonce>`, TTL 600 s.
 - OAuth `props` stored per grant: `{ userId, email, clientName }`. Tools never read the raw token. The MCP bearer is never forwarded anywhere.
 - Every `/mcp` request, either auth kind, still runs the stage 1 gate (`runGated`): kill switch, membership, allowlist, rate, budget, ledger. `authKind` in the ledger is `'oauth'` for provider tokens and `'api_token'` for `dwmcp_` tokens; `client_name` is the OAuth client's name (for example "Claude" or "ChatGPT") or the personal token's name.
@@ -519,7 +519,11 @@ export function oauthOptions(publicUrl: string): OAuthProviderOptions<McpEnv> {
     tokenEndpoint: '/oauth/token',
     // DCR stays on: ChatGPT and older Claude builds fall back to it (spec 2.2).
     clientRegistrationEndpoint: '/oauth/register',
-    scopesSupported: ['read'],
+    // offline_access is advertised only in the authorization server metadata
+    // so Claude asks for a refresh token (claude.com/docs/connectors/building/
+    // authentication). The resource metadata below stays 'read' only, and
+    // grants are always scope ['read'].
+    scopesSupported: ['read', 'offline_access'],
     accessTokenTTL: 3600,
     // CIMD is the preferred registration for claude.ai. Needs the
     // global_fetch_strictly_public compatibility flag (wrangler.mcp.toml).
