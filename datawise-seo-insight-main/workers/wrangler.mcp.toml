@@ -3,7 +3,7 @@
 name = "datawise-mcp"
 main = "src/mcp/index.ts"
 compatibility_date = "2026-07-02"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
 [observability]
 enabled = true
@@ -17,7 +17,7 @@ FRONTEND_URL = "https://datawiseseo.com"
 ADMIN_EMAILS = "nico@airankingskool.com"
 MCP_PUBLIC_URL = "https://mcp.datawiseseo.com"
 # Secrets (set in the Cloudflare dashboard, see memory feedback_cloudflare_secrets_dashboard):
-# DATAFORSEO_EMAIL, DATAFORSEO_PASSWORD, ENCRYPTION_KEY
+# DATAFORSEO_EMAIL, DATAFORSEO_PASSWORD, ENCRYPTION_KEY (no new secrets in stage 2)
 
 # Same database and KV namespace as datawise-api: sessions and users live
 # there, and the dataforseo:* cache must be shared so MCP calls hit it.
@@ -30,6 +30,12 @@ database_id = "b9355723-e02c-4877-8dce-c57cc1965068"
 binding = "KV"
 id = "2302e0b0369842e799b5f4a144d6dce4"
 preview_id = "30288cb442c84e038406b0e174f90398"
+
+# OAuth 2.1 state for @cloudflare/workers-oauth-provider (hashed tokens,
+# grants, registered clients). Dedicated namespace: never the main KV.
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "991a27d75c304529910720aef008ffe7"
 
 # Custom domain on the datawiseseo.com zone. Wrangler creates the DNS record
 # on first deploy. The workers.dev URL keeps working but is never advertised.
