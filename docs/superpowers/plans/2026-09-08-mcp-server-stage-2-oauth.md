@@ -530,7 +530,9 @@ export function oauthOptions(publicUrl: string): OAuthProviderOptions<McpEnv> {
     clientIdMetadataDocumentEnabled: true,
     resourceMetadata: {
       resource: `${publicUrl}/mcp`,
-      authorization_servers: [publicUrl],
+      // authorization_servers is deliberately omitted: the library only
+      // accepts https values there and falls back to the request origin,
+      // which is the issuer in both production and local dev.
       scopes_supported: ['read'],
       resource_name: 'DataWise',
     },
