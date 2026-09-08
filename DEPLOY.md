@@ -127,6 +127,8 @@ The worker is also the OAuth 2.1 authorization server for `mcp.datawiseseo.com` 
 - Local: `workers/.dev.vars` (never committed) with `MCP_PUBLIC_URL=http://localhost:8788` and `FRONTEND_URL=http://localhost:8080`, then `npm run dev:mcp` and the SPA on :8080. The dev:mcp script passes --host localhost:8788 because wrangler dev would otherwise present requests as http://mcp.datawiseseo.com (the custom-domain route) and the OAuth issuer and audience checks would fail locally.
 - Kill switch `mcp-paused` also blocks consent (Approve returns 403).
 - Rollback: `npm run deploy:mcp` from the previous commit. Existing grants keep working across deploys because state is in KV.
+- Order: the SPA (Pages) must be live with the /connect route before deploy:mcp, otherwise /authorize sends members to a NotFound page.
+- Clients registered through /oauth/register (Dynamic Client Registration, the ChatGPT path) expire after 90 days (library default) and the daily sweep then revokes their grants; the member reconnects from the assistant. Claude uses Client ID Metadata Documents and is not affected.
 
 ## Rollback (Pages)
 

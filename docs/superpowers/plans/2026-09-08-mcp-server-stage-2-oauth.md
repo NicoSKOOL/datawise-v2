@@ -1727,8 +1727,9 @@ Open `http://localhost:8080/settings`. "Connected apps" lists "MCP Inspector". C
 
 1. KV namespace `datawise-mcp-OAUTH_KV` already created (its id is in `wrangler.mcp.toml`).
 2. Prod D1 migration from stage 1 (if not yet applied).
-3. `cd datawise-seo-insight-main/workers && npm run deploy:mcp` from clean `production`.
-4. Secrets on `datawise-mcp` in the dashboard (stage 1 list; nothing new).
-5. `mcp-allowlist` KV key with Nico's email.
-6. Verify: the two discovery URLs on `https://mcp.datawiseseo.com`, then add the connector in claude.ai (Settings, Connectors, Add custom connector, `https://mcp.datawiseseo.com/mcp`), sign in, Allow, list rank tracking projects. Repeat in ChatGPT Developer mode and with `claude mcp add --transport http datawise https://mcp.datawiseseo.com/mcp` then `/mcp`.
-7. Tag `prod-$(date -u +%Y-%m-%d-%H%M)`; update memory `project_mcp_server.md`.
+3. Frontend first: merging into production auto-deploys Pages (GitHub Actions). Confirm the live bundle before touching the worker: open https://datawiseseo.com/connect (expect the "This page is opened by your AI assistant" text) and check Settings shows "Connected apps". The consent page must exist before the worker starts redirecting to it.
+4. Then cd datawise-seo-insight-main/workers && npm run deploy:mcp from clean production.
+5. Secrets on `datawise-mcp` in the dashboard (stage 1 list; nothing new).
+6. `mcp-allowlist` KV key with Nico's email.
+7. Verify: the two discovery URLs on `https://mcp.datawiseseo.com`, then add the connector in claude.ai (Settings, Connectors, Add custom connector, `https://mcp.datawiseseo.com/mcp`), sign in, Allow, list rank tracking projects. Repeat in ChatGPT Developer mode and with `claude mcp add --transport http datawise https://mcp.datawiseseo.com/mcp` then `/mcp`.
+8. Tag `prod-$(date -u +%Y-%m-%d-%H%M)`; update memory `project_mcp_server.md`.
