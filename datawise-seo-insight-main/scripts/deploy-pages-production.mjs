@@ -38,6 +38,7 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric red state', 'bg-red-50'],
   ['Blueprint canvas lazy chunk present', 'BlueprintCanvas'],
   ['MCP settings card', 'MCP & AI assistants'],
+  ['MCP connected apps', 'Connected apps'],
   ['Production MCP worker URL', EXPECTED_MCP_URL],
 ];
 const REQUIRED_SOURCE_MARKERS = [

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plug, Loader2, Trash2, Copy, Check, KeyRound } from 'lucide-react';
+import { Plug, Loader2, Trash2, Copy, Check, KeyRound, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from '@/hooks/use-toast';
 import {
   useMcpTokens, useMcpUsage, createMcpToken, revokeMcpToken, claudeCodeCommand,
+  useMcpGrants, revokeMcpGrant, MCP_GRANTS_KEY, claudeCodeOauthCommand,
   MCP_SERVER_URL, MCP_TOKENS_KEY, MCP_USAGE_KEY, type McpUsage,
 } from '@/lib/mcp';
 
@@ -43,6 +44,21 @@ export function McpAccessCard() {
   const queryClient = useQueryClient();
   const { data: tokens = [], isLoading: tokensLoading } = useMcpTokens();
   const { data: usage } = useMcpUsage();
+  const { data: grants = [], isLoading: grantsLoading } = useMcpGrants();
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+
+  const handleDisconnect = async (id: string, clientName: string) => {
+    setDisconnectingId(id);
+    try {
+      await revokeMcpGrant(id);
+      queryClient.invalidateQueries({ queryKey: MCP_GRANTS_KEY });
+      toast({ title: `${clientName} disconnected` });
+    } catch (err) {
+      toast({ title: 'Could not disconnect', description: (err as Error).message, variant: 'destructive' });
+    } finally {
+      setDisconnectingId(null);
+    }
+  };
 
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -95,7 +111,7 @@ export function McpAccessCard() {
           : <Badge variant="secondary">Not available</Badge>)}
       </div>
       <p className="text-sm text-muted-foreground">
-        Use DataWise data (keyword research, competitors, backlinks, rank tracking, AI visibility, Search Console) from Claude Code and other MCP clients. Create a personal token, paste it into your client, and the assistant can call DataWise on your behalf.
+        Use your DataWise data (keyword research, competitors, backlinks, rank tracking, AI visibility, Search Console) from ChatGPT, claude.ai, Claude Desktop, Claude Code and other MCP clients. Add the DataWise connector in the app, sign in with this account, click Allow. Personal tokens are for tools that cannot sign in.
       </p>
 
       {usage && !usage.access && usage.denial && (
@@ -107,6 +123,29 @@ export function McpAccessCard() {
           Today: <span className="font-medium">${usage.spent_usd.toFixed(2)}</span> of {capLabel} daily data budget, {usage.calls} calls. Resets at 00:00 UTC, no rollover.
         </p>
       )}
+
+      <div className="space-y-2">
+        <Label className="flex items-center gap-1"><Link2 className="h-4 w-4" /> Connected apps</Label>
+        {grantsLoading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : grants.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No apps connected yet. Follow the steps below for your assistant.</p>
+        ) : (
+          <ul className="divide-y rounded-md border">
+            {grants.map((g) => (
+              <li key={g.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                <div>
+                  <span className="font-medium">{g.client_name}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">connected {new Date(g.created_at).toLocaleDateString()}, read-only</span>
+                </div>
+                <Button type="button" variant="ghost" size="sm" disabled={disconnectingId === g.id} onClick={() => handleDisconnect(g.id, g.client_name)} aria-label={`Disconnect ${g.client_name}`}>
+                  {disconnectingId === g.id ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Disconnect'}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="space-y-2">
         <Label className="flex items-center gap-1"><KeyRound className="h-4 w-4" /> Personal tokens</Label>
@@ -148,19 +187,38 @@ export function McpAccessCard() {
         {atLimit && <p className="text-xs text-muted-foreground">You have the maximum of {usage?.max_tokens} tokens. Revoke one to create another.</p>}
       </div>
 
-      <Tabs defaultValue="claude-code">
-        <TabsList>
+      <Tabs defaultValue="claude">
+        <TabsList className="flex flex-wrap h-auto">
+          <TabsTrigger value="claude">claude.ai and Claude Desktop</TabsTrigger>
+          <TabsTrigger value="chatgpt">ChatGPT</TabsTrigger>
           <TabsTrigger value="claude-code">Claude Code</TabsTrigger>
           <TabsTrigger value="other">Other MCP clients</TabsTrigger>
         </TabsList>
+        <TabsContent value="claude" className="space-y-2 text-sm">
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Open Settings, then Connectors, and choose Add custom connector.</li>
+            <li>Name: <code>DataWise</code>. Remote MCP server URL: <code>{MCP_SERVER_URL}</code>. Click Continue.</li>
+            <li>A DataWise tab opens. Sign in if asked, then click Allow.</li>
+          </ol>
+          <p className="text-muted-foreground">In a chat, enable DataWise under the tools menu and ask for something like "use DataWise to find keyword ideas for local seo services".</p>
+        </TabsContent>
+        <TabsContent value="chatgpt" className="space-y-2 text-sm">
+          <ol className="list-decimal pl-5 space-y-1">
+            <li>Open Settings, then Connectors, then Advanced, and turn on Developer mode.</li>
+            <li>Back in Connectors choose Create. Name: <code>DataWise</code>. MCP server URL: <code>{MCP_SERVER_URL}</code>. Authentication: OAuth. Click Create.</li>
+            <li>A DataWise tab opens. Sign in if asked, then click Allow.</li>
+          </ol>
+          <p className="text-muted-foreground">In a chat, open the plus menu, choose Developer mode, and tick DataWise. Requires a paid ChatGPT plan.</p>
+        </TabsContent>
         <TabsContent value="claude-code" className="space-y-2 text-sm">
-          <p>Run this once in your terminal, replacing the placeholder with a token from above:</p>
+          <p>Run this once in your terminal, then type <code>/mcp</code> in Claude Code and choose Authenticate. Your browser opens DataWise: sign in if asked and click Allow.</p>
+          <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">{claudeCodeOauthCommand()}</pre>
+          <p className="text-muted-foreground">Prefer a token (for servers or scripts)? Create one above and run:</p>
           <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">{claudeCodeCommand('<your-token>')}</pre>
-          <p className="text-muted-foreground">Then type <code>/mcp</code> in Claude Code to confirm the connection, and ask for something like "use datawise to find keyword ideas for local seo services".</p>
         </TabsContent>
         <TabsContent value="other" className="space-y-2 text-sm">
-          <p>Server URL: <code>{MCP_SERVER_URL}</code> (Streamable HTTP).</p>
-          <p>Send the header <code>Authorization: Bearer &lt;your-token&gt;</code>. Sign-in with your DataWise account for ChatGPT and claude.ai is coming next.</p>
+          <p>Server URL: <code>{MCP_SERVER_URL}</code> (Streamable HTTP). Clients that support OAuth sign in with your DataWise account automatically.</p>
+          <p>Clients that only accept a static header: create a personal token above and send <code>Authorization: Bearer &lt;your-token&gt;</code>.</p>
         </TabsContent>
       </Tabs>
 
