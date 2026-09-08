@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowRight, LogIn, UserPlus } from 'lucide-react';
+import { consumeReturnTo } from '@/lib/return-to';
 
 type AuthMode = 'login' | 'signup' | null;
 
@@ -48,7 +49,7 @@ export default function Auth() {
   }
 
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={consumeReturnTo() ?? '/'} replace />;
   }
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
