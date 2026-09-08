@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "dev:mcp": "wrangler dev -c wrangler.mcp.toml --port 8788",
+    "dev:mcp": "wrangler dev -c wrangler.mcp.toml --port 8788 --host localhost:8788",
     "deploy": "wrangler deploy",
     "deploy:mcp": "wrangler deploy -c wrangler.mcp.toml",
     "deploy:staging": "wrangler deploy --env staging",

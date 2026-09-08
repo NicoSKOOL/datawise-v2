@@ -124,7 +124,7 @@ The worker is also the OAuth 2.1 authorization server for `mcp.datawiseseo.com` 
 - No new secrets. `MCP_PUBLIC_URL` must equal the host requests arrive on (audience check); production is `https://mcp.datawiseseo.com`.
 - Endpoints: `/authorize` (ours, redirects to the SPA `/connect`), `/oauth/token`, `/oauth/register`, `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` (library).
 - Consent stash: main KV `mcp_authreq:<nonce>`, 10 minutes.
-- Local: `workers/.dev.vars` (never committed) with `MCP_PUBLIC_URL=http://localhost:8788` and `FRONTEND_URL=http://localhost:8080`, then `npm run dev:mcp` and the SPA on :8080.
+- Local: `workers/.dev.vars` (never committed) with `MCP_PUBLIC_URL=http://localhost:8788` and `FRONTEND_URL=http://localhost:8080`, then `npm run dev:mcp` and the SPA on :8080. The dev:mcp script passes --host localhost:8788 because wrangler dev would otherwise present requests as http://mcp.datawiseseo.com (the custom-domain route) and the OAuth issuer and audience checks would fail locally.
 - Kill switch `mcp-paused` also blocks consent (Approve returns 403).
 - Rollback: `npm run deploy:mcp` from the previous commit. Existing grants keep working across deploys because state is in KV.
 
