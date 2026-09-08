@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { CimdFetchError } from '@cloudflare/workers-oauth-provider';
 import { makeMcpTestEnv } from './test-support';
 import { handleAuthorize, readStash, isLoopbackRedirect, AUTHREQ_PREFIX } from './authorize';
 
@@ -6,6 +7,21 @@ const BASE = 'http://localhost:8788';
 
 async function registeredClient(env: any, redirect = 'https://claude.ai/api/mcp/auth_callback') {
   return env.OAUTH_PROVIDER.createClient({ clientName: 'Claude', clientUri: 'https://claude.ai', redirectUris: [redirect], tokenEndpointAuthMethod: 'none' });
+}
+
+// Forces the SECOND lookupClient call in handleAuthorize (the one that
+// fetches display metadata after parseAuthRequest already validated the
+// client) down a chosen path, without disturbing parseAuthRequest's own
+// internal lookupClient call. A plain object spread of env.OAUTH_PROVIDER
+// would lose every method: they live on the class prototype, not as own
+// properties, so `{ ...env.OAUTH_PROVIDER, lookupClient: ... }` silently
+// drops parseAuthRequest too. Binding parseAuthRequest to the real instance
+// keeps its internal `this.lookupClient` pointed at the real, working
+// implementation, while the explicit second call in handleAuthorize hits
+// our override.
+function envWithSecondLookup(env: any, lookupClient: (clientId: string) => Promise<unknown>) {
+  const provider = env.OAUTH_PROVIDER;
+  return { ...env, OAUTH_PROVIDER: { parseAuthRequest: provider.parseAuthRequest.bind(provider), lookupClient } };
 }
 
 function authorizeUrl(clientId: string, redirect: string, responseType = 'code') {
@@ -42,6 +58,28 @@ describe('/authorize', () => {
   it('renders a local 400 for an unknown client (never redirects)', async () => {
     const { env } = makeMcpTestEnv();
     const res = await handleAuthorize(new Request(authorizeUrl('nope', 'https://claude.ai/api/mcp/auth_callback')), env);
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Location')).toBeNull();
+    expect(await res.text()).toContain('DataWise');
+  });
+
+  it('renders a local 400 when the post-parse client lookup returns null (CIMD race)', async () => {
+    const { env } = makeMcpTestEnv();
+    const client = await registeredClient(env);
+    const raced = envWithSecondLookup(env, async () => null);
+    const res = await handleAuthorize(new Request(authorizeUrl(client.clientId, client.redirectUris[0])), raced);
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Location')).toBeNull();
+    expect(await res.text()).toContain('DataWise');
+  });
+
+  it('renders a local 400 when the post-parse client lookup throws CimdFetchError (CIMD race)', async () => {
+    const { env } = makeMcpTestEnv();
+    const client = await registeredClient(env);
+    const raced = envWithSecondLookup(env, async () => {
+      throw new CimdFetchError('https://example.com/client-metadata.json', new Error('metadata document stopped resolving'));
+    });
+    const res = await handleAuthorize(new Request(authorizeUrl(client.clientId, client.redirectUris[0])), raced);
     expect(res.status).toBe(400);
     expect(res.headers.get('Location')).toBeNull();
     expect(await res.text()).toContain('DataWise');

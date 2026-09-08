@@ -32,8 +32,11 @@ export async function readStash(env: McpEnv, req: string): Promise<StashedAuthRe
 }
 
 export async function deleteStash(env: McpEnv, req: string): Promise<void> {
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(req)) return;
   await env.KV.delete(`${AUTHREQ_PREFIX}${req}`);
 }
+
+const CIMD_UNVERIFIABLE_MESSAGE = 'The connecting app could not be verified (its client metadata document could not be fetched).';
 
 // Minimal HTML for errors we must render locally (unknown client, bad
 // redirect). The SPA never sees these; they only appear if a client is broken.
@@ -53,7 +56,7 @@ export async function handleAuthorize(request: Request, env: McpEnv): Promise<Re
   try {
     authRequest = await env.OAUTH_PROVIDER.parseAuthRequest(request);
   } catch (error) {
-    if (error instanceof CimdFetchError) return localError('The connecting app could not be verified (its client metadata document could not be fetched).');
+    if (error instanceof CimdFetchError) return localError(CIMD_UNVERIFIABLE_MESSAGE);
     if (!(error instanceof AuthorizationError)) throw error;
     if (!error.redirectUri) return localError(error.description);
     const redirect = new URL(error.redirectUri);
@@ -64,11 +67,18 @@ export async function handleAuthorize(request: Request, env: McpEnv): Promise<Re
     return Response.redirect(redirect.toString(), 302);
   }
 
+  // parseAuthRequest above already rejected an unregistered client_id, so in
+  // the normal path this second lookup only re-fetches the client to pull
+  // display metadata (clientName, clientUri, logoUri) for the stash. The
+  // null and CimdFetchError branches below are defense-in-depth: a CIMD
+  // client's metadata document can stop resolving in the narrow window
+  // between the two calls, and we still need to fail closed with a local
+  // error rather than stash an incomplete client.
   let client;
   try {
     client = await env.OAUTH_PROVIDER.lookupClient(authRequest.clientId);
   } catch (error) {
-    if (error instanceof CimdFetchError) return localError('The connecting app could not be verified (its client metadata document could not be fetched).');
+    if (error instanceof CimdFetchError) return localError(CIMD_UNVERIFIABLE_MESSAGE);
     throw error;
   }
   if (!client) return localError('Unknown OAuth client.');
