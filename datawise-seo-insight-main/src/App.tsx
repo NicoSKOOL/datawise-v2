@@ -43,6 +43,7 @@ const Backlinks = lazy(() => import('./pages/Backlinks'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const Roadmap = lazy(() => import('./pages/Roadmap'));
+const ConnectPage = lazy(() => import('./pages/ConnectPage'));
 const AdminMembers = lazy(() => import('./pages/AdminMembers'));
 const AdminFeedback = lazy(() => import('./pages/AdminFeedback'));
 const AdminPromoCodes = lazy(() => import('./pages/AdminPromoCodes'));
@@ -161,6 +162,7 @@ const App = () => (
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/connect" element={<Suspense fallback={<RouteLoadingFallback />}><ConnectPage /></Suspense>} />
 
             {/* Protected routes */}
             <Route path="/" element={<ProtectedPage><Dashboard /></ProtectedPage>} />
