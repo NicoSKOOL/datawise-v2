@@ -5,6 +5,7 @@ import { isAllowedFrontendOrigin } from '../auth/origins';
 import { createApiToken, listApiTokens, revokeApiToken, TokenLimitError, MAX_ACTIVE_TOKENS } from './tokens';
 import { loadIdentity, checkAccess } from './access';
 import { readSpent, readCaps, utcDay } from './budget';
+import { handleConsentRequest } from './consent';
 
 function corsHeaders(request: Request, env: McpEnv): Record<string, string> {
   const origin = request.headers.get('Origin') ?? '';
@@ -32,6 +33,9 @@ export async function handleAccountRequest(request: Request, env: McpEnv): Promi
 
   const user = await authMiddleware(request, asWorkerEnv(env));
   if (!user) return json({ error: 'unauthorized' }, 401);
+
+  const consent = await handleConsentRequest(request, env, user, json);
+  if (consent) return consent;
 
   const path = new URL(request.url).pathname;
   const tokenMatch = path.match(/^\/account\/tokens\/([A-Za-z0-9_-]+)$/);
