@@ -121,6 +121,18 @@ describe('runChecksForProject (v2)', () => {
     ]);
   });
 
+  it('gives v2 engines the full 120s DataForSEO live window instead of aborting early', async () => {
+    // DataForSEO documents the live ChatGPT scraper at "up to 120 seconds"; a
+    // 100s client abort turned ordinary slow answers into error rows
+    // (holidaysbeckon.com.au manual run, 2026-09-07 23:06 UTC).
+    const { env } = makeEnv();
+    engineStub.impl = async (_e: unknown, engine: string) => answer({ engine: engine as any });
+    await runChecksForProject(env, project, [{ id: 'q1', query_text: 'x' }], 'manual');
+    const opts = engineStub.calls.map(call => call[4] as { timeoutMs: number });
+    expect(opts.length).toBe(2);
+    for (const o of opts) expect(o.timeoutMs).toBe(120_000);
+  });
+
   it('skips Gemini on the legacy path instead of recording an error', async () => {
     const { env, kv, raw } = makeEnv();
     kv.delete(AI_ENGINES_V2_FLAG);
