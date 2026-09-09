@@ -4,15 +4,28 @@ import type { McpEnv, McpIdentity } from './env';
 import type { ToolContext } from './tools/types';
 import { ALL_TOOLS } from './tools/registry';
 import { runGated } from './gate';
+import { ICON_PNG_SIZE } from './icon';
 
-export const SERVER_INFO = { name: 'datawise', version: '1.0.0' };
+// Implementation metadata sent in the initialize response. claude.ai and
+// other clients show `title`, `websiteUrl` and the first icon on the
+// connector card, so the icon URL must be absolute and publicly reachable.
+export function serverInfo(env: McpEnv) {
+  return {
+    name: 'datawise',
+    title: 'DataWise',
+    version: '1.0.0',
+    description: 'SEO and AI visibility data from your DataWise account.',
+    websiteUrl: 'https://datawiseseo.com',
+    icons: [{ src: `${env.MCP_PUBLIC_URL}/icon.png`, mimeType: 'image/png', sizes: [ICON_PNG_SIZE] }],
+  };
+}
 
 // Every stage 1 tool is a read (spec section 5). ChatGPT and Claude skip the
 // per-call confirmation prompt only when readOnlyHint is true.
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
 
 export function createDataWiseServer(ctx: ToolContext): McpServer {
-  const server = new McpServer(SERVER_INFO);
+  const server = new McpServer(serverInfo(ctx.env));
   for (const tool of ALL_TOOLS) {
     server.registerTool(
       tool.name,

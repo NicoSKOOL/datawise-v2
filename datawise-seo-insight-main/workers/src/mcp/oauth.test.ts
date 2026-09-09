@@ -95,6 +95,19 @@ describe('OAuth provider wiring', () => {
     expect((await worker.fetch(new Request(`${BASE}/nope`), env, ctx)).status).toBe(404);
   });
 
+  it('serves the brand icon as PNG at /icon.png and /favicon.ico', async () => {
+    const { env } = makeMcpTestEnv();
+    for (const path of ['/icon.png', '/favicon.ico']) {
+      const res = await worker.fetch(new Request(`${BASE}${path}`), env, ctx);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/png');
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      // PNG signature: 89 50 4E 47
+      expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+      expect(bytes.length).toBeGreaterThan(1000);
+    }
+  });
+
   it("a revoked grant's unexpired access token gets 401 on /mcp", async () => {
     const { env } = makeMcpTestEnv();
     const userId = await seedUser(env, { email: 'revoke@test.dev' });
