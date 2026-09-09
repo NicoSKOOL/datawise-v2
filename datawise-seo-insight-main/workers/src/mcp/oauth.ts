@@ -4,6 +4,7 @@ import { validateApiToken, TOKEN_PREFIX } from './tokens';
 import { loadIdentity } from './access';
 import { handleMcpRequest } from './server';
 import { handleAccountRequest } from './account';
+import { iconResponse } from './icon';
 import { handleAuthorize } from './authorize';
 
 const json = (data: unknown, status = 200) =>
@@ -40,6 +41,7 @@ export const defaultHandler = {
   async fetch(request: Request, env: McpEnv): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === '/health') return json({ ok: true, service: 'datawise-mcp' });
+    if (path === '/icon.png' || path === '/favicon.ico') return iconResponse();
     if (path.startsWith('/account/')) return handleAccountRequest(request, env);
     if (path === '/authorize') return handleAuthorize(request, env);
     return json({ error: 'not_found' }, 404);
