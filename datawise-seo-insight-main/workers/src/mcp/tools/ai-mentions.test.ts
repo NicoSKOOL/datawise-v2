@@ -60,6 +60,19 @@ describe('datawise_ai_mentions', () => {
     expect(() => aiMentions.inputSchema.parse({ domains: ['a.com'], platform: 'perplexity' })).toThrow();
   });
 
+  it('chatgpt outside United States English returns a clear error without calling DataForSEO', async () => {
+    const { env } = makeMcpTestEnv();
+    (llm.handleAggregate as any).mockClear();
+    (llm.handleCrossAggregate as any).mockClear();
+    const out = await aiMentions.run(aiMentions.inputSchema.parse({ domains: ['a.com'], platform: 'chatgpt', location_code: 2036 }), { env, identity });
+    expect(out.isError).toBe(true);
+    expect((out.content[0] as any).text).toMatch(/United States/);
+    const es = await aiMentions.run(aiMentions.inputSchema.parse({ domains: ['a.com', 'b.com'], platform: 'chatgpt', language_code: 'es' }), { env, identity });
+    expect(es.isError).toBe(true);
+    expect(llm.handleAggregate).not.toHaveBeenCalled();
+    expect(llm.handleCrossAggregate).not.toHaveBeenCalled();
+  });
+
   it('rejects more than 5 domains', () => {
     expect(() => aiMentions.inputSchema.parse({ domains: ['1', '2', '3', '4', '5', '6'].map((n) => `${n}.com`) })).toThrow();
   });
