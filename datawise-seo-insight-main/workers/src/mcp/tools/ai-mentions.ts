@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineTool, localeInputs, domainInput, resolveLocale, shapeFor } from './types';
 import { callJson } from '../call-handler';
-import { toolResult, compact } from '../shape';
+import { toolResult, toolError, compact } from '../shape';
 import { handleAggregate, handleCrossAggregate } from '../../routes/llm-mentions';
 
 const bare = (raw: string) => raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '');
@@ -23,13 +23,20 @@ export const aiMentions = defineTool({
     'Costs about $0.10 per call. Do not use for Google organic rankings or backlinks.',
   inputSchema: z.object({
     domains: z.array(domainInput).min(1).max(5),
-    platform: z.enum(PLATFORMS).default('google').describe('AI platform: google (AI Mode / AI Overviews) or chatgpt. DataForSEO LLM Mentions covers only these two.'),
+    platform: z.enum(PLATFORMS).default('google').describe('AI platform: google (AI Mode / AI Overviews, any supported country) or chatgpt (United States, English only). DataForSEO LLM Mentions covers only these two.'),
     ...localeInputs,
   }),
   async run(args, ctx) {
     const locale = resolveLocale(args, ctx.identity);
     const domains = args.domains.map(bare);
     const platform = dfsPlatform(args.platform);
+    // DataForSEO docs: "chat_gpt data is available for the United States and
+    // English only". Say so plainly instead of surfacing "Invalid Field".
+    if (platform === 'chat_gpt' && (locale.location_code !== 2840 || locale.language_code !== 'en')) {
+      return toolError(
+        `ChatGPT mention data is only available for the United States in English (location_code 2840, language_code en); you asked for location_code ${locale.location_code} and language_code ${locale.language_code}. Use platform google for other countries, or set location_code to 2840 for ChatGPT.`,
+      );
+    }
     const uid = ctx.identity.userId;
     const res = domains.length === 1
       ? await callJson(ctx.env, uid, handleAggregate, { target: targetFor(domains[0]), platform, ...locale })
