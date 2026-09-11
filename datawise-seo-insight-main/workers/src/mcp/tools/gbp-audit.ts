@@ -146,6 +146,35 @@ export const gbpAudit = defineTool({
 
     const cur = report?.current ?? {};
     const prev = report?.previous ?? {};
+
+    // The period report only counts checks inside the window. A project whose
+    // last check is older than the period would read as "0 in the pack" while
+    // the keyword list still shows positions, so fall back to the latest known
+    // positions and say the checks are stale.
+    const kws: any[] = Array.isArray(keywordRows) ? keywordRows : [];
+    const checksInPeriod = kws.length === 0 || (cur.total_keywords ?? 0) === 0 || (cur.in_pack ?? 0) > 0 || (cur.distribution?.not_in_pack ?? 0) > 0;
+    const lastCheckedAt = kws.map((k) => k.checked_at).filter(Boolean).sort().at(-1) ?? null;
+    const fromLatest = (() => {
+      const ranked = kws.map((k) => k.pack_position).filter((p): p is number => typeof p === 'number');
+      const dist = { top3: 0, top10: 0, top20: 0, not_in_pack: kws.length - ranked.length };
+      for (const p of ranked) { if (p <= 3) dist.top3++; else if (p <= 10) dist.top10++; else dist.top20++; }
+      let improved = 0, declined = 0, stable = 0;
+      for (const k of kws) {
+        const a = k.pack_position, b = k.prev_pack_position;
+        if (typeof a !== 'number' || typeof b !== 'number') stable++;
+        else if (a < b) improved++; else if (a > b) declined++; else stable++;
+      }
+      return {
+        tracked_keywords: kws.length,
+        in_pack: ranked.length,
+        avg_pack_position: ranked.length ? Math.round((ranked.reduce((s, p) => s + p, 0) / ranked.length) * 10) / 10 : null,
+        distribution: dist, improved, declined, stable,
+      };
+    })();
+    const pack = checksInPeriod
+      ? { tracked_keywords: cur.total_keywords ?? 0, in_pack: cur.in_pack ?? 0, avg_pack_position: cur.avg_pack_position ?? null, distribution: cur.distribution ?? null, improved: cur.improved ?? 0, declined: cur.declined ?? 0, stable: cur.stable ?? 0 }
+      : fromLatest;
+
     const out = {
       project: { id: project.id, name: project.name, business_name: project.business_name, place_id: project.place_id, domain: project.domain, location_code: locationCode },
       profile: profile ? pick(profile, PROFILE_FIELDS) : null,
@@ -153,15 +182,11 @@ export const gbpAudit = defineTool({
       profile_error: profileError,
       local_pack: {
         period_days: args.period,
-        tracked_keywords: cur.total_keywords ?? 0,
-        in_pack: cur.in_pack ?? 0,
-        avg_pack_position: cur.avg_pack_position ?? null,
-        previous_avg_pack_position: prev.avg_pack_position ?? null,
-        distribution: cur.distribution ?? null,
-        improved: cur.improved ?? 0,
-        declined: cur.declined ?? 0,
-        stable: cur.stable ?? 0,
-        keywords: compact((Array.isArray(keywordRows) ? keywordRows : []).map((k: any) => ({
+        checks_in_period: checksInPeriod,
+        last_checked_at: lastCheckedAt,
+        ...pack,
+        previous_avg_pack_position: checksInPeriod ? (prev.avg_pack_position ?? null) : null,
+        keywords: compact(kws.map((k: any) => ({
           keyword: k.keyword,
           pack_position: k.pack_position ?? null,
           prev_position: k.prev_pack_position ?? null,
@@ -183,6 +208,7 @@ export const gbpAudit = defineTool({
       `GBP audit for ${project.business_name ?? project.name}: ` +
         (out.profile_completeness ? `profile ${out.profile_completeness.score_pct}% complete` + (missing.length ? ` (missing ${missing.join(', ')})` : '') : 'profile unavailable') +
         `, ${out.local_pack.in_pack}/${out.local_pack.tracked_keywords} keywords in the pack` +
+        (checksInPeriod ? '' : ` (no checks in the last ${args.period} days, last checked ${lastCheckedAt ?? 'unknown'})`) +
         (geoGrid ? `, geo-grid ${geoGrid.found_points}/${geoGrid.total_points} points.` : ', no geo-grid scan yet.'),
     );
   },

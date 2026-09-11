@@ -160,6 +160,37 @@ describe('datawise_gbp_audit', () => {
     expect(s.local_pack.in_pack).toBe(4);
   });
 
+  it('falls back to latest known positions when no checks landed inside the period', async () => {
+    const { env } = makeMcpTestEnv();
+    await seedProject(env);
+    // Period report sees no rows in the window (project last checked long ago)
+    // but the keyword list still carries the latest positions.
+    (local.handleLocalProjectReport as any).mockImplementationOnce(async () => json({
+      current: { total_keywords: 6, in_pack: 0, avg_pack_position: null, avg_rating: null, total_reviews: null, distribution: { top3: 0, top10: 0, top20: 0, not_in_pack: 0 }, improved: 0, declined: 0, stable: 0 },
+      previous: { total_keywords: 6, in_pack: 0, avg_pack_position: null, avg_rating: null, total_reviews: null, distribution: { top3: 0, top10: 0, top20: 0, not_in_pack: 0 }, improved: 0, declined: 0, stable: 0 },
+      velocity: { current: null, previous: null }, trend: [],
+    }));
+    (local.handleLocalKeywords as any).mockImplementationOnce(async () => json([
+      { id: 'k1', keyword: 'a', pack_position: 1, prev_pack_position: 1, checked_at: '2026-03-01' },
+      { id: 'k2', keyword: 'b', pack_position: 5, prev_pack_position: 6, checked_at: '2026-03-01' },
+      { id: 'k3', keyword: 'c', pack_position: 12, prev_pack_position: 9, checked_at: '2026-03-01' },
+      { id: 'k4', keyword: 'd', pack_position: null, prev_pack_position: null, checked_at: '2026-03-01' },
+    ]));
+    const out = await gbpAudit.run(gbpAudit.inputSchema.parse({ project_id: 'lp1' }), { env, identity });
+    const s = out.structuredContent as any;
+    expect(s.local_pack.in_pack).toBe(3);
+    expect(s.local_pack.avg_pack_position).toBe(6);
+    expect(s.local_pack.distribution).toEqual({ top3: 1, top10: 1, top20: 1, not_in_pack: 1 });
+    expect(s.local_pack.improved).toBe(1);
+    expect(s.local_pack.declined).toBe(1);
+    expect(s.local_pack.checks_in_period).toBe(false);
+    expect(s.local_pack.last_checked_at).toBe('2026-03-01');
+    // Tracked count comes from the keyword list (4), not the stale report (6).
+    expect(s.local_pack.tracked_keywords).toBe(4);
+    expect((out.content[0] as any).text).toMatch(/3\/4 keywords in the pack/);
+    expect((out.content[0] as any).text).toMatch(/last checked 2026-03-01/);
+  });
+
   it('reports no geo-grid scan when the project has none', async () => {
     const { env } = makeMcpTestEnv();
     await seedProject(env, { id: 'lp2' });
