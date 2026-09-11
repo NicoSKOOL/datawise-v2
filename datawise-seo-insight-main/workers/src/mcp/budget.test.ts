@@ -25,6 +25,12 @@ describe('estimateCostUsd', () => {
     expect(estimateCostUsd('datawise_local_reviews', { limit: 100 })).toBeCloseTo(0.0204, 6);
     expect(estimateCostUsd('datawise_rank_tracking', {})).toBe(0);
     expect(estimateCostUsd('datawise_search_console', {})).toBe(0);
+    // PAA: the handler makes 1 / 10 / 25 SERP calls at depth 1 / 2 / 3, $0.003 each.
+    expect(estimateCostUsd('datawise_people_also_ask', { depth: 1 })).toBeCloseTo(0.003, 6);
+    expect(estimateCostUsd('datawise_people_also_ask', {})).toBeCloseTo(0.03, 6);
+    expect(estimateCostUsd('datawise_people_also_ask', { depth: 3 })).toBeCloseTo(0.075, 6);
+    // GBP audit reads stored data plus one profile lookup (KV-cached 24h).
+    expect(estimateCostUsd('datawise_gbp_audit', {})).toBeCloseTo(0.0054, 6);
     expect(estimateCostUsd('unknown_tool', {})).toBeCloseTo(0.05, 6);
   });
 });

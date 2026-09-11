@@ -15,6 +15,7 @@ const LLM_REQUEST = 0.1;
 const LLM_ROW = 0.001;
 const GBP_INFO = 0.0054;
 const REVIEWS_PER_10 = 0.0015;
+const SERP_TASK = 0.003;
 const UNKNOWN_TOOL_ESTIMATE = 0.05;
 
 export function utcDay(now: Date = new Date()): string {
@@ -58,6 +59,14 @@ export function estimateCostUsd(tool: string, args: Record<string, unknown>): nu
     }
     case 'datawise_local_reviews':
       return GBP_INFO + REVIEWS_PER_10 * (num(args.limit, 20) / 10);
+    case 'datawise_people_also_ask': {
+      // routes/ai.ts handlePeopleAlsoAsk caps SERP calls at 1 / 10 / 25 by depth.
+      const depth = num(args.depth, 2);
+      return SERP_TASK * (depth <= 1 ? 1 : depth === 2 ? 10 : 25);
+    }
+    case 'datawise_gbp_audit':
+      // Stored data plus one my_business_info lookup, KV-cached for a day.
+      return GBP_INFO;
     case 'datawise_rank_tracking':
     case 'datawise_ai_visibility':
     case 'datawise_search_console':

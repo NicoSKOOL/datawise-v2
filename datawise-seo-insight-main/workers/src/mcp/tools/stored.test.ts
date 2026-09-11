@@ -146,10 +146,11 @@ describe('datawise_search_console', () => {
 });
 
 describe('registry', () => {
-  it('exposes twelve uniquely named datawise_ tools', () => {
+  it('exposes fourteen uniquely named datawise_ tools, new ones appended', () => {
     const names = ALL_TOOLS.map((t) => t.name);
-    expect(names).toHaveLength(12);
-    expect(new Set(names).size).toBe(12);
+    expect(names).toHaveLength(14);
+    expect(new Set(names).size).toBe(14);
+    expect(names.slice(-2)).toEqual(['datawise_people_also_ask', 'datawise_gbp_audit']);
     for (const n of names) expect(n.startsWith('datawise_')).toBe(true);
   });
 });
