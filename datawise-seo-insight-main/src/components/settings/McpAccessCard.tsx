@@ -111,7 +111,7 @@ export function McpAccessCard() {
           : <Badge variant="secondary">Not available</Badge>)}
       </div>
       <p className="text-sm text-muted-foreground">
-        Use your DataWise data (keyword research, competitors, backlinks, rank tracking, AI visibility, Search Console) from ChatGPT, claude.ai, Claude Desktop, Claude Code and other MCP clients. Add the DataWise connector in the app, sign in with this account, click Allow. Personal tokens are for tools that cannot sign in.
+        Use your DataWise data (keyword research, People Also Ask, competitors, backlinks, rank tracking, AI visibility, Search Console, Local Pack audits) from ChatGPT, claude.ai, Claude Desktop, Claude Code and other MCP clients. Add the DataWise connector in the app, sign in with this account, click Allow. Personal tokens are for tools that cannot sign in.
       </p>
 
       {usage && !usage.access && usage.denial && (
