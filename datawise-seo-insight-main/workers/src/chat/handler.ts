@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
+import { WEIGHTED_POSITION, WEIGHTED_CTR } from '../gsc/metrics-sql';
 import { getChatOutputLanguageInstruction } from '../llm/output-language';
 import { detectPageUrl, fetchPageData, classifyPageType, analyzeBlogContent, analyzeServicePage, formatPageAnalysis, getTopPageUrls, getPageQueries } from './page-analyzer';
 
@@ -199,17 +200,17 @@ async function buildGSCContext(env: Env, userId: string, propertyId: string): Pr
 
   // Accurate period summaries from daily total rows (never truncated by API limits)
   const summary7d = await env.DB.prepare(`
-    SELECT SUM(clicks) as clicks, SUM(impressions) as impressions, ROUND(AVG(position), 1) as avg_position
+    SELECT SUM(clicks) as clicks, SUM(impressions) as impressions, ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-7 days')
   `).bind(propertyId).first();
 
   const summary30d = await env.DB.prepare(`
-    SELECT SUM(clicks) as clicks, SUM(impressions) as impressions, ROUND(AVG(position), 1) as avg_position
+    SELECT SUM(clicks) as clicks, SUM(impressions) as impressions, ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-30 days')
   `).bind(propertyId).first();
 
   const summary90d = await env.DB.prepare(`
-    SELECT SUM(clicks) as clicks, SUM(impressions) as impressions, ROUND(AVG(position), 1) as avg_position
+    SELECT SUM(clicks) as clicks, SUM(impressions) as impressions, ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__'
   `).bind(propertyId).first();
 
@@ -231,7 +232,7 @@ async function buildGSCContext(env: Env, userId: string, propertyId: string): Pr
   // Top queries last 30 days (from most recent 30-day batch)
   const topQueries30d = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as position, ROUND(AVG(ctr) * 100, 1) as ctr_pct
+           ROUND(${WEIGHTED_POSITION}, 1) as position, ROUND(${WEIGHTED_CTR} * 100, 1) as ctr_pct
     FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query ORDER BY clicks DESC LIMIT 50
   `).bind(propertyId).all();
@@ -239,7 +240,7 @@ async function buildGSCContext(env: Env, userId: string, propertyId: string): Pr
   // Top pages (from query+page batch data)
   const topPages = await env.DB.prepare(`
     SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as position
+           ROUND(${WEIGHTED_POSITION}, 1) as position
     FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY page ORDER BY clicks DESC LIMIT 20
   `).bind(propertyId).all();
@@ -247,20 +248,20 @@ async function buildGSCContext(env: Env, userId: string, propertyId: string): Pr
   // Striking distance opportunities
   const opportunities = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as position, ROUND(AVG(ctr) * 100, 1) as ctr_pct
+           ROUND(${WEIGHTED_POSITION}, 1) as position, ROUND(${WEIGHTED_CTR} * 100, 1) as ctr_pct
     FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query
-    HAVING AVG(position) BETWEEN 4 AND 15 AND SUM(impressions) > 30
+    HAVING ${WEIGHTED_POSITION} BETWEEN 4 AND 15 AND SUM(impressions) > 30
     ORDER BY impressions DESC LIMIT 30
   `).bind(propertyId).all();
 
   // Low CTR keywords
   const lowCtr = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as position, ROUND(AVG(ctr) * 100, 1) as ctr_pct
+           ROUND(${WEIGHTED_POSITION}, 1) as position, ROUND(${WEIGHTED_CTR} * 100, 1) as ctr_pct
     FROM gsc_search_data WHERE property_id = ? AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query
-    HAVING SUM(impressions) > 100 AND AVG(ctr) < 0.02
+    HAVING SUM(impressions) > 100 AND ${WEIGHTED_CTR} < 0.02
     ORDER BY impressions DESC LIMIT 20
   `).bind(propertyId).all();
 
