@@ -198,9 +198,14 @@ export default {
       return;
     }
 
-    // Weekly AI visibility tracking run (Monday 06:00 UTC).
-    if (event.cron === '0 6 * * 1') {
-      await runScheduledAIChecks(env);
+    // Daily AI visibility tracking slice (06:00 UTC). Weekly cadence per
+    // query, spread over seven ticks: one Monday run could only finish ~100
+    // of 800+ tracked queries before the 15-minute cron wall and the rest
+    // were silently dropped (2026-09-16: 714 of 827 queries had no scheduled
+    // check in 3 weeks). Same absolute deadline discipline as the GSC sync,
+    // with 3 minutes of headroom for a 120s engine call plus its retry.
+    if (event.cron === '0 6 * * *') {
+      await runScheduledAIChecks(env, tickStart + 12 * 60 * 1000);
       return;
     }
 

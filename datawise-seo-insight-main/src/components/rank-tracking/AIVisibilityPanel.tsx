@@ -101,7 +101,7 @@ export default function AIVisibilityPanel({ project, trackedKeywords }: AIVisibi
     try {
       setData(await updateAISettings(project.id, { enabled }));
       if (enabled) {
-        toast({ title: 'AI tracking enabled', description: 'Queries are checked automatically every Monday. Your first check runs as soon as you have queries tracked.' });
+        toast({ title: 'AI tracking enabled', description: 'Queries are checked automatically every week. Your first check runs as soon as you have queries tracked.' });
       }
     } catch (err: unknown) {
       toast({ title: 'Error', description: getErrorMessage(err), variant: 'destructive' });
