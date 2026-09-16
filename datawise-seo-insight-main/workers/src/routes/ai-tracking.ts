@@ -36,6 +36,13 @@ const V2_QUERY_CONCURRENCY = 5;
 // Hard ceiling on engine calls per scheduled run, so a runaway project list
 // can never blow up the DataForSEO bill or the cron's subrequest budget.
 const MAX_CHECKS_PER_SCHEDULED_RUN = 1000;
+// Weekly cadence per query: a query scheduled-checked within this window is
+// not due. 6 days (not 7) so a daily tick never skips a query because last
+// week's check landed a few minutes later in the day.
+export const SCHEDULED_RECHECK_DAYS = 6;
+// Default wall-clock budget when the caller passes no deadline (manual admin
+// trigger). Cron ticks pass an absolute deadline measured from tick start.
+const DEFAULT_RUN_BUDGET_MS = 12 * 60 * 1000;
 // Skip-if-fresh: a query+engine checked in the last 24h is not re-checked.
 const FRESHNESS_HOURS = 24;
 // KV kill switch: set any value at this key to pause all scheduled AI checks.
@@ -307,14 +314,17 @@ export async function runChecksForProject(
   project: ProjectRow,
   queries: QueryRow[],
   runType: 'scheduled' | 'manual',
-  budget?: { remaining: number }
-): Promise<{ checks: number; cited: number; mentioned: number; retrieved: number; errors: number; skipped_fresh: number }> {
+  budget?: { remaining: number },
+  deadline?: number
+): Promise<{ checks: number; cited: number; mentioned: number; retrieved: number; errors: number; skipped_fresh: number; deferred: number }> {
   const v2 = await isEnginesV2Enabled(env);
   // The legacy path has no Gemini adapter: skip it rather than write error rows.
   const engines = projectEngines(project).filter(e => v2 || e !== 'gemini');
   const brandTerms = parseJsonArray(project.ai_brand_terms) || defaultBrandTerms(project);
   const locale = await resolveProjectLocale(env, project);
-  const summary = { checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0 };
+  // deferred = queries planned but not run because the wall-clock deadline
+  // passed; they stay due and lead the next tick.
+  const summary = { checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0, deferred: 0 };
   if (!queries.length || !engines.length) return summary;
 
   // One D1 read covers freshness for every query+engine in this project.
@@ -383,12 +393,20 @@ export async function runChecksForProject(
     }
   };
 
+  // The deadline is checked between dispatches, never mid-flight: a batch that
+  // has started always finishes and persists, so a tick killed at the cron
+  // wall can only lose work it never began.
+  const pastDeadline = () => deadline != null && Date.now() >= deadline;
   if (v2) {
     for (let i = 0; i < plan.length; i += V2_QUERY_CONCURRENCY) {
+      if (pastDeadline()) { summary.deferred += plan.length - i; break; }
       await Promise.all(plan.slice(i, i + V2_QUERY_CONCURRENCY).map(processQuery));
     }
   } else {
-    for (const item of plan) await processQuery(item);
+    for (let i = 0; i < plan.length; i++) {
+      if (pastDeadline()) { summary.deferred += plan.length - i; break; }
+      await processQuery(plan[i]);
+    }
   }
 
   return summary;
@@ -458,47 +476,118 @@ async function persistV2Check(
 
 // --- Cron entry -----------------------------------------------------------
 
-export async function runScheduledAIChecks(env: Env): Promise<void> {
+export interface ScheduledRunTotals {
+  projects_due: number;
+  projects: number;
+  queries_due: number;
+  checks: number;
+  cited: number;
+  mentioned: number;
+  retrieved: number;
+  errors: number;
+  skipped_fresh: number;
+  deferred_queries: number;
+  deferred_projects: number;
+}
+
+// One daily slice of the weekly tracker. Runs under an absolute wall-clock
+// deadline (the cron wall is 15 minutes) and a per-run check budget.
+//
+// Due = an active query in an enabled project with no scheduled check in the
+// last SCHEDULED_RECHECK_DAYS. Projects are ordered stalest first (a project
+// with a never-checked query leads), so whatever a tick cannot finish is at
+// the front of the next one instead of being dropped. Before this, one weekly
+// tick walked an unordered project list with no time limit: the same handful
+// of projects won every week and the rest never ran (2026-09-16: 714 of 827
+// active queries had no scheduled check in three weeks).
+//
+// Manual checks do not count as scheduled coverage: they are user-triggered
+// extras, and counting them would let one "Check now" on a single query
+// postpone the whole project by a week.
+export async function runScheduledAIChecks(env: Env, deadline: number = Date.now() + DEFAULT_RUN_BUDGET_MS): Promise<ScheduledRunTotals | null> {
   const paused = await env.KV.get(PAUSE_KEY);
   if (paused) {
     console.log('AI tracking: paused via KV kill switch, skipping scheduled run');
-    return;
+    return null;
   }
 
-  const { results: projects } = await env.DB.prepare(
-    'SELECT id, user_id, name, domain, ai_tracking_enabled, ai_brand_terms, ai_engines, location_code FROM seo_projects WHERE ai_tracking_enabled = 1'
-  ).all() as { results: ProjectRow[] };
+  const recheckWindow = `-${SCHEDULED_RECHECK_DAYS} days`;
+  const dueQueryFilter = `
+    q.is_active = 1 AND NOT EXISTS (
+      SELECT 1 FROM ai_visibility_checks c
+      WHERE c.query_id = q.id AND c.run_type = 'scheduled'
+        AND c.checked_at >= datetime('now', ?)
+    )`;
+
+  // Per project: how many queries are due and the oldest scheduled check
+  // among them (NULL when a due query was never checked). Sort NULLs first,
+  // then oldest, then project age, so the order is deterministic and stable.
+  const { results: projects } = await env.DB.prepare(`
+    SELECT p.id, p.user_id, p.name, p.domain, p.ai_tracking_enabled, p.ai_brand_terms, p.ai_engines, p.location_code,
+           d.due_count, d.stalest_at
+    FROM seo_projects p
+    JOIN (
+      SELECT q.project_id,
+             COUNT(*) AS due_count,
+             MIN(COALESCE((SELECT MAX(c2.checked_at) FROM ai_visibility_checks c2
+                           WHERE c2.query_id = q.id AND c2.run_type = 'scheduled'), '')) AS stalest_at
+      FROM ai_tracked_queries q
+      WHERE ${dueQueryFilter}
+      GROUP BY q.project_id
+    ) d ON d.project_id = p.id
+    WHERE p.ai_tracking_enabled = 1
+    ORDER BY d.stalest_at ASC, p.created_at ASC, p.id ASC
+  `).bind(recheckWindow).all() as { results: (ProjectRow & { due_count: number; stalest_at: string })[] };
+
+  const totals: ScheduledRunTotals = {
+    projects_due: projects?.length || 0, projects: 0,
+    queries_due: (projects || []).reduce((n, p) => n + Number(p.due_count || 0), 0),
+    checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0,
+    deferred_queries: 0, deferred_projects: 0,
+  };
 
   if (!projects?.length) {
-    console.log('AI tracking: no projects enabled');
-    return;
+    console.log('AI tracking: nothing due this tick');
+    return totals;
   }
 
   const budget = { remaining: MAX_CHECKS_PER_SCHEDULED_RUN };
-  let totals = { projects: 0, checks: 0, cited: 0, mentioned: 0, retrieved: 0, errors: 0, skipped_fresh: 0 };
 
-  for (const project of projects) {
-    if (budget.remaining <= 0) {
-      console.warn(`AI tracking: per-run check budget exhausted; ${projects.length - totals.projects} project(s) deferred to next run`);
+  for (let i = 0; i < projects.length; i++) {
+    const project = projects[i];
+    if (Date.now() >= deadline) {
+      totals.deferred_projects = projects.length - i;
+      totals.deferred_queries += projects.slice(i).reduce((n, p) => n + Number(p.due_count || 0), 0);
+      console.warn(`AI tracking: time budget reached; ${totals.deferred_projects} due project(s) roll to the next tick`);
       break;
     }
-    const { results: queries } = await env.DB.prepare(
-      'SELECT id, query_text FROM ai_tracked_queries WHERE project_id = ? AND is_active = 1 ORDER BY created_at ASC LIMIT ?'
-    ).bind(project.id, MAX_AI_QUERIES_PER_PROJECT).all() as { results: QueryRow[] };
+    if (budget.remaining <= 0) {
+      totals.deferred_projects = projects.length - i;
+      totals.deferred_queries += projects.slice(i).reduce((n, p) => n + Number(p.due_count || 0), 0);
+      console.warn(`AI tracking: per-run check budget exhausted; ${totals.deferred_projects} due project(s) roll to the next tick`);
+      break;
+    }
+    // Only the due queries, oldest tracked first, so a project whose slice
+    // was cut short last tick resumes with the ones it missed.
+    const { results: queries } = await env.DB.prepare(`
+      SELECT q.id, q.query_text FROM ai_tracked_queries q
+      WHERE q.project_id = ? AND ${dueQueryFilter}
+      ORDER BY q.created_at ASC, q.id ASC LIMIT ?
+    `).bind(project.id, recheckWindow, MAX_AI_QUERIES_PER_PROJECT).all() as { results: QueryRow[] };
 
-    const summary = await runChecksForProject(env, project, queries || [], 'scheduled', budget);
-    totals = {
-      projects: totals.projects + 1,
-      checks: totals.checks + summary.checks,
-      cited: totals.cited + summary.cited,
-      mentioned: totals.mentioned + summary.mentioned,
-      retrieved: totals.retrieved + summary.retrieved,
-      errors: totals.errors + summary.errors,
-      skipped_fresh: totals.skipped_fresh + summary.skipped_fresh,
-    };
+    const summary = await runChecksForProject(env, project, queries || [], 'scheduled', budget, deadline);
+    totals.projects += 1;
+    totals.checks += summary.checks;
+    totals.cited += summary.cited;
+    totals.mentioned += summary.mentioned;
+    totals.retrieved += summary.retrieved;
+    totals.errors += summary.errors;
+    totals.skipped_fresh += summary.skipped_fresh;
+    totals.deferred_queries += summary.deferred;
   }
 
-  console.log(`AI tracking weekly run: ${JSON.stringify({ ...totals, projects_skipped_by_budget: projects.length - totals.projects })}`);
+  console.log(`AI tracking daily slice: ${JSON.stringify(totals)}`);
+  return totals;
 }
 
 // --- Routes -----------------------------------------------------------------

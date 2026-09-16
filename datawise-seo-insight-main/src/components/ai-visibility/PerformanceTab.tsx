@@ -123,7 +123,7 @@ export default function PerformanceTab() {
           <div>
             <p className="font-semibold">Start tracking AI search visibility for {primaryDomain}</p>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              One click sets up the tracking project. Then add the queries you care about, and they are checked every Monday across Google AI Mode, ChatGPT, Gemini and Perplexity.
+              One click sets up the tracking project. Then add the queries you care about, and they are checked automatically every week across Google AI Mode, ChatGPT, Gemini and Perplexity.
             </p>
           </div>
           <Button onClick={setUpTracking} disabled={creating}>

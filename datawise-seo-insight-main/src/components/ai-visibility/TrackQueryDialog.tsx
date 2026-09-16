@@ -54,7 +54,7 @@ export default function TrackQueryDialog({ query, onOpenChange, defaultDomain }:
       } else if (result.added === 0) {
         toast({ title: 'Already tracked', description: 'This query is already in that project.' });
       } else {
-        toast({ title: 'Query tracked', description: 'It will be checked every Monday. Open the Performance tab to run a check now.' });
+        toast({ title: 'Query tracked', description: 'It will be checked automatically within the week. Open the Performance tab to run a check now.' });
       }
       onOpenChange(false);
     } catch (err) {
@@ -74,7 +74,7 @@ export default function TrackQueryDialog({ query, onOpenChange, defaultDomain }:
         <DialogHeader>
           <DialogTitle>Track this query weekly</DialogTitle>
           <DialogDescription>
-            "{query?.trim()}" will be checked every Monday across your enabled AI engines, and its history will appear in the Performance tab.
+            "{query?.trim()}" will be checked automatically every week across your enabled AI engines, and its history will appear in the Performance tab.
             AI answers change from day to day, so a query that mentioned you in the past may not in a fresh check; tracking is how you see the real week-to-week picture.
           </DialogDescription>
         </DialogHeader>
