@@ -147,5 +147,33 @@ export async function handleKeywordOverview(request: Request, env: Env): Promise
     language_code,
   }], { ttlSeconds: LABS_TTL_SECONDS });
 
+  await fillMissingKeywordDifficulty(env, data, location_code, language_code);
+
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// keyword_overview only carries keyword_properties.keyword_difficulty when
+// DataForSEO has precomputed it for that keyword + location + language. For
+// long-tail or non-US seeds it comes back null, and the Overview tab showed a
+// dash for the one metric people search the tab for (bug 7d3588e0). The
+// bulk_keyword_difficulty endpoint computes it on demand from the live SERP,
+// so ask it for the seed when the overview left the field empty. Best-effort:
+// a failure here never fails the overview.
+export async function fillMissingKeywordDifficulty(env: Env, data: any, location_code: number, language_code: string): Promise<boolean> {
+  const item = data?.tasks?.[0]?.result?.[0]?.items?.[0];
+  if (!item || item.keyword_properties?.keyword_difficulty != null) return false;
+  try {
+    const kd = await dataforseoRequestCached(env, '/dataforseo_labs/google/bulk_keyword_difficulty/live', [{
+      keywords: [item.keyword],
+      location_code,
+      language_code,
+    }], { ttlSeconds: LABS_TTL_SECONDS });
+    const value = kd?.tasks?.[0]?.result?.[0]?.items?.[0]?.keyword_difficulty;
+    if (typeof value !== 'number') return false;
+    item.keyword_properties = { ...(item.keyword_properties || {}), keyword_difficulty: value, keyword_difficulty_source: 'bulk_keyword_difficulty' };
+    return true;
+  } catch (e) {
+    console.error('bulk_keyword_difficulty fallback failed:', e);
+    return false;
+  }
 }

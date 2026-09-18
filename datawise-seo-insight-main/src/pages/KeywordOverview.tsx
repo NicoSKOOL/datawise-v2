@@ -11,6 +11,7 @@ import { KeywordMetricBadge, KeywordMetricLabel } from "@/components/KeywordMetr
 import { formatKeywordMetricValue } from "@/lib/keyword-metrics";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordOverview } from "@/lib/dataforseo";
+import { resolveKeywordLocale } from "@/lib/keyword-script";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 import { ExportMenu } from "@/components/export/ExportMenu";
@@ -31,10 +32,20 @@ export default function KeywordOverview() {
     setMetrics(null);
     
     try {
+      // Non-Latin seeds only return data in their own language and market.
+      const { location: requestLocation, language: requestLanguage, switched } = resolveKeywordLocale(keyword.trim(), { location, language });
+      if (switched) {
+        setLocation(requestLocation);
+        setLanguage(requestLanguage);
+        toast({
+          title: `Searching in ${switched.languageLabel} (${switched.locationLabel})`,
+          description: "This keyword is not in Latin script, so DataForSEO only has data for it in its own language and market. Change the selectors if you meant another market.",
+        });
+      }
       const data: any = await fetchKeywordOverview({
         keyword: keyword.trim(),
-        location_code: parseInt(location),
-        language_code: language
+        location_code: parseInt(requestLocation),
+        language_code: requestLanguage
       });
 
       if (data?.tasks?.[0]?.result?.[0]?.items?.[0]) {
@@ -48,7 +59,7 @@ export default function KeywordOverview() {
           search_volume: item.keyword_info?.search_volume || 0,
           cpc: item.keyword_info?.cpc || 0,
           competition: item.keyword_info?.competition || 0,
-          keyword_difficulty: item.keyword_properties?.keyword_difficulty || 0
+          keyword_difficulty: item.keyword_properties?.keyword_difficulty ?? null
         };
 
         setResults([cleanedResult]);
