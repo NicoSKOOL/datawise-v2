@@ -66,9 +66,13 @@ export default function KeywordIdeas() {
           description: `Found ${cleanedResults.length} keyword ideas`,
         });
       } else {
+        // Ideas matches by product/service category, so a specific compound
+        // phrase can come back empty even when the phrase itself has volume
+        // (verified 2026-09-18 with a Thai roofing seed: 0 ideas, 12,871 for
+        // the shorter head term, and Suggestions/Related return the phrase).
         toast({
-          title: "No results",
-          description: "No keyword ideas found for this term",
+          title: "No keyword ideas for this term",
+          description: "Ideas works from product and service categories. Try a shorter head term here, or the Suggestions and Related tabs, which search for the phrase itself.",
         });
       }
     } catch (error: any) {
