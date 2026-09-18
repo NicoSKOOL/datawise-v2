@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordSuggestions } from "@/lib/dataforseo";
+import { resolveKeywordLocale } from "@/lib/keyword-script";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 
@@ -36,10 +37,20 @@ export default function KeywordSuggestions() {
     setResults([]);
     
     try {
+      // Non-Latin seeds only return data in their own language and market.
+      const { location: requestLocation, language: requestLanguage, switched } = resolveKeywordLocale(keyword.trim(), { location, language });
+      if (switched) {
+        setLocation(requestLocation);
+        setLanguage(requestLanguage);
+        toast({
+          title: `Searching in ${switched.languageLabel} (${switched.locationLabel})`,
+          description: "This keyword is not in Latin script, so DataForSEO only has data for it in its own language and market. Change the selectors if you meant another market.",
+        });
+      }
       const data: any = await fetchKeywordSuggestions({
         keyword: keyword.trim(),
-        location_code: parseInt(location),
-        language_code: language,
+        location_code: parseInt(requestLocation),
+        language_code: requestLanguage,
         limit: parseInt(limit)
       });
 
