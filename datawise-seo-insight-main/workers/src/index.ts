@@ -156,7 +156,7 @@ import {
 } from './routes/content-writer';
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
-import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
+import { checkAndDeductCredit, creditCostForRoute, refundCredit, shouldRefundCredit } from './middleware/credits';
 import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
 import { syncResendContacts } from './email/resend-contacts';
@@ -481,20 +481,37 @@ export default {
           }, 403));
         }
         gatedCreditCost = cost;
-        const response = await handler();
-        // Append credit info to successful JSON responses
+        // A credit pays for a result, not an attempt: give it back when the
+        // handler throws, errors, or returns an empty DataForSEO result.
+        const refund = async () => {
+          if (result.unlimited) return;
+          try { await refundCredit(env, user.id, cost); } catch (e) { console.error('credit refund failed:', e); }
+        };
+        let response: Response;
+        try {
+          response = await handler();
+        } catch (e) {
+          await refund();
+          throw e;
+        }
+        // Append credit info to JSON responses
         if (response.headers.get('Content-Type')?.includes('application/json')) {
           const body = await response.json() as Record<string, unknown>;
+          const refunded = shouldRefundCredit(response.status, body);
+          if (refunded) await refund();
+          const creditsUsed = refunded && !result.unlimited ? result.credits_used - cost : result.credits_used;
           body._credits = {
-            credits_used: result.credits_used,
+            credits_used: creditsUsed,
             credits_limit: result.credits_limit,
             unlimited: result.unlimited,
+            ...(refunded ? { refunded: true } : {}),
           };
           return addCors(new Response(JSON.stringify(body), {
             status: response.status,
             headers: { 'Content-Type': 'application/json' },
           }));
         }
+        if (response.status >= 400) await refund();
         return addCors(response);
       };
 

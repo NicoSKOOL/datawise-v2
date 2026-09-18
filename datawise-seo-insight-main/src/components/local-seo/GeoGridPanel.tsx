@@ -22,6 +22,12 @@ interface GeoGridPanelProps {
 export default function GeoGridPanel({ projectId, businessName, keywords }: GeoGridPanelProps) {
   const { toast } = useToast();
   const [keyword, setKeyword] = useState('');
+  // Custom-keyword mode is its own flag. It used to be the sentinel string
+  // '__custom__' stored in `keyword`, and the revealed input was rendered only
+  // while keyword === '__custom__' with a hardcoded value="", so the first
+  // keystroke replaced the sentinel, unmounted the input and lost the
+  // character (bug f182d4dd).
+  const [customMode, setCustomMode] = useState(false);
   const [gridSize, setGridSize] = useState('7');
   const [radiusKm, setRadiusKm] = useState('3');
   const [scanning, setScanning] = useState(false);
@@ -162,7 +168,13 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
             <div className="sm:col-span-1">
               <Label className="text-xs">Keyword</Label>
               {keywords.length > 0 ? (
-                <Select value={keyword} onValueChange={setKeyword}>
+                <Select
+                  value={customMode ? '__custom__' : keyword}
+                  onValueChange={v => {
+                    if (v === '__custom__') { setCustomMode(true); setKeyword(''); }
+                    else { setCustomMode(false); setKeyword(v); }
+                  }}
+                >
                   <SelectTrigger className="h-9 text-sm">
                     <SelectValue placeholder="Select keyword..." />
                   </SelectTrigger>
@@ -181,10 +193,10 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
                   className="h-9 text-sm"
                 />
               )}
-              {keyword === '__custom__' && (
+              {keywords.length > 0 && customMode && (
                 <Input
                   placeholder="Type keyword..."
-                  value=""
+                  value={keyword}
                   onChange={e => setKeyword(e.target.value)}
                   className="h-9 text-sm mt-1"
                   autoFocus
@@ -222,7 +234,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
             <div className="flex items-end gap-2">
               <Button
                 onClick={handleScan}
-                disabled={scanning || !keyword.trim() || keyword === '__custom__'}
+                disabled={scanning || !keyword.trim()}
                 className="h-9 flex-1"
               >
                 {scanning ? (
