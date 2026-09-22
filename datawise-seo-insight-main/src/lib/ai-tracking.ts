@@ -144,7 +144,10 @@ export async function fetchAIAnswer(checkId: number) {
 
 // --- Project selection ------------------------------------------------------
 
-export function cleanTrackingDomain(value: string): string {
+// Rank projects created from a Maps listing have no domain (null from D1), so
+// callers filtering projects by domain must not crash on them.
+export function cleanTrackingDomain(value: string | null | undefined): string {
+  if (!value) return '';
   return value.replace(/^(sc-domain:|https?:\/\/)/, '').replace(/^www\./, '').replace(/\/+$/, '').toLowerCase();
 }
 

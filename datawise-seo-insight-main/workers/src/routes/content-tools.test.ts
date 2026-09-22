@@ -44,3 +44,61 @@ describe('detectBotChallenge', () => {
     expect(detectBotChallenge(html)).toBe(false);
   });
 });
+
+import { buildSectionPrompt, resolveSectionOutputControls } from './content-tools';
+
+const GERMAN_PAGE =
+  'Wir sind Ihr zuverlässiger Partner für die Reinigung von Büros und Praxen in München. ' +
+  'Unser Team arbeitet mit umweltfreundlichen Mitteln und ist für Sie da, wenn Sie uns brauchen. ' +
+  'Die Qualität unserer Arbeit ist uns wichtig, und wir sind stolz auf die vielen zufriedenen Kunden, ' +
+  'die uns seit Jahren vertrauen. Wir bieten auch eine kostenlose Beratung an und kommen gerne zu Ihnen.';
+
+describe('buildSectionPrompt', () => {
+  it('uses the dedicated template for a known section type', () => {
+    const prompt = buildSectionPrompt({ section_type: 'why_choose_us', service_type: 'plumbing', location: 'Austin, TX' });
+    expect(prompt).toContain('"Why Choose Us" section for a plumbing business in Austin, TX');
+  });
+
+  // Bug b6ad2cd6: the analysis suggested a "privacy" section and Generate
+  // returned 400 "Unknown section type".
+  it('falls back to a label-driven prompt for section types the analysis invented', () => {
+    const prompt = buildSectionPrompt({
+      section_type: 'privacy_data_protection',
+      section_label: 'Privacy & Data Protection',
+      why_needed: 'Clients share sensitive documents.',
+      service_type: 'tax advisory',
+      location: 'Berlin',
+    });
+    expect(prompt).toContain('"Privacy & Data Protection" section for a tax advisory business in Berlin');
+    expect(prompt).toContain('Why this section matters on this page: Clients share sensitive documents.');
+    expect(prompt).not.toMatch(/{[A-Z_]+}/);
+  });
+
+  it('humanizes the section type when no label is sent', () => {
+    const prompt = buildSectionPrompt({ section_type: 'service_area' });
+    expect(prompt).toContain('"Service area" section');
+    expect(prompt).not.toContain('Why this section matters');
+  });
+
+  it('appends a capped page excerpt so the model writes in the page language', () => {
+    const prompt = buildSectionPrompt({ section_type: 'how_we_work', page_sample: 'x'.repeat(5000) });
+    expect(prompt).toContain('same language as this excerpt');
+    expect(prompt.length).toBeLessThan(5000);
+  });
+});
+
+describe('resolveSectionOutputControls', () => {
+  // Bug 77158dad: German page, German analysis, English generated copy.
+  it('infers German from the page sample when no language is set', () => {
+    expect(resolveSectionOutputControls({ section_type: 'x', page_sample: GERMAN_PAGE })).toEqual({ language: 'de-DE' });
+  });
+
+  it('keeps an explicit language over the page sample', () => {
+    const controls = { language: 'fr-FR' };
+    expect(resolveSectionOutputControls({ section_type: 'x', page_sample: GERMAN_PAGE, content_output_controls: controls })).toBe(controls);
+  });
+
+  it('leaves controls unset when the page language cannot be detected', () => {
+    expect(resolveSectionOutputControls({ section_type: 'x', page_sample: 'short' })).toBeUndefined();
+  });
+});
