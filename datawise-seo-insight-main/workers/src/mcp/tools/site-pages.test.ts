@@ -72,4 +72,63 @@ describe('datawise_site_pages', () => {
     expect(estimateCostUsd('datawise_site_pages', { max_pages: 15 })).toBeCloseTo(0.03, 5);
     expect(estimateCostUsd('datawise_site_pages', { max_pages: 25, urls: ['a', 'b'] })).toBeCloseTo(0.05, 5);
   });
+
+  it('does not treat a plain Organization schema block as LocalBusiness', async () => {
+    const { env } = makeMcpTestEnv();
+    mocks.fetchPage.mockImplementation(async (_env: unknown, url: string) => {
+      if (url === 'https://acme.com.au/') return facts(url, { schema: [{ '@type': 'Organization', name: 'Acme' }] });
+      return facts(url);
+    });
+    const out = await sitePages.run(sitePages.inputSchema.parse({ url: 'https://acme.com.au', max_pages: 3 }), { env, identity });
+    const s = out.structuredContent as any;
+    expect(s.site_facts.local_business_schema).toBeNull();
+    expect(out.content[0].text).toContain('LocalBusiness schema no');
+  });
+
+  it('still recognizes a LocalBusiness subtype like Plumber', async () => {
+    const { env } = makeMcpTestEnv();
+    const out = await sitePages.run(sitePages.inputSchema.parse({ url: 'https://acme.com.au', max_pages: 3 }), { env, identity });
+    const s = out.structuredContent as any;
+    expect(s.site_facts.local_business_schema['@type']).toBe('Plumber');
+    expect(out.content[0].text).toContain('LocalBusiness schema yes');
+  });
+
+  it('excludes a fetch_failed, non-blocked page from blocked_urls and site_facts rollups but counts it as skipped', async () => {
+    const { env } = makeMcpTestEnv();
+    mocks.fetchPage.mockImplementation(async (_env: unknown, url: string) => {
+      if (url === 'https://acme.com.au/') return facts(url, { nav_links: [{ anchor: 'Contact', url: 'https://acme.com.au/contact' }] });
+      if (url === 'https://acme.com.au/contact') return facts(url, { fetch_failed: true, blocked: false, body_text: null, phones: ['999 999 999'], addresses: ['999 Unique St'] });
+      return facts(url);
+    });
+    const out = await sitePages.run(sitePages.inputSchema.parse({ url: 'https://acme.com.au', max_pages: 2 }), { env, identity });
+    const s = out.structuredContent as any;
+    expect(s.pages.map((p: any) => p.url)).toContain('https://acme.com.au/contact');
+    expect(s.blocked_urls).toEqual([]);
+    expect(s.skipped_urls_count).toBe(1);
+    expect(s.site_facts.phones.some((p: any) => p.value === '999 999 999')).toBe(false);
+    expect(s.site_facts.addresses.some((a: any) => a.value === '999 Unique St')).toBe(false);
+  });
+
+  it('stops fetching once the wall-clock deadline has passed and returns a fetch_failed placeholder', async () => {
+    const { env } = makeMcpTestEnv();
+    let calls = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      calls++;
+      // Call 1 captures the deadline, call 2 is the first in-loop check
+      // (still within budget); everything from call 3 on is past the 60s
+      // deadline, simulating time passing after the first non-home page.
+      return calls <= 2 ? 1_000_000 : 1_000_000 + 61_000;
+    });
+    try {
+      const out = await sitePages.run(sitePages.inputSchema.parse({ url: 'https://acme.com.au', max_pages: 3 }), { env, identity });
+      const s = out.structuredContent as any;
+      const fetchedUrls = mocks.fetchPage.mock.calls.map((c: any[]) => c[1]);
+      expect(fetchedUrls).toEqual(['https://acme.com.au/', 'https://acme.com.au/contact']);
+      const skipped = s.pages.find((p: any) => p.url === 'https://acme.com.au/services/hot-water');
+      expect(skipped.fetch_failed).toBe(true);
+      expect(skipped.blocked).toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });

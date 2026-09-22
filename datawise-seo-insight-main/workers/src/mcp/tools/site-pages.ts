@@ -3,14 +3,19 @@ import { defineTool, shapeFor } from './types';
 import { asWorkerEnv } from '../env';
 import { toolResult, toolError, compact } from '../shape';
 import { siteOrigin, normalizeSiteUrl, rankSiteUrls, discoverSitemapUrls, type UrlCandidate } from '../../site/discover';
-import { fetchSitePage, mapLimit } from '../../site/fetch-page';
-import type { PageFacts } from '../../site/extract';
+import { fetchSitePage, failedPageFacts, mapLimit } from '../../site/fetch-page';
+import { LOCAL_BUSINESS_TYPES, type PageFacts } from '../../site/extract';
 
 // The business website as structured data, so the model can compare it with
 // the Google Business Profile: NAP on every page, hours, LocalBusiness
 // schema, and which services have a page. Data only, no judgement.
 
 const CONCURRENCY = 5;
+// Wall-clock budget for the whole tool call: at most 8s direct + 8s
+// DataForSEO fallback per page, 25 pages at 5-way concurrency can otherwise
+// run to ~80s. Pages not started before the deadline come back as a
+// fetch_failed placeholder instead of being fetched.
+export const SITE_PAGES_DEADLINE_MS = 60_000;
 
 function countValues(pages: PageFacts[], pick: (p: PageFacts) => string[]): Array<{ value: string; pages: number }> {
   const counts = new Map<string, number>();
@@ -21,7 +26,7 @@ function countValues(pages: PageFacts[], pick: (p: PageFacts) => string[]): Arra
 function firstLocalBusiness(pages: PageFacts[]): Record<string, any> | null {
   for (const p of pages) for (const s of p.schema) {
     const types = Array.isArray(s['@type']) ? s['@type'] : [s['@type']];
-    if (types.some((t: unknown) => typeof t === 'string' && !/^(Service|Product|FAQPage|BreadcrumbList|OpeningHoursSpecification|PostalAddress)$/.test(t))) return s;
+    if (types.some((t: unknown) => typeof t === 'string' && LOCAL_BUSINESS_TYPES.test(t))) return s;
   }
   return null;
 }
@@ -38,6 +43,7 @@ export const sitePages = defineTool({
     response_format: z.enum(['concise', 'detailed']).default('concise').describe('concise returns about 3,000 characters of body text per page; detailed about 8,000.'),
   }),
   async run(args, ctx) {
+    const deadline = Date.now() + SITE_PAGES_DEADLINE_MS;
     const env = asWorkerEnv(ctx.env);
     const shape = shapeFor(args.response_format);
     const bodyChars = args.response_format === 'detailed' ? 8000 : 3000;
@@ -70,7 +76,11 @@ export const sitePages = defineTool({
         .filter((u): u is string => u != null),
     ).size;
 
-    const pages = await mapLimit(selected, CONCURRENCY, async (u) => (u === homeUrl ? home : fetchSitePage(env, u, { bodyChars, timeoutMs: 8000 })));
+    const pages = await mapLimit(selected, CONCURRENCY, async (u) => {
+      if (u === homeUrl) return home;
+      if (Date.now() > deadline) return failedPageFacts(u);
+      return fetchSitePage(env, u, { bodyChars, timeoutMs: 8000 });
+    });
     const usable = pages.filter((p) => !p.fetch_failed && !p.blocked);
     const blockedUrls = pages.filter((p) => p.blocked).map((p) => p.url);
     const skipped = pages.filter((p) => p.fetch_failed && !p.blocked).length;

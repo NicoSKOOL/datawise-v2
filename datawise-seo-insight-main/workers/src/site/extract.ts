@@ -24,6 +24,13 @@ export interface PageFacts {
   body_text: string | null;
 }
 
+// LocalBusiness and its named subtypes only, for a POSITIVE match against
+// "is this node actually a LocalBusiness". Deliberately excludes the wider
+// jsonLd() capture list below (Organization, Service, Product, FAQPage,
+// BreadcrumbList, OpeningHoursSpecification, PostalAddress), which are kept
+// around for extraction but are not themselves LocalBusiness.
+export const LOCAL_BUSINESS_TYPES = /^(LocalBusiness|Plumber|Electrician|Dentist|Attorney|Physician|MedicalBusiness|HomeAndConstructionBusiness|AutoRepair|Restaurant|Store|ProfessionalService|LegalService|FinancialService|HealthAndBeautyBusiness|SportsActivityLocation|LodgingBusiness|FoodEstablishment|RealEstateAgent|RoofingContractor|HVACBusiness|MovingCompany|Locksmith|GeneralContractor|HousePainter|Florist|Bakery|Cafe|BarOrPub|Hotel|Gym|HairSalon|BeautySalon|DaySpa|Pharmacy|VeterinaryCare|ChildCare|School|EducationalOrganization|Church|TravelAgency|InsuranceAgency|AccountingService|EmploymentAgency|AutoDealer|AutoWash|GasStation|DryCleaningOrLaundry|SelfStorage|PetStore|AnimalShelter|LandscapingBusiness|PestControl|CleaningService)$/;
+
 const LOCAL_TYPES = /^(LocalBusiness|Organization|Service|Product|FAQPage|BreadcrumbList|OpeningHoursSpecification|PostalAddress|Plumber|Electrician|Dentist|Attorney|Physician|MedicalBusiness|HomeAndConstructionBusiness|AutoRepair|Restaurant|Store|ProfessionalService|LegalService|FinancialService|HealthAndBeautyBusiness|SportsActivityLocation|LodgingBusiness|FoodEstablishment|RealEstateAgent|RoofingContractor|HVACBusiness|MovingCompany|Locksmith|GeneralContractor|HousePainter|Florist|Bakery|Cafe|BarOrPub|Hotel|Gym|HairSalon|BeautySalon|DaySpa|Pharmacy|VeterinaryCare|ChildCare|School|EducationalOrganization|Church|TravelAgency|InsuranceAgency|AccountingService|EmploymentAgency|AutoDealer|AutoWash|GasStation|DryCleaningOrLaundry|SelfStorage|PetStore|AnimalShelter|LandscapingBusiness|PestControl|CleaningService)$/;
 
 const ENTITIES: Record<string, string> = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'", '&#x27;': "'", '&nbsp;': ' ', '&#8211;': '-', '&ndash;': '-', '&#8212;': '-', '&mdash;': '-', '&rsquo;': "'", '&#8217;': "'" };
