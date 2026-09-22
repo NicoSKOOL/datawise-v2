@@ -7,6 +7,12 @@ describe('siteOrigin + normalizeSiteUrl', () => {
     expect(siteOrigin('http://www.acme.com.au')).toBe('http://www.acme.com.au');
     expect(siteOrigin('not a url at all')).toBeNull();
   });
+  it('rejects private and internal hosts via the SSRF guard', () => {
+    expect(siteOrigin('http://192.168.1.10/')).toBeNull();
+    expect(siteOrigin('http://169.254.169.254/latest')).toBeNull();
+    expect(siteOrigin('http://localhost:8080')).toBeNull();
+    expect(normalizeSiteUrl('http://10.0.0.5/x', 'acme.com.au')).toBeNull();
+  });
   it('keeps same-host html pages and drops junk', () => {
     const h = 'acme.com.au';
     expect(normalizeSiteUrl('https://acme.com.au/services/#top', h)).toBe('https://acme.com.au/services');
@@ -43,6 +49,9 @@ describe('scoring and ranking', () => {
     expect(scoreSiteUrl('https://a.com/anything', null, true)).toBe(60);
     expect(scoreSiteUrl('https://a.com/blog/2024/post', null, false)).toBe(5);
     expect(scoreSiteUrl('https://a.com/random', null, false)).toBe(10);
+    // A blog page reached via nav is still a blog page: the blog penalty
+    // must outrank the generic fromNav score.
+    expect(scoreSiteUrl('https://a.com/blog', 'Blog', true)).toBe(5);
   });
   it('ranks explicit urls first, then by score, deduplicated and capped', () => {
     const out = rankSiteUrls([

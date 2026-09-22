@@ -2,6 +2,8 @@
 // homepage, contact, about, services, locations. Sitemap and robots are
 // fetched directly from the Worker (free). Ranking is a pure function.
 
+import { assertPublicWebTarget } from '../blueprint/domain/url';
+
 export interface UrlCandidate { url: string; anchor?: string | null; fromNav?: boolean }
 
 const SKIP_EXT = /\.(pdf|jpe?g|png|gif|webp|svg|ico|css|js|json|xml|txt|zip|mp4|mp3|docx?|xlsx?|pptx?)$/i;
@@ -14,7 +16,9 @@ export function siteOrigin(input: string): string | null {
   try {
     const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
     if (!u.hostname.includes('.')) return null;
-    return `${u.protocol}//${u.host}`;
+    const origin = `${u.protocol}//${u.host}`;
+    assertPublicWebTarget(origin); // throws on private/internal/garbage targets
+    return origin;
   } catch { return null; }
 }
 
@@ -34,6 +38,7 @@ export function normalizeSiteUrl(raw: string, host: string): string | null {
   for (const key of [...u.searchParams.keys()]) if (TRACKING_PARAMS.test(key)) u.searchParams.delete(key);
   let out = u.toString();
   if (u.pathname !== '/' && u.pathname.endsWith('/') && !u.search) out = out.replace(/\/$/, '');
+  try { assertPublicWebTarget(out); } catch { return null; }
   return out;
 }
 
@@ -60,8 +65,8 @@ export function scoreSiteUrl(url: string, anchor: string | null, fromNav: boolea
   if (CONTACT.test(path) || /^(contact|about)( us)?$/.test(a)) return 90;
   if (LOCATION.test(path) || LOCATION.test(a)) return 70;
   if (SERVICE.test(path) || SERVICE.test(a)) return 80;
-  if (fromNav) return 60;
   if (BLOG.test(path)) return 5;
+  if (fromNav) return 60;
   return 10;
 }
 

@@ -1,7 +1,8 @@
 // Direct Worker fetch first (free). DataForSEO content_parsing when the site
 // refuses us or serves a bot challenge. Facts are cached per URL for a day.
-import { dataforseoRequestCached, type DataForSeoEnv } from '../dataforseo/client';
+import { dataforseoRequestCached, DataForSeoQuotaError, type DataForSeoEnv } from '../dataforseo/client';
 import { detectBotChallenge } from '../blueprint/domain/bot-challenge';
+import { assertPublicWebTarget } from '../blueprint/domain/url';
 import { extractPageFacts, extractPhones, extractAddresses, extractHoursLines, type PageFacts } from './extract';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36 DataWiseBot/1.0 (+https://datawiseseo.com)';
@@ -26,6 +27,14 @@ function failed(url: string, statusCode: number | null, source: 'direct' | 'data
     title: null, meta_description: null, canonical: null, headings: { h1: [], h2: [], h3: [] }, phones: [], addresses: [], hours_text: [],
     schema: [], nav_links: [], service_terms: [], word_count: 0, body_text: null,
   };
+}
+
+// A failed-fetch placeholder for a URL that was never fetched at all, for
+// example one skipped because datawise_site_pages ran past its wall-clock
+// deadline. Not blocked: a bot wall was never encountered, the URL simply
+// wasn't tried.
+export function failedPageFacts(url: string): PageFacts {
+  return failed(url, null, 'direct', false);
 }
 
 async function fetchDirect(url: string, fetchImpl: typeof fetch, timeoutMs: number, bodyChars: number): Promise<{ facts: PageFacts | null; retryWithDfs: boolean }> {
@@ -75,13 +84,23 @@ function fromContentParsing(url: string, item: any, bodyChars: number): PageFact
 }
 
 export async function fetchSitePage(env: DataForSeoEnv, url: string, opts: { bodyChars: number; fetchImpl?: typeof fetch; timeoutMs?: number; kvTtlSeconds?: number }): Promise<PageFacts> {
+  try {
+    assertPublicWebTarget(url);
+  } catch {
+    return failed(url, null, 'direct', false);
+  }
+
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 8000;
   const cacheKey = `site-page:v1:${url}`;
   const cached = await env.KV.get(cacheKey);
   if (cached) {
-    const facts = JSON.parse(cached) as PageFacts;
-    return { ...facts, body_text: facts.body_text ? facts.body_text.slice(0, opts.bodyChars) : facts.body_text };
+    try {
+      const facts = JSON.parse(cached) as PageFacts;
+      if (facts && typeof facts.url === 'string') {
+        return { ...facts, body_text: facts.body_text ? facts.body_text.slice(0, opts.bodyChars) : facts.body_text };
+      }
+    } catch { /* bad cache entry, fall through to a direct fetch and overwrite it */ }
   }
 
   const direct = await fetchDirect(url, fetchImpl, timeoutMs, Math.max(opts.bodyChars, 8000));
@@ -90,12 +109,15 @@ export async function fetchSitePage(env: DataForSeoEnv, url: string, opts: { bod
     try {
       const data = await dataforseoRequestCached(env, '/on_page/content_parsing/live', [{ url, enable_javascript: true }], { ttlSeconds: CONTENT_PARSING_TTL, timeoutMs });
       const item = data?.tasks?.[0]?.result?.[0]?.items?.[0];
-      facts = item ? fromContentParsing(url, item, Math.max(opts.bodyChars, 8000)) : failed(url, null, 'dataforseo', true);
-    } catch {
-      facts = failed(url, null, 'dataforseo', true);
+      // Not blocked here: a DataForSEO error or empty item is a fetch failure,
+      // not evidence of a bot wall (detectBotChallenge already covers that).
+      facts = item ? fromContentParsing(url, item, Math.max(opts.bodyChars, 8000)) : failed(url, null, 'dataforseo', false);
+    } catch (err) {
+      if (err instanceof DataForSeoQuotaError) throw err;
+      facts = failed(url, null, 'dataforseo', false);
     }
   }
-  if (!facts) facts = failed(url, null, 'direct', true);
+  if (!facts) facts = failed(url, null, 'direct', false);
 
   if (!facts.fetch_failed && !facts.blocked) {
     await env.KV.put(cacheKey, JSON.stringify(facts), { expirationTtl: opts.kvTtlSeconds ?? 86400 });

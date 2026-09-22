@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const dfs = vi.hoisted(() => ({ cached: vi.fn() }));
-vi.mock('../dataforseo/client', () => ({ dataforseoRequestCached: (...a: unknown[]) => dfs.cached(...a) }));
+vi.mock('../dataforseo/client', async (importActual) => {
+  const actual = await importActual<typeof import('../dataforseo/client')>();
+  return { ...actual, dataforseoRequestCached: (...a: unknown[]) => dfs.cached(...a) };
+});
 
-import { fetchSitePage, mapLimit } from './fetch-page';
+import { fetchSitePage, failedPageFacts, mapLimit } from './fetch-page';
+import { DataForSeoQuotaError } from '../dataforseo/client';
 
 const kvStore = new Map<string, string>();
 const env = { KV: { get: async (k: string) => kvStore.get(k) ?? null, put: async (k: string, v: string) => { kvStore.set(k, v); } }, DATAFORSEO_EMAIL: 'e', DATAFORSEO_PASSWORD: 'p' } as any;
@@ -50,12 +54,12 @@ describe('fetchSitePage', () => {
     expect(f.source).toBe('dataforseo');
     expect(f.headings.h1).toEqual(['Real']);
   });
-  it('reports blocked when both paths fail', async () => {
+  it('reports fetch_failed without blocked when both paths fail', async () => {
     const fetchImpl = vi.fn(async () => { throw new Error('ECONNRESET'); });
     dfs.cached.mockRejectedValue(new Error('dfs down'));
     const f = await fetchSitePage(env, 'https://acme.com.au/', { bodyChars: 3000, fetchImpl: fetchImpl as any });
     expect(f.fetch_failed).toBe(true);
-    expect(f.blocked).toBe(true);
+    expect(f.blocked).toBe(false);
     expect(f.body_text).toBeNull();
     expect(kvStore.size).toBe(0);
   });
@@ -64,6 +68,33 @@ describe('fetchSitePage', () => {
     const f = await fetchSitePage(env, 'https://acme.com.au/file', { bodyChars: 100, fetchImpl: fetchImpl as any });
     expect(f.fetch_failed).toBe(true);
     expect(dfs.cached).not.toHaveBeenCalled();
+  });
+  it('rejects a private-range URL without fetching or calling DataForSEO', async () => {
+    const fetchImpl = vi.fn(async () => res(page));
+    const f = await fetchSitePage(env, 'http://127.0.0.1/admin', { bodyChars: 100, fetchImpl: fetchImpl as any });
+    expect(f.fetch_failed).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(dfs.cached).not.toHaveBeenCalled();
+  });
+  it('treats an unparsable KV cache entry as a miss and overwrites it', async () => {
+    kvStore.set('site-page:v1:https://acme.com.au/x', '{not json');
+    const fetchImpl = vi.fn(async () => res(page));
+    const f = await fetchSitePage(env, 'https://acme.com.au/x', { bodyChars: 3000, fetchImpl: fetchImpl as any });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(f.title).toBe('Services | Acme');
+    expect(() => JSON.parse(kvStore.get('site-page:v1:https://acme.com.au/x')!)).not.toThrow();
+  });
+  it('re-throws a DataForSEO quota error instead of masking it as blocked', async () => {
+    const fetchImpl = vi.fn(async () => res('Forbidden', 403));
+    dfs.cached.mockRejectedValue(new DataForSeoQuotaError('quota'));
+    await expect(fetchSitePage(env, 'https://acme.com.au/x', { bodyChars: 3000, fetchImpl: fetchImpl as any })).rejects.toBeInstanceOf(DataForSeoQuotaError);
+  });
+});
+
+describe('failedPageFacts', () => {
+  it('returns an unfetched, unblocked placeholder', () => {
+    const f = failedPageFacts('https://acme.com.au/skipped');
+    expect(f).toMatchObject({ url: 'https://acme.com.au/skipped', fetch_failed: true, blocked: false, body_text: null });
   });
 });
 
