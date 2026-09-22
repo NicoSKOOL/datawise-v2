@@ -421,6 +421,11 @@ export interface ActivityTotals {
   active_users: number;
   new_users: number;
   total_events: number;
+  /** Real actions: tool runs, queries, checks, created items, credit-using calls. */
+  ran_events?: number;
+  /** Screens loading data (product GETs). */
+  opened_events?: number;
+  ran_users?: number;
   success_events: number;
   blocked_events: number;
   error_events: number;
@@ -433,6 +438,8 @@ export interface ActivityEvent {
   event_name: string;
   event_category?: string | null;
   feature: string;
+  action?: string | null;
+  method?: string | null;
   route?: string | null;
   error_code?: string | null;
   outcome?: string | null;
@@ -455,6 +462,25 @@ export interface ActivityFeature {
   credits_used: number;
   blocked_events: number;
   error_events: number;
+  opened?: number;
+  ran?: number;
+  ran_users?: number;
+}
+
+export interface ActivityTopAction {
+  feature: string;
+  event_name: string;
+  action: string;
+  ran: number;
+  users: number;
+  credits_used: number;
+  failures: number;
+  fail_rate: number;
+}
+
+export interface ActivityFeaturesResponse {
+  features: ActivityFeature[];
+  top_actions?: ActivityTopAction[];
 }
 
 export interface ActivityUser {
@@ -465,6 +491,7 @@ export interface ActivityUser {
   top_feature: string | null;
   active_days: number;
   total_events: number;
+  ran_events?: number;
   credits_used: number;
   last_active: string | null;
 }
@@ -488,12 +515,14 @@ export interface ActivityUserDetail {
   };
   summary: {
     total_events?: number;
+    ran_events?: number;
+    opened_events?: number;
     active_days?: number;
     credits_used?: number;
     blocked_events?: number;
     error_events?: number;
   };
-  features: Array<{ feature: string; events: number }>;
+  features: Array<{ feature: string; events: number; ran?: number }>;
   events: ActivityEvent[];
 }
 
@@ -505,10 +534,11 @@ export interface ActivitySummaryResponse {
   fallback_reason?: string | null;
 }
 
-function activityQS(params: Record<string, string | number | undefined>): string {
+function activityQS(params: Record<string, string | number | boolean | undefined>): string {
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== '') qs.set(key, String(value));
+    if (value === undefined || value === '') return;
+    qs.set(key, typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
   });
   const s = qs.toString();
   return s ? `?${s}` : '';
@@ -518,7 +548,7 @@ export function fetchActivityOverview(from: string, to: string): Promise<Activit
   return api(`/api/admin/activity/overview${activityQS({ from, to })}`);
 }
 
-export function fetchActivityFeatures(from: string, to: string): Promise<{ features: ActivityFeature[] }> {
+export function fetchActivityFeatures(from: string, to: string): Promise<ActivityFeaturesResponse> {
   return api(`/api/admin/activity/features${activityQS({ from, to })}`);
 }
 
@@ -533,13 +563,15 @@ export function fetchActivityFunnel(from: string, to: string): Promise<{ steps: 
 }
 
 export function fetchActivityEvents(params: {
-  from: string; to: string; limit?: number;
+  from: string; to: string; limit?: number; include_opened?: boolean;
 }): Promise<{ events: ActivityEvent[] }> {
   return api(`/api/admin/activity/events${activityQS(params)}`);
 }
 
-export function fetchActivityUserDetail(userId: string, from: string, to: string): Promise<ActivityUserDetail> {
-  return api(`/api/admin/activity/users/${encodeURIComponent(userId)}${activityQS({ from, to })}`);
+export function fetchActivityUserDetail(
+  userId: string, from: string, to: string, includeOpened = true,
+): Promise<ActivityUserDetail> {
+  return api(`/api/admin/activity/users/${encodeURIComponent(userId)}${activityQS({ from, to, include_opened: includeOpened })}`);
 }
 
 export function generateActivitySummary(from: string, to: string): Promise<ActivitySummaryResponse> {
