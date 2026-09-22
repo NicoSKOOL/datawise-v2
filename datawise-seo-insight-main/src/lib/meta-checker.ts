@@ -8,6 +8,9 @@ export interface MetaCheckRow {
   description: string | null;
   description_length: number | null;
   error: string | null;
+  // Raw HTML is a client-rendered app shell; title/description come from JS.
+  // Optional so older worker responses without the field still type-check.
+  client_rendered?: boolean;
 }
 
 export interface MetaCheckResponse {

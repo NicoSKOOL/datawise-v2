@@ -27,7 +27,9 @@ RULES:
 GLOSSARY: query = search term, clicks = site visits from Google, impressions = times shown in results, ctr = click-through rate, position = avg Google ranking (1 = top).`;
 
 // POST /chat - Stream a chat response with GSC context
-export async function handleChat(request: Request, env: Env, userId: string): Promise<Response> {
+// `ctx` is optional so older callers and tests keep working; without it the
+// assistant-reply save runs as a dangling promise the runtime may drop.
+export async function handleChat(request: Request, env: Env, userId: string, ctx?: ExecutionContext): Promise<Response> {
   const { message, conversation_id, property_id, llm_config, output_language } = await request.json() as {
     message: string;
     conversation_id?: string;
@@ -111,8 +113,10 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
     { role: 'system', content: fullSystemPrompt },
   ];
 
-  // Add conversation history
+  // Add conversation history. Provider-error placeholders are for the user
+  // only; sending them back would teach the model its own replies failed.
   for (const msg of history.results || []) {
+    if (msg.role === 'assistant' && msg.content === PROVIDER_ERROR_REPLY) continue;
     messages.push({
       role: msg.role as 'user' | 'assistant',
       content: msg.content as string,
@@ -139,6 +143,14 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
       ? err.message
       : 'The AI provider could not complete this request. Try again, or check your API key and credits in Settings.';
     console.error('Chat: provider.chat failed:', message);
+    // Persist an assistant row so reopening the conversation shows why there
+    // is no reply instead of an orphan user message. The HTTP response below
+    // is unchanged.
+    try {
+      await saveAssistantMessage(env, convId, PROVIDER_ERROR_REPLY);
+    } catch (saveErr) {
+      console.error('Chat: failed to save provider error reply:', saveErr);
+    }
     return new Response(JSON.stringify({ error: message }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },
@@ -148,12 +160,17 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
   // Tee the stream: one for the response, one for saving to DB
   const [responseStream, saveStream] = stream.tee();
 
-  // Save assistant response in background
-  saveStreamedResponse(saveStream, convId, env);
+  // Save assistant response in background. It MUST be registered with
+  // ctx.waitUntil: a bare promise is dropped once the response finishes or
+  // the client disconnects, which left most conversations with no saved reply.
+  const savePromise = saveStreamedResponse(saveStream, convId, env).catch((err) => {
+    console.error('Chat: failed to save assistant reply:', err);
+  });
+  if (ctx) ctx.waitUntil(savePromise);
 
   // Update conversation timestamp
   await env.DB.prepare(
-    'UPDATE chat_conversations SET updated_at = datetime("now") WHERE id = ?'
+    'UPDATE chat_conversations SET updated_at = datetime(\'now\') WHERE id = ?'
   ).bind(convId).run();
 
   return new Response(responseStream, {
@@ -165,7 +182,19 @@ export async function handleChat(request: Request, env: Env, userId: string): Pr
   });
 }
 
-// Save streamed response to DB after streaming completes
+const PROVIDER_ERROR_REPLY = 'The AI provider returned an error and no reply was generated. Please try again.';
+
+async function saveAssistantMessage(env: Env, conversationId: string, content: string): Promise<void> {
+  const msgId = crypto.randomUUID().replace(/-/g, '');
+  await env.DB.prepare(
+    'INSERT INTO chat_messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)'
+  ).bind(msgId, conversationId, 'assistant', content).run();
+}
+
+// Save streamed response to DB. Text is accumulated as it is read and written
+// in `finally`, so a stream that errors or is cut off mid-way (client abort,
+// provider drop) still keeps the partial reply. Read errors are logged, not
+// rethrown.
 async function saveStreamedResponse(stream: ReadableStream, conversationId: string, env: Env): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -177,15 +206,18 @@ async function saveStreamedResponse(stream: ReadableStream, conversationId: stri
       if (done) break;
       fullContent += decoder.decode(value, { stream: true });
     }
+    fullContent += decoder.decode();
+  } catch (err) {
+    console.error('Chat: assistant stream ended with an error, saving partial reply:', err);
   } finally {
-    reader.releaseLock();
-  }
-
-  if (fullContent) {
-    const msgId = crypto.randomUUID().replace(/-/g, '');
-    await env.DB.prepare(
-      'INSERT INTO chat_messages (id, conversation_id, role, content) VALUES (?, ?, ?, ?)'
-    ).bind(msgId, conversationId, 'assistant', fullContent).run();
+    try {
+      reader.releaseLock();
+    } catch {
+      // Lock already released or stream errored; nothing to do.
+    }
+    if (fullContent) {
+      await saveAssistantMessage(env, conversationId, fullContent);
+    }
   }
 }
 

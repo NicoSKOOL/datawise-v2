@@ -1217,7 +1217,7 @@ export default {
 
       // --- Chat ---
       if (path === '/chat' && method === 'POST') {
-        return addCors(await handleChat(request, env, user.id));
+        return addCors(await handleChat(request, env, user.id, ctx));
       }
       if (path === '/chat/conversations' && method === 'GET') {
         return addCors(await handleListConversations(request, env, user.id));

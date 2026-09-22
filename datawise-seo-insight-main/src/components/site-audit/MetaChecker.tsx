@@ -564,7 +564,7 @@ export function MetaChecker() {
           <div className="flex items-center justify-between pt-2 border-t">
             <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
               <Info className="h-3 w-3" />
-              JavaScript SPAs (React/Vue without SSR) may show as "missing" — we read the raw HTML.
+              JavaScript SPAs (React/Vue without SSR) may show as "missing": we read the raw HTML.
             </span>
             <Button
               onClick={runCheck}
@@ -920,6 +920,18 @@ function ResultRow({
           </Button>
         )}
       </div>
+
+      {row.client_rendered && !row.error && (
+        <div className="col-span-full flex items-start gap-1.5 rounded border border-blue-500/30 bg-blue-500/5 px-2 py-1.5 text-[11px] text-muted-foreground">
+          <Info className="h-3 w-3 mt-0.5 flex-shrink-0 text-blue-600" />
+          <span>
+            This page adds its title and description with JavaScript. Google renders JavaScript
+            and can see them (Site Audit shows what Google sees). AI crawlers like ChatGPT and
+            Perplexity, and social link previews, usually do not run JavaScript, so to them this
+            page has no title or description.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

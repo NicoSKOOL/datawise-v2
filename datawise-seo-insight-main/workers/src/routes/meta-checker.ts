@@ -20,6 +20,10 @@ export interface MetaCheckRow {
   description: string | null;
   description_length: number | null;
   error: string | null;
+  // True when the raw HTML is a client-rendered app shell (React/Vue/etc.
+  // without SSR): the title/description are injected by JavaScript, so a plain
+  // fetch sees none. Google renders JS; AI crawlers and link previews do not.
+  client_rendered: boolean;
 }
 
 function normalizeUrl(raw: string): string | null {
@@ -103,6 +107,41 @@ export function parseMeta(html: string): ParsedMeta {
   }
 
   return { title, description };
+}
+
+// Empty mount nodes used by common client-side frameworks: React (root/app),
+// Next.js (__next), Gatsby (___gatsby), Nuxt (__nuxt), SvelteKit (svelte).
+const EMPTY_MOUNT_RE =
+  /<div\b[^>]*\bid\s*=\s*(["'])(?:root|app|__next|___gatsby|__nuxt|svelte)\1[^>]*>\s*<\/div\s*>/i;
+const MODULE_SCRIPT_RE = /<script\b[^>]*\btype\s*=\s*(["'])module\1[^>]*>/i;
+const BUNDLE_SCRIPT_RE =
+  /<script\b[^>]*\bsrc\s*=\s*(["'])[^"']*(?:\/assets\/|\/static\/js\/|\/_next\/|\/build\/|\/dist\/|bundle|chunk|main|index|app)[^"']*\.m?js(?:\?[^"']*)?\1/i;
+// Below this many characters of visible body text, a page is treated as an
+// empty shell rather than real server-rendered content.
+const SHELL_MAX_TEXT_CHARS = 200;
+
+function visibleBodyText(html: string): string {
+  const body = html.match(/<body\b[^>]*>([\s\S]*)/i)?.[1] ?? html;
+  const cleaned = stripComments(stripSvg(body))
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style\s*>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript\s*>/gi, ' ')
+    .replace(/<template[\s\S]*?<\/template\s*>/gi, ' ');
+  return decodeHtml(stripTags(cleaned).replace(/\s+/g, ' ').trim());
+}
+
+// Detect a client-rendered SPA shell (bug b432e6c3). The raw HTML has no
+// <title>, almost no visible text, and either an empty framework mount node or
+// module/bundle scripts that build the page (and its metadata) in the browser.
+// Site Audit renders JavaScript so it sees the injected title/description; this
+// flag lets the Meta Checker explain the difference instead of just "missing".
+export function detectClientRendered(html: string): boolean {
+  const { title } = parseMeta(html);
+  if (title) return false;
+  if (visibleBodyText(html).length >= SHELL_MAX_TEXT_CHARS) return false;
+  const emptyMount = EMPTY_MOUNT_RE.test(html);
+  const bundleScript = MODULE_SCRIPT_RE.test(html) || BUNDLE_SCRIPT_RE.test(html);
+  return emptyMount || bundleScript;
 }
 
 function extractH1(html: string): string | null {
@@ -190,6 +229,7 @@ async function checkOne(url: string): Promise<MetaCheckRow> {
     description: null,
     description_length: null,
     error: null,
+    client_rendered: false,
   };
 
   const controller = new AbortController();
@@ -248,6 +288,7 @@ async function checkOne(url: string): Promise<MetaCheckRow> {
     row.title_length = title ? [...title].length : 0;
     row.description = desc;
     row.description_length = desc ? [...desc].length : 0;
+    row.client_rendered = detectClientRendered(html);
     return row;
   } catch (err: unknown) {
     if (err instanceof UnsafeUrlError) {

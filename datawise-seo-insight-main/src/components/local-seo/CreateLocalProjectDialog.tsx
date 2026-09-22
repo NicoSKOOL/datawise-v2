@@ -59,7 +59,7 @@ export default function CreateLocalProjectDialog({ open, onOpenChange, onCreate 
     setResolving(true);
     setUrlError(null);
     try {
-      const business = await resolveGBPUrl(gbpUrl.trim());
+      const business = await resolveGBPUrl(gbpUrl.trim(), parseInt(locationCode, 10));
       setSelected(business);
       setProjectName(business.title);
       setStep('confirm');
