@@ -195,16 +195,28 @@ export async function refreshBWTToken(env: Env, userId: string): Promise<string 
   return tokens.access_token;
 }
 
+export interface BWTSiteSyncResult {
+  ok: boolean;
+  count: number;
+  status?: number;
+  error?: string;
+}
+
 // Fetch user's BWT sites and store as gsc_properties rows with kind='bwt'.
 // Auto-pair to existing GSC properties via normalized hostname.
-export async function syncBWTProperties(env: Env, userId: string, accessToken: string): Promise<void> {
-  const response = await fetch(`${BWT_API_BASE}/GetUserSites?apikey=${accessToken}`, {
+//
+// OAuth tokens go in the Authorization header only. The old call also put the
+// access token in `?apikey=`, the legacy per-user API key parameter, and a
+// failure was only logged, so 37 users showed "Connected" with no sites.
+export async function syncBWTProperties(env: Env, userId: string, accessToken: string): Promise<BWTSiteSyncResult> {
+  const response = await fetch(`${BWT_API_BASE}/GetUserSites`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
   if (!response.ok) {
-    console.error('BWT GetUserSites failed:', response.status, await response.text());
-    return;
+    const body = (await response.text()).slice(0, 500);
+    console.error('BWT GetUserSites failed:', response.status, body);
+    return { ok: false, count: 0, status: response.status, error: body };
   }
 
   const data = await response.json() as { d?: Array<{ Url: string }> };
@@ -249,6 +261,7 @@ export async function syncBWTProperties(env: Env, userId: string, accessToken: s
       groupId
     ).run();
   }
+  return { ok: true, count: sites.length };
 }
 
 // POST /bwt/properties/refresh
@@ -258,7 +271,14 @@ export async function handleBWTPropertiesRefresh(env: Env, userId: string): Prom
     return new Response(JSON.stringify({ error: 'BWT not connected. Reconnect in Settings.' }), { status: 403 });
   }
 
-  await syncBWTProperties(env, userId, accessToken);
+  const sync = await syncBWTProperties(env, userId, accessToken);
+  if (!sync.ok) {
+    return new Response(JSON.stringify({
+      error: 'Bing did not return your sites. Reconnect Bing in Settings; if it keeps happening, contact support.',
+      bing_status: sync.status,
+      bing_error: sync.error,
+    }), { status: 502, headers: { 'Content-Type': 'application/json' } });
+  }
 
   const properties = await env.DB.prepare(
     "SELECT id, site_url, permission_level, last_synced_at, color, is_enabled, kind, site_group_id FROM gsc_properties WHERE user_id = ? AND kind = 'bwt'"
