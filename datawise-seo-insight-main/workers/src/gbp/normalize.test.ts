@@ -46,7 +46,7 @@ describe('normalizeGbpProfile', () => {
     expect(p.contact.book_online_url).toBe('https://acme.com.au/book');
   });
   it('maps categories, description, hours, attributes', () => {
-    expect(p.categories).toEqual({ primary: 'Plumber', additional: ['Emergency plumber', 'Gas installation service'] });
+    expect(p.categories).toEqual({ primary: 'Plumber', additional: ['Emergency plumber', 'Gas installation service'], category_ids: ['plumber'] });
     expect(p.description).toEqual({ text: 'Emergency plumbers in Melbourne.', length: 32 });
     expect(p.hours.timetable.monday).toEqual([{ open: '07:30', close: '17:00' }]);
     expect(p.hours.timetable.sunday).toEqual([]);
@@ -72,13 +72,23 @@ describe('normalizeGbpProfile', () => {
   it('lists unmapped keys so nothing is silently lost', () => {
     expect(p.raw_keys).toEqual(['some_new_field']);
   });
+  it('detects removed SERP-metadata keys in raw_keys to catch drift', () => {
+    const drift = normalizeGbpProfile({ ...item, se_domain: 'google.com' });
+    expect(drift.raw_keys).toContain('se_domain');
+  });
   it('tolerates a sparse Maps SERP item', () => {
     const sparse = normalizeGbpProfile({ title: 'X', address: 'Somewhere', rating: { value: 4, votes_count: 3 } });
     expect(sparse.identity.title).toBe('X');
+    expect(sparse.categories.category_ids).toEqual([]);
     expect(sparse.hours.timetable.monday).toEqual([]);
     expect(sparse.attributes.available).toEqual([]);
     expect(sparse.services).toEqual([]);
     expect(sparse.reputation.rating).toBe(4);
+  });
+  it('handles bare-number rating', () => {
+    const bareNum = normalizeGbpProfile({ title: 'X', rating: 4.2, reviews_count: 17 });
+    expect(bareNum.reputation.rating).toBe(4.2);
+    expect(bareNum.reputation.reviews_count).toBe(17);
   });
 });
 

@@ -7,7 +7,7 @@ export interface GbpProfileFull {
   identity: { title: string; place_id: string | null; cid: string | null; feature_id: string | null; is_claimed: boolean | null; is_directory_item: boolean | null };
   address: { full: string; street: string | null; city: string | null; region: string | null; postcode: string | null; country_code: string | null; borough: string | null; latitude: number | null; longitude: number | null };
   contact: { phone: string | null; website: string | null; domain: string | null; contact_url: string | null; book_online_url: string | null; contributor_url: string | null };
-  categories: { primary: string | null; additional: string[] };
+  categories: { primary: string | null; additional: string[]; category_ids: string[] };
   description: { text: string | null; length: number };
   hours: { timetable: Record<string, HoursSlot[]>; days_with_hours: number; current_status: string | null };
   attributes: { available: Array<{ group: string; name: string }>; unavailable: Array<{ group: string; name: string }> };
@@ -27,7 +27,7 @@ const KNOWN_KEYS = new Set([
   'contributor_url', 'book_online_url', 'domain', 'logo', 'main_image', 'total_photos', 'snippet', 'latitude', 'longitude',
   'is_claimed', 'price_level', 'hotel_rating', 'is_directory_item', 'rating', 'rating_distribution', 'attributes',
   'place_topics', 'people_also_search', 'work_time', 'popular_times', 'local_business_links', 'services',
-  'questions_and_answers_count', 'directory', 'check_url', 'xpath', 'se_domain', 'keyword', 'location_code', 'language_code',
+  'questions_and_answers_count', 'directory', 'xpath',
 ]);
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
@@ -77,7 +77,7 @@ export function normalizeGbpProfile(item: any): GbpProfileFull {
     identity: { title: str(it.title) ?? '', place_id: str(it.place_id), cid: str(it.cid), feature_id: str(it.feature_id), is_claimed: bool(it.is_claimed), is_directory_item: bool(it.is_directory_item) },
     address: { full: str(it.address) ?? '', street: str(info.address), city: str(info.city), region: str(info.region), postcode: str(info.zip), country_code: str(info.country_code), borough: str(info.borough), latitude: num(it.latitude), longitude: num(it.longitude) },
     contact: { phone: str(it.phone), website: str(it.url), domain: str(it.domain), contact_url: str(it.contact_url), book_online_url: str(it.book_online_url), contributor_url: str(it.contributor_url) },
-    categories: { primary: str(it.category), additional: (Array.isArray(it.additional_categories) ? it.additional_categories : []).filter((c: unknown) => typeof c === 'string') },
+    categories: { primary: str(it.category), additional: (Array.isArray(it.additional_categories) ? it.additional_categories : []).filter((c: unknown) => typeof c === 'string'), category_ids: (Array.isArray(it.category_ids) ? it.category_ids : []).filter((c: unknown) => typeof c === 'string') },
     description: { text: description, length: description?.length ?? 0 },
     hours: { timetable: table, days_with_hours: DAYS.filter((d) => table[d].length > 0).length, current_status: str(it.work_time?.work_hours?.current_status) },
     attributes: { available: attributeList(it.attributes?.available_attributes), unavailable: attributeList(it.attributes?.unavailable_attributes) },
