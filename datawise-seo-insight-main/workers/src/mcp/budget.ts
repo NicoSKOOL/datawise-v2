@@ -16,6 +16,7 @@ const LLM_ROW = 0.001;
 const GBP_INFO = 0.0054;
 const REVIEWS_PER_10 = 0.0015;
 const SERP_TASK = 0.003;
+const POSTS_TASK = 0.01;
 const UNKNOWN_TOOL_ESTIMATE = 0.05;
 
 export function utcDay(now: Date = new Date()): string {
@@ -67,6 +68,12 @@ export function estimateCostUsd(tool: string, args: Record<string, unknown>): nu
     case 'datawise_gbp_audit':
       // Stored data plus one my_business_info lookup, KV-cached for a day.
       return GBP_INFO;
+    case 'datawise_gbp_profile': {
+      // my_business_info + a possible Maps search, then reviews per 10 and one posts task.
+      const reviews = args.include_reviews === false ? 0 : REVIEWS_PER_10 * (num(args.reviews_depth, 20) / 10);
+      const posts = args.include_posts === false ? 0 : POSTS_TASK;
+      return GBP_INFO + SERP_TASK + reviews + posts;
+    }
     case 'datawise_rank_tracking':
     case 'datawise_ai_visibility':
     case 'datawise_search_console':

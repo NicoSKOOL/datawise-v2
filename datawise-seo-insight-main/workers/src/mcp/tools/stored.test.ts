@@ -146,11 +146,11 @@ describe('datawise_search_console', () => {
 });
 
 describe('registry', () => {
-  it('exposes fourteen uniquely named datawise_ tools, new ones appended', () => {
+  it('exposes fifteen uniquely named datawise_ tools, new ones appended', () => {
     const names = ALL_TOOLS.map((t) => t.name);
-    expect(names).toHaveLength(14);
-    expect(new Set(names).size).toBe(14);
-    expect(names.slice(-2)).toEqual(['datawise_people_also_ask', 'datawise_gbp_audit']);
+    expect(names).toHaveLength(15);
+    expect(new Set(names).size).toBe(15);
+    expect(names.slice(-2)).toEqual(['datawise_gbp_audit', 'datawise_gbp_profile']);
     for (const n of names) expect(n.startsWith('datawise_')).toBe(true);
   });
 });
