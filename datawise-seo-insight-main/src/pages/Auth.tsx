@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowRight, LogIn, UserPlus } from 'lucide-react';
+import { consumeReturnTo } from '@/lib/return-to';
 
 type AuthMode = 'login' | 'signup' | null;
 
@@ -20,6 +21,7 @@ export default function Auth() {
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [existingAccount, setExistingAccount] = useState(false);
+  const returnTo = useRef<string | null>(null);
 
   const setAuthMode = (nextMode: AuthMode) => {
     setMode(nextMode);
@@ -47,8 +49,9 @@ export default function Auth() {
     );
   }
 
+  if (user && returnTo.current === null) returnTo.current = consumeReturnTo() ?? '/';
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={returnTo.current ?? '/'} replace />;
   }
 
   const handleEmailSubmit = async (e: React.FormEvent) => {

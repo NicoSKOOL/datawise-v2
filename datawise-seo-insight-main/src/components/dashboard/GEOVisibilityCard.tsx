@@ -47,6 +47,7 @@ export default function GEOVisibilityCard({ domain, keywords = [] }: GEOVisibili
   const engines = [
     { key: 'google_ai', label: 'Google AI' },
     { key: 'chatgpt', label: 'ChatGPT' },
+    { key: 'gemini', label: 'Gemini' },
     { key: 'perplexity', label: 'Perplexity' },
   ] as const;
 
@@ -67,7 +68,8 @@ export default function GEOVisibilityCard({ domain, keywords = [] }: GEOVisibili
             </div>
             <div className="space-y-1.5">
               {engines.map((engine) => {
-                const visible = summary.results.some((r) => r[engine.key]);
+                // Summaries cached before Gemini existed have no gemini key.
+                const visible = summary.results.some((r) => (r as Record<string, unknown>)[engine.key] === true);
                 return (
                   <div key={engine.key} className="flex items-center gap-2 text-sm">
                     {visible ? (

@@ -110,26 +110,6 @@ export async function fetchCompetitorsDomain(params: {
 
 // --- AI / SERP Analysis ---
 
-export async function fetchGoogleAIMode(params: {
-  keyword: string;
-  location_name: string;
-  device: string;
-  os: string;
-}) {
-  return api('/api/ai/google-ai-mode', { method: 'POST', body: params });
-}
-
-export async function fetchChatGPTSearch(params: { keyword: string }) {
-  return api('/api/ai/chatgpt-search', { method: 'POST', body: params });
-}
-
-export async function fetchPerplexitySearch(params: {
-  keyword: string;
-  location_code: number;
-}) {
-  return api('/api/ai/perplexity', { method: 'POST', body: params });
-}
-
 export async function fetchPeopleAlsoAsk(params: {
   keyword: string;
   location: string;

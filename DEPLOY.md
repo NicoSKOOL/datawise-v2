@@ -73,14 +73,85 @@ git push origin --tags
 
 ## Worker (API) deploys
 
-The Worker is a separate codebase in `datawise-seo-insight-main/workers/`. Worker deploys are independent of the SPA:
+The Worker (`datawise-seo-insight-main/workers/`, service `datawise-api`) ships
+from `production` only, through the same workflow as the SPA
+(`.github/workflows/deploy-pages-production.yml`, since 2026-09-22, PR #156):
+
+1. **`worker` job** runs on every push to `production`. If the push changed
+   anything under `workers/`, it typechecks, runs the Worker tests, and runs
+   `npm run deploy`. Otherwise it skips (and reports success).
+2. **`pages` job** waits for it, then builds, guards, and deploys the SPA. A
+   failed Worker test or deploy therefore blocks the SPA too: no half releases.
+
+Manual run: Actions → "Deploy DataWise Pages Production" → Run workflow, tick
+`deploy_worker` to force a Worker deploy from `production`.
+
+**Testing unmerged Worker code:** push the branch to `staging`. The staging
+workflow runs `npm run deploy:preview` (`wrangler versions upload --preview-alias staging`),
+which creates a Worker version at `https://staging-datawise-api.nico-510.workers.dev`
+with NO live traffic and no crons, and builds the staging SPA against it. It
+shares the live D1/KV/R2 data and secrets. OAuth flows (Google sign-in, GSC,
+Bing) started on staging need the preview host's callback URLs registered.
+
+**Guard:** `npm run deploy` runs `scripts/guard-worker-deploy.mjs` first and
+refuses unless HEAD is a clean, up-to-date `origin/production` (CI on
+`production` passes). Emergency only: `ALLOW_UNSAFE_DEPLOY=1 npm run deploy`.
+Rollback does not need the guard: `wrangler rollback <version-id>`.
+
+The GitHub secret `CLOUDFLARE_API_TOKEN` must be able to edit Workers, Pages,
+D1, KV, R2 and Queues. A Pages-only token makes the worker job fail and blocks
+every release.
+
+DO NOT use `npm run deploy:production` / `deploy:staging` for the worker: they
+are disabled because they created an orphan `datawise-api-production` worker.
+
+## MCP worker (`datawise-mcp`) deploys
+
+The MCP server for ChatGPT / Claude is a second worker built from the same
+`workers/` tree (`src/mcp/`, config `wrangler.mcp.toml`). Public URL
+`https://mcp.datawiseseo.com`, endpoint `/mcp`. Spec:
+`docs/superpowers/specs/2026-09-07-datawise-mcp-server-design.md`.
 
 ```sh
 cd datawise-seo-insight-main/workers
-npm run deploy     # → wrangler deploy → datawise-api (no env flag)
+npm run deploy:mcp     # → wrangler deploy -c wrangler.mcp.toml → datawise-mcp
 ```
 
-DO NOT use `npm run deploy:production` for the worker — see `~/.claude/projects/-Users-nicolasgorrono-Desktop-DataWise-V2/memory/reference_deployment.md` for the naming trap (creates an orphan `datawise-api-production` worker).
+Rules:
+- If `src/db/schema.sql` changed, run the remote D1 migration first (see the
+  D1 section below). The MCP worker shares `datawise-db` with `datawise-api`.
+- Secrets live in the Cloudflare dashboard on the `datawise-mcp` worker:
+  `DATAFORSEO_EMAIL`, `DATAFORSEO_PASSWORD`, `ENCRYPTION_KEY`. Set them there,
+  not with `wrangler secret put` (empty-paste trap).
+- Kill switch: `mcp-paused` key in KV namespace `2302e0b0369842e799b5f4a144d6dce4`
+  (any value). Early access: `mcp-allowlist` = comma-separated emails.
+  Budgets: `mcp-user-cap-cents` (default 400), `mcp-global-cap-cents` (default 10000).
+
+```sh
+# pause / unpause
+npx wrangler kv key put --namespace-id 2302e0b0369842e799b5f4a144d6dce4 mcp-paused 1
+npx wrangler kv key delete --namespace-id 2302e0b0369842e799b5f4a144d6dce4 mcp-paused
+```
+
+Rollback: `npx wrangler rollback -c wrangler.mcp.toml` (pick the previous
+version), or redeploy the last good tag.
+
+Health: `curl -s https://mcp.datawiseseo.com/health` → `{"ok":true,"service":"datawise-mcp"}`.
+
+#### OAuth (stage 2)
+
+The worker is also the OAuth 2.1 authorization server for `mcp.datawiseseo.com` (library `@cloudflare/workers-oauth-provider`).
+
+- KV namespace `OAUTH_KV` (dedicated; id in `wrangler.mcp.toml`). Holds hashed grant tokens, grants and registered clients. Never point it at the main KV.
+- Compatibility flag `global_fetch_strictly_public` is required for Client ID Metadata Documents (claude.ai). Do not remove it.
+- No new secrets. `MCP_PUBLIC_URL` must equal the host requests arrive on (audience check); production is `https://mcp.datawiseseo.com`.
+- Endpoints: `/authorize` (ours, redirects to the SPA `/connect`), `/oauth/token`, `/oauth/register`, `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` (library).
+- Consent stash: main KV `mcp_authreq:<nonce>`, 10 minutes.
+- Local: `workers/.dev.vars` (never committed) with `MCP_PUBLIC_URL=http://localhost:8788` and `FRONTEND_URL=http://localhost:8080`, then `npm run dev:mcp` and the SPA on :8080. The dev:mcp script passes --host localhost:8788 because wrangler dev would otherwise present requests as http://mcp.datawiseseo.com (the custom-domain route) and the OAuth issuer and audience checks would fail locally.
+- Kill switch `mcp-paused` also blocks consent (Approve returns 403).
+- Rollback: `npm run deploy:mcp` from the previous commit. Existing grants keep working across deploys because state is in KV.
+- Order: the SPA (Pages) must be live with the /connect route before deploy:mcp, otherwise /authorize sends members to a NotFound page.
+- Clients registered through /oauth/register (Dynamic Client Registration, the ChatGPT path) expire after 90 days (library default) and the daily sweep then revokes their grants; the member reconnects from the assistant. Claude uses Client ID Metadata Documents and is not affected.
 
 ## Rollback (Pages)
 
@@ -156,6 +227,15 @@ Named recovery tags (use `git checkout <tag>` to restore source state):
 - `prod-2026-08-27-1400` — Community roster durability + email mismatch linking (worker + SPA), PR #135, merge `27791cb`. Root cause of recurring "paying Skool member locked out" reports: upload-members wiped community_members and revoked every user absent from the Skool export, destroying webhook/manual grants (jinshin79@gmail.com: webhook-granted Jul 10, csv-revoked Aug 10, manually re-added Aug 27; at least 18 such wipes since May). Now: community_members has `source` ('csv'|'webhook'|'manual') and `normalized_email`; uploads upsert csv rows and prune+revoke ONLY csv-managed rows, preserving webhook/manual rows and returning them as `protected_members` (shown in the admin toast next to `revoked_emails`); membership matching collapses gmail dots/+tags and googlemail across login auto-detect, reconcile, and the join webhook; password login re-checks membership; new `POST /webhooks/skool-member-left` (same Bearer secret) for explicit churn; revoke-access/toggle-member sync the roster so admin revocations stick; new `community_email_aliases` table + Email Mismatches admin tab (exact unclaimed-grant detection via `invited:` google_id + NULL password_hash, scored suggestions, durable link/unlink — an alias counts as membership only while its roster row exists, so linked members still revoke when they drop off the export). D1 migrations `2026-08-27-community-members-source.sql` + `2026-08-27-community-email-aliases.sql` applied BEFORE the worker deploys. Worker versions `93d025e5` (roster durability) then `0d0d1289` (mismatch linking). Live-verified 2026-08-27: real CSV re-upload → imported 685, revoked 0, protected = jinshin79/hasnain/velocitymechanical23 (webhook member who joined after the export — the old code would have revoked them); normalized matching granted 4 locked-out paying members (incl. hausean@gmail.com dot variant, peimaannazary@googlemail.com domain variant). 1301 worker vitest green. Rollback worker: `wrangler rollback --message "community roster regression" 1dcd1138`. Rollback SPA: `git revert 27791cb && git push origin production` (or redeploy the prior Pages deployment). New columns/tables are additive and safe to leave in place after rollback.
 - `prod-2026-09-07-1124` — Content Writer external citations guard + render-crash telemetry (worker + SPA), PRs #136 (merge `aa04cdd`) and #138 (merge `50408d6`). #136: 14 of 59 posts written since July had zero external links; master + draft prompts now require at least 3 inline external citations, and a post-draft check runs one corrective turn (validated: links present, title kept, no references list, heading count and prose length unchanged) or returns a quality warning. #138: both error boundaries POST crashes to `/api/client-crash` (app_events `Client Crash` rows) and the feedback bubble auto-attaches a recent crash to `browser_info`; Service Page Optimizer ignores Enter while an analysis is running. Worker version `92b25f49-5de2-4886-88b2-2100390a9ce2` (deployed from a production+#136+#138 merge; earlier same-day `3184092e` = #136 only, `6f12db8d` = #138 only and DROPPED #136 for ~5 min). Rollback worker: `wrangler rollback --message "reason" 0d0d1289` (pre-#136) or `57269344` (#137 + #136). Rollback SPA: `git revert 50408d6 aa04cdd && git push origin production`.
 
+- `prod-2026-09-06-2326` — LLM Responses model resolver (worker-only), PR #137, merge commit `79c8e79`. The Claude and Gemini search routes sent retired model names (`claude-3-5-sonnet`, `gemini-1.5-flash`) and returned DataForSEO task error 40501 on every call; ChatGPT/Perplexity names were duplicated as literals across `ai.ts` and `ai-tracking.ts`. New `workers/src/dataforseo/llm-models.ts` (`PREFERRED_MODELS`, `resolveModel()` reading the free `/llm_responses/models` endpoint, KV-cached 24h, offline fallback) used by all LLM Responses calls; tracker request building extracted to `buildEngineRequest()`; checked-in catalog snapshot + tests fail CI on a retired model (`npm run llm-models:snapshot` refreshes). Resolved today: gpt-4o (unchanged), sonar (unchanged), claude-sonnet-4-6, gemini-3.5-flash. Worker version `57269344`. NOTE: the first deploy `1daf3f9f` (22:40 UTC) was built from `production` alone and reverted the still-unmerged PR #136 worker code (Content Writer external citations, live as `3184092e`) for about an hour; `57269344` (23:40 UTC) was rebuilt from `production` + `fix/content-writer-external-citations` and restores both. Rollback: `wrangler rollback --message "model resolver regression" 3184092e` (worker only; no SPA change to revert).
+- `prod-2026-09-07-1514` — AI Engines v2 (worker + SPA), PR #139, merge `b283f82`. Tracker, Instant Check and the dashboard card now get real answers from four engines: ChatGPT and Gemini via the DataForSEO LLM Scraper, Google AI Mode via SERP, Perplexity via LLM Responses (Claude engine removed; `LLMEngineTab.tsx` deleted; `AIOverview.tsx` reduced to one `EngineResultPanel`). New `workers/src/ai-engines/` adapters + `classify.ts` (adds the `retrieved` status: domain appears in the engine's search results but is not cited), new route `POST /api/ai/engine-check`, project-locale resolution (project location + dominant tracked-keyword language + user default). Tracker path: each engine retried once, 100s scraper window, prompts run in parallel, error reason stored on the row (fixes the ChatGPT scraper timeout that wrote bare `error` rows on staging). D1 migration `workers/migrations/2026-09-07-ai-engines-v2.sql` APPLIED to prod before the worker deploy (additive: `ai_visibility_checks.model/location_code/language_code/retrieved_url`, `ai_check_citations.kind`, new table `ai_check_brands`). KV flag `ai-engines-v2` = `1` (ON) gates the v2 tracker path; the Monday 06:00 UTC cron runs v2 while it is on. Worker version `8381909f-189f-439e-89a2-c34b8e276b47` (15:02 UTC, built from feat/ai-engines-v2 + #136 + #138, all three now on production). Staging-verified in Nico's browser 2026-09-07 (all 4 engines 200, tracker rows carry model + locale). Live SPA verified: chunk `AIVisibility-CT404mMn.js` carries `engine-check` + `retrieved`. Rollback SPA: `git revert b283f82 && git push origin production`. Rollback worker: `wrangler rollback --message "ai engines v2 regression" 92b25f49`; or, to fall back to the legacy tracker path without a rollback, `wrangler kv key delete --namespace-id 2302e0b0369842e799b5f4a144d6dce4 ai-engines-v2`. New columns/table are additive and safe to leave. Follow-up: remove the flag + legacy path after one clean Monday run.
+- `prod-2026-09-11-1144` (+ stale-period fix, see git tags): MCP tools 13 and 14, PR #146 merge `7c474b7`, worker `9ebd7995`. `datawise_people_also_ask` wraps `handlePeopleAlsoAsk` (1 / 10 / 25 SERP calls by depth, budgeted at $0.003 each) and `datawise_gbp_audit` reads a local project's stored rank history, review snapshots and latest geo-grid scan plus one KV-cached profile lookup (budgeted at $0.0054); completeness checks mirror `GBPProfileCard.tsx`. Both appended to the registry so tool positions 1 to 12 are unchanged. Also 2026-09-10: `datawise_ai_mentions` target-shape fix (PR #144) and ChatGPT US-only guard (PR #145), worker `aca2bd62`, tags `prod-2026-09-10-1059` and `prod-2026-09-10-1102`.
+- `prod-2026-09-08-1526`: DataWise MCP server live (stages 1 and 2 together), PR #141, merge `ed999f4`. New worker `datawise-mcp` at https://mcp.datawiseseo.com (version `5b5e646d-efc5-4453-a1dd-4aa7dd58552a`, cron `0 3 * * *`): personal `dwmcp_` tokens, 12 read-only tools, $4/day DataForSEO budget, OAuth 2.1 sign-in for claude.ai, ChatGPT Developer mode and Claude Code (consent page SPA `/connect`, grants in `OAUTH_KV`). Prod D1 gained `api_tokens`, `mcp_usage_daily`, `mcp_calls`. KV `mcp-allowlist` set to the admin email for the dogfood week. Secrets on `datawise-mcp` (DATAFORSEO_EMAIL, DATAFORSEO_PASSWORD, ENCRYPTION_KEY) still to be set in the dashboard at deploy time; stored-data tools work without them, DataForSEO and Search Console tools do not. Pages deployed by CI run 34244463904 (the `/connect` route must exist before the worker, see the MCP worker section). Rollback: SPA via the previous Pages deployment; worker via `wrangler rollback -c wrangler.mcp.toml` or KV `mcp-paused=1` to stop all MCP traffic instantly.
+- `prod-2026-09-08-1158` — AI tracker scraper window 100s to 120s (worker-only), PR #142, merge `bb1bd98`. Member report (holidaysbeckon.com.au, 3 of 20 prompts): manual check rows `status=error` "DataForSEO /ai_optimization/chat_gpt/llm_scraper/live/advanced timed out after 100000ms". DataForSEO documents the live scraper at up to 120s and returns 50401 on its own overrun; our 100s AbortController fired first, so ordinary slow answers became error rows and the retry hit the same window. Measured 2026-09-08: single calls 8-114s (the 114s one returned a valid answer), 2 of 10 concurrent calls over 60s; the failing prompts take 15-18s when quiet. `V2_ENGINE_TIMEOUT_MS` = 120_000, pinned by a test on the `runEngine` options. Worker version `d82c26d3-6517-419e-bb63-823e6725c50e`. NOTE: scheduled tracker runs land SUNDAY 06:00 UTC (the "Monday" note above is wrong); first scheduled v2 run is 2026-09-13. Rollback: `wrangler rollback --message "scraper window regression" 8381909f` (worker only; no SPA change to revert). If timeouts persist, next levers are lower `V2_QUERY_CONCURRENCY` for scraper engines or the DataForSEO standard queue for the Sunday cron.
+- `prod-2026-09-16-2113` — Bug triage pair (worker + SPA copy), PRs #149 + #150, merge commits `05a0e99` + `1f64a97`. (1) GSC positions impression-weighted: every `AVG(position)`/`AVG(ctr)` over `gsc_search_data` gave each (query, page) slice equal weight, so a brand query at #1 with 7k impressions plus 60 deep pages at 20-60 showed 20.1 vs Search Console 1.9 (bug `b32d5c18`, harbourholidays.co.uk). New `gsc/metrics-sql.ts`, applied to `/gsc/data`, `/gsc/queries` and the SEO Assistant GSC context; KV cache key `gsc_data:v1` -> `v2`. (2) AI tracker starvation: the Monday cron walked an unordered project list with no wall-clock budget, so each run finished ~100 of 827 queries and dropped the rest (714 queries had no scheduled check in 3 weeks; bugs `9b29631f`, `7c469e7d`). Cron `0 6 * * 1` -> daily `0 6 * * *` with a 12-min deadline; due = no scheduled check in 6 days; stalest project first; partial projects resume. SPA: three "every Monday" strings now say weekly. Worker version `78823c1c-9800-424c-ac95-32db9c0b70d9` (deployed from a clean detached checkout of `1f64a97`). Rollback both: `git revert 1f64a97 05a0e99 && git push origin production` AND `wrangler rollback --message "triage pair regression" d82c26d3-6517-419e-bb63-823e6725c50e` (rollback also restores the Monday-only cron trigger). Kill switch for the tracker spend: KV `ai-tracking-paused`.
+- `prod-2026-09-22-1909` — Bug batches 7 + 8, PRs #152 + #154, merge commits `6d7b515` + `7c1ac32`. Batch 7: GeoGrid custom keyword input stays mounted (`f182d4dd`), KD fallback via `bulk_keyword_difficulty` (`7d3588e0`), free-credit refund on failed/empty calls + script-based locale for Thai/Japanese/Korean/Greek/Hebrew seeds (`973ffe0c`, `626f52f4`). Batch 8: AI Visibility no longer crashes on rank projects with a NULL domain (`ccd59b9e`, 13 users exposed); optimizer Generate uses a label-driven prompt for unknown section types (`b6ad2cd6`) and writes in the page language detected from a page excerpt (`77158dad`). Worker version `48b72e59-...` deployed from temp branch `tmp/combo-batch-7-8`, whose tree is byte-identical to `7c1ac32`. Rollback both: `git revert -m 1 7c1ac32 6d7b515 && git push origin production` AND `wrangler rollback --message "batch 7+8 regression" 78823c1c-9800-424c-ac95-32db9c0b70d9`.
+- `prod-2026-09-22-1946` — Release pipeline (PR #156, merge `cebc7ca`): the Worker now deploys from `production` in CI before the SPA; manual `npm run deploy` is guarded; staging gets a no-traffic Worker preview. First CI Worker deploy: version `738c28d4-e520-49ac-9d35-4a27f712c862` (runtime code identical to `48b72e59`). Rollback: `wrangler rollback --message "pipeline regression" 48b72e59-f192-436c-ae5b-5bdd3d7ffbf1`; workflow: `git revert -m 1 cebc7ca && git push origin production`.
+
 ## Rollback (Worker, `datawise-api`)
 
 The Worker is independent of Pages. To roll back:
@@ -182,6 +262,10 @@ Last known-good worker versions:
 - `e3dd87db` — Blueprint Phase 0+1 bindings + admin gate + health route (2026-07-10, PRs #96/#97).
 - `848b7073` — Blueprint Phase 2 orchestration + Idempotency-Key CORS fix (2026-07-11, PR #98).
 - `b901b103-306d-4046-b561-f76c0dfd5062` — current; Blueprint Phase 3 real research + meta-rewrite token budget (2026-07-14, PRs #100/#101). Do NOT roll back past this while Blueprint is in use: older versions run stub handlers.
+- `57269344-d11c-4269-af77-78f2a6b87eb1` — LLM Responses model resolver (PR #137) + unmerged PR #136 Content Writer external citations (2026-09-06). Do not deploy from bare `production` while #136 is open. Previous: `3184092e` (PR #136 only).
+- `8381909f-189f-439e-89a2-c34b8e276b47` — AI Engines v2 (PR #139) on top of #136 + #138 (2026-09-07). KV flag `ai-engines-v2` must be `1` for the v2 tracker path. Previous: `92b25f49` (production + #136 + #138, pre-#139).
+- `d82c26d3-6517-419e-bb63-823e6725c50e` — tracker scraper window 120s (PR #142, 2026-09-08). Built from production + #142 only; #140 (Local Pack geo anchor) is not included (it was already absent from `8381909f`). Previous: `8381909f`.
+- `78823c1c-9800-424c-ac95-32db9c0b70d9` — GSC impression-weighted aggregates (PR #149) + AI tracker daily rotating slice with 12-min deadline, cron now `0 6 * * *` (PR #150), 2026-09-16. Built from clean `production` `1f64a97`; #140 (Local Pack geo anchor) still unmerged and not included. Previous: `d82c26d3`.
 
 If a rollback reintroduces an old bug, also `git revert` the corresponding commit on `production` so the source matches the live worker. Otherwise the next deploy via CI re-ships the bad change.
 

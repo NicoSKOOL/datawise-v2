@@ -1,0 +1,67 @@
+{
+  "version": "0.1.20260902",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "cost": 0.004,
+  "tasks": [
+    {
+      "id": "fixture",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "result": [
+        {
+          "model_name": "sonar",
+          "input_tokens": 13,
+          "output_tokens": 438,
+          "web_search": true,
+          "money_spent": 0.005451,
+          "datetime": "2026-09-07 10:52:45 +00:00",
+          "items": [
+            {
+              "type": "message",
+              "sections": [
+                {
+                  "type": "text",
+                  "text": "The **best CRM for a small business** depends on your priorities, but for most teams **HubSpot** is the safest default because it has a genuinely usable free plan and a smooth path to paid tools as you grow.[4][5] If you want the strongest overall value for low cost, **Zoho CRM** is also a top contender, especially for budget-conscious businesses that still want broad functionality.[15][10]\n\n- **B",
+                  "annotations": [
+                    {
+                      "title": "10 Best Small Business CRM Software Of 2026",
+                      "url": "https://www.forbes.com/advisor/business/software/best-crm-small-business/",
+                      "start_index": null,
+                      "end_index": null,
+                      "text": null
+                    },
+                    {
+                      "title": "10 Best CRM For Small Business Reviewed For 2026",
+                      "url": "https://croclub.com/tools/best-crm-for-small-business/",
+                      "start_index": null,
+                      "end_index": null,
+                      "text": null
+                    },
+                    {
+                      "title": "12 Best Small Business CRM Tools in 2026",
+                      "url": "https://fitsmallbusiness.com/best-crm-for-small-business/",
+                      "start_index": null,
+                      "end_index": null,
+                      "text": null
+                    },
+                    {
+                      "title": "Best CRM for Small Business in 2026: 7 Top Picks Ranked",
+                      "url": "https://www.layer3labs.io/comparisons/best-crm-for-small-business",
+                      "start_index": null,
+                      "end_index": null,
+                      "text": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "fan_out_queries": [
+            "small business crm comparison"
+          ]
+        }
+      ]
+    }
+  ]
+}

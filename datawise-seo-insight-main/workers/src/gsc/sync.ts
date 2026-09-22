@@ -1,6 +1,7 @@
 import type { Env } from '../index';
 import { ACTIVITY_ERROR_CODE_HEADER } from '../activity';
 import { refreshGSCToken } from './oauth';
+import { WEIGHTED_POSITION, WEIGHTED_CTR, weightedPositionSql, weightedCtrSql } from './metrics-sql';
 import { isAdmin } from '../routes/admin';
 import type { AuthUser } from '../auth/google';
 
@@ -490,7 +491,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   // The ownership check above stays live (cheap, indexed) so cross-user reads
   // can never be served from cache.
   const GSC_DATA_CACHE_TTL = 6 * 60 * 60; // 6 hours
-  const cacheKey = `gsc_data:v1:${propertyId}:${url.searchParams.get('range') || 'none'}:${String(property.last_synced_at ?? 'never')}`;
+  const cacheKey = `gsc_data:v2:${propertyId}:${url.searchParams.get('range') || 'none'}:${String(property.last_synced_at ?? 'never')}`;
   const cachedBody = await env.KV.get(cacheKey);
   if (cachedBody) {
     return new Response(cachedBody, {
@@ -501,19 +502,19 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   // Accurate summaries from daily total rows
   const summary7d = await env.DB.prepare(`
     SELECT SUM(clicks) as total_clicks, SUM(impressions) as total_impressions,
-           ROUND(AVG(position), 1) as avg_position
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-7 days')
   `).bind(propertyId).first();
 
   const summary30d = await env.DB.prepare(`
     SELECT SUM(clicks) as total_clicks, SUM(impressions) as total_impressions,
-           ROUND(AVG(position), 1) as avg_position
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-30 days')
   `).bind(propertyId).first();
 
   const summary90d = await env.DB.prepare(`
     SELECT SUM(clicks) as total_clicks, SUM(impressions) as total_impressions,
-           ROUND(AVG(position), 1) as avg_position
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__'
   `).bind(propertyId).first();
 
@@ -521,7 +522,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     WITH query_rollup AS (
       SELECT
         query,
-        ROUND(AVG(position), 1) as avg_position,
+        ROUND(${WEIGHTED_POSITION}, 1) as avg_position,
         SUM(impressions) as impressions
       FROM gsc_search_data
       WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
@@ -529,7 +530,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     )
     SELECT
       COUNT(*) as total_queries,
-      ROUND(AVG(avg_position), 1) as avg_position,
+      ROUND(SUM(avg_position * impressions) * 1.0 / NULLIF(SUM(impressions), 0), 1) as avg_position,
       SUM(CASE WHEN avg_position <= 3 THEN 1 ELSE 0 END) as top_3,
       SUM(CASE WHEN avg_position <= 10 THEN 1 ELSE 0 END) as top_10,
       SUM(CASE WHEN avg_position <= 20 THEN 1 ELSE 0 END) as top_20,
@@ -541,7 +542,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   // Top queries by clicks (from query+page batch data)
   const topQueries = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position, ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
     FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query ORDER BY clicks DESC LIMIT 50
   `).bind(propertyId).all();
@@ -549,7 +550,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   // Top pages by clicks
   const topPages = await env.DB.prepare(`
     SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as avg_position
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position
     FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY page ORDER BY clicks DESC LIMIT 30
   `).bind(propertyId).all();
@@ -557,10 +558,10 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   // Opportunity keywords
   const opportunities = await env.DB.prepare(`
     SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as avg_position, ROUND(AVG(ctr), 4) as avg_ctr
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position, ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
     FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
     GROUP BY query
-    HAVING AVG(position) BETWEEN 5 AND 20 AND SUM(impressions) > 100
+    HAVING ${WEIGHTED_POSITION} BETWEEN 5 AND 20 AND SUM(impressions) > 100
     ORDER BY impressions DESC LIMIT 30
   `).bind(propertyId).all();
 
@@ -606,14 +607,14 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       : `((p.source = 'agg90' OR p.source = 'gsc') AND p.query != '__daily_total__' AND p.page != '__7d_query__')`;
     const cur = await env.DB.prepare(`
       SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
-             ROUND(AVG(position), 1) as avg_position
+             ROUND(${WEIGHTED_POSITION}, 1) as avg_position
       FROM gsc_search_data
       WHERE property_id = ? AND query = '__daily_total__' AND date >= date('now', '-${n} days')
     `).bind(propertyId).first();
 
     const prev = await env.DB.prepare(`
       SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
-             ROUND(AVG(position), 1) as avg_position
+             ROUND(${WEIGHTED_POSITION}, 1) as avg_position
       FROM gsc_search_data
       WHERE property_id = ? AND query = '__daily_total__'
         AND date >= date('now', '-${n * 2} days') AND date < date('now', '-${n} days')
@@ -628,7 +629,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
 
     const rangeQuery = await env.DB.prepare(`
       WITH rollup AS (
-        SELECT query, ROUND(AVG(position), 1) as avg_position, SUM(impressions) as impressions
+        SELECT query, ROUND(${WEIGHTED_POSITION}, 1) as avg_position, SUM(impressions) as impressions
         FROM gsc_search_data
         WHERE property_id = ? AND ${qpScope}
         GROUP BY query
@@ -641,7 +642,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
 
     const rangeOpps = await env.DB.prepare(`
       SELECT g.query as query, SUM(g.clicks) as clicks, SUM(g.impressions) as impressions,
-             ROUND(AVG(g.position), 1) as avg_position, ROUND(AVG(g.ctr), 4) as avg_ctr,
+             ROUND(${weightedPositionSql('g')}, 1) as avg_position, ROUND(${weightedCtrSql('g')}, 4) as avg_ctr,
              (SELECT p.page FROM gsc_search_data p
                 WHERE p.property_id = g.property_id AND p.query = g.query
                   AND p.page IS NOT NULL AND ${qpScopeP}
@@ -649,13 +650,13 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       FROM gsc_search_data g
       WHERE g.property_id = ? AND ${qpScopeG}
       GROUP BY g.query
-      HAVING AVG(g.position) BETWEEN 5 AND 20 AND SUM(g.impressions) > 10
+      HAVING ${weightedPositionSql('g')} BETWEEN 5 AND 20 AND SUM(g.impressions) > 10
       ORDER BY impressions DESC LIMIT 30
     `).bind(propertyId).all();
 
     const rangeTopPages = await env.DB.prepare(`
       SELECT page, SUM(clicks) as clicks, SUM(impressions) as impressions,
-             ROUND(AVG(position), 1) as avg_position
+             ROUND(${WEIGHTED_POSITION}, 1) as avg_position
       FROM gsc_search_data
       WHERE property_id = ? AND page IS NOT NULL AND ${qpScope}
       GROUP BY page
@@ -755,8 +756,8 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
         SELECT query,
                SUM(clicks) as clicks,
                SUM(impressions) as impressions,
-               ROUND(AVG(position), 1) as avg_position,
-               ROUND(AVG(ctr), 4) as avg_ctr
+               ROUND(${WEIGHTED_POSITION}, 1) as avg_position,
+               ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
         FROM gsc_search_data WHERE ${baseWhere} AND page = ?
         GROUP BY query
         ORDER BY impressions DESC
@@ -782,7 +783,7 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
         SELECT page
         FROM gsc_search_data WHERE ${whereClause}
         GROUP BY page
-        HAVING AVG(position) BETWEEN 11 AND 20 AND SUM(impressions) > 100
+        HAVING ${WEIGHTED_POSITION} BETWEEN 11 AND 20 AND SUM(impressions) > 100
       )
     `;
     const countResult = await env.DB.prepare(countSql).bind(...params).first();
@@ -792,12 +793,12 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
       SELECT page,
              SUM(clicks) as clicks,
              SUM(impressions) as impressions,
-             ROUND(AVG(position), 1) as avg_position,
-             ROUND(AVG(ctr), 4) as avg_ctr,
+             ROUND(${WEIGHTED_POSITION}, 1) as avg_position,
+             ROUND(${WEIGHTED_CTR}, 4) as avg_ctr,
              COUNT(DISTINCT query) as query_count
       FROM gsc_search_data WHERE ${whereClause}
       GROUP BY page
-      HAVING AVG(position) BETWEEN 11 AND 20 AND SUM(impressions) > 100
+      HAVING ${WEIGHTED_POSITION} BETWEEN 11 AND 20 AND SUM(impressions) > 100
       ORDER BY ${sortCol} ${sortOrder}
       LIMIT ? OFFSET ?
     `;
@@ -822,7 +823,7 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
   // top10: no position filter, we just take the top 10 by traffic
   // opportunities: position 5-20 with high impressions
   if (filter === 'opportunities') {
-    havingClause = 'HAVING AVG(position) BETWEEN 5 AND 20 AND SUM(impressions) > 100';
+    havingClause = `HAVING ${WEIGHTED_POSITION} BETWEEN 5 AND 20 AND SUM(impressions) > 100`;
   }
 
   const effectiveLimit = filter === 'top10' ? 10 : limit;
@@ -843,8 +844,8 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
     SELECT query,
            SUM(clicks) as clicks,
            SUM(impressions) as impressions,
-           ROUND(AVG(position), 1) as avg_position,
-           ROUND(AVG(ctr), 4) as avg_ctr
+           ROUND(${WEIGHTED_POSITION}, 1) as avg_position,
+           ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
     FROM gsc_search_data WHERE ${whereClause}
     GROUP BY query
     ${havingClause}

@@ -143,6 +143,9 @@ CREATE TABLE IF NOT EXISTS seo_projects (
   location_code INTEGER DEFAULT 2840,
   latitude REAL,
   longitude REAL,
+  ai_tracking_enabled INTEGER DEFAULT 0,
+  ai_brand_terms TEXT,
+  ai_engines TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -748,3 +751,102 @@ CREATE TABLE IF NOT EXISTS resend_contact_sync (
 );
 
 CREATE INDEX IF NOT EXISTS idx_resend_contact_sync_user ON resend_contact_sync(user_id);
+
+-- AI Visibility Tracker (migrations 2026-06-09, 2026-06-10, 2026-09-07).
+CREATE TABLE IF NOT EXISTS ai_tracked_queries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  query_text TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'custom',
+  keyword_id TEXT,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (project_id) REFERENCES seo_projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_tracked_queries_project ON ai_tracked_queries(project_id);
+
+CREATE TABLE IF NOT EXISTS ai_visibility_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query_id TEXT NOT NULL,
+  engine TEXT NOT NULL,
+  status TEXT NOT NULL,
+  citation_position INTEGER,
+  cited_url TEXT,
+  answer_excerpt TEXT,
+  run_type TEXT NOT NULL DEFAULT 'scheduled',
+  checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+  answer_text TEXT,
+  model TEXT,
+  location_code INTEGER,
+  language_code TEXT,
+  retrieved_url TEXT,
+  FOREIGN KEY (query_id) REFERENCES ai_tracked_queries(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_checks_query_engine ON ai_visibility_checks(query_id, engine, id);
+CREATE INDEX IF NOT EXISTS idx_ai_checks_checked_at ON ai_visibility_checks(checked_at);
+
+CREATE TABLE IF NOT EXISTS ai_check_citations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_id INTEGER NOT NULL,
+  domain TEXT NOT NULL,
+  url TEXT,
+  position INTEGER,
+  kind TEXT NOT NULL DEFAULT 'cited',
+  FOREIGN KEY (check_id) REFERENCES ai_visibility_checks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_citations_check ON ai_check_citations(check_id);
+CREATE INDEX IF NOT EXISTS idx_ai_citations_domain ON ai_check_citations(domain);
+
+CREATE TABLE IF NOT EXISTS ai_check_brands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  check_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  category TEXT,
+  is_you INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (check_id) REFERENCES ai_visibility_checks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ai_check_brands_check ON ai_check_brands(check_id);
+
+-- ---------------------------------------------------------------------------
+-- MCP server (workers/src/mcp). Personal API tokens for the datawise-mcp
+-- worker, the per-day DataForSEO dollar ledger, and a per-call log.
+-- Spec: docs/superpowers/specs/2026-09-07-datawise-mcp-server-design.md
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  token_hash    TEXT NOT NULL UNIQUE,
+  token_suffix  TEXT NOT NULL,
+  scopes        TEXT NOT NULL DEFAULT 'read',
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  last_used_at  TEXT,
+  expires_at    TEXT,
+  revoked_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
+
+-- One row per user per UTC day. A new day means a new row, so there is no
+-- rollover. user_id '_global' is the whole-server row.
+CREATE TABLE IF NOT EXISTS mcp_usage_daily (
+  user_id   TEXT NOT NULL,
+  day       TEXT NOT NULL,
+  cost_usd  REAL NOT NULL DEFAULT 0,
+  calls     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS mcp_calls (
+  id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  user_id     TEXT NOT NULL,
+  tool        TEXT NOT NULL,
+  cost_usd    REAL NOT NULL DEFAULT 0,
+  cached      INTEGER NOT NULL DEFAULT 0,
+  ok          INTEGER NOT NULL DEFAULT 1,
+  duration_ms INTEGER,
+  auth_kind   TEXT NOT NULL,
+  client_name TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_user_day ON mcp_calls(user_id, created_at);

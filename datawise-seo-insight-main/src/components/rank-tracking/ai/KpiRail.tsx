@@ -29,6 +29,7 @@ export default function KpiRail({ queries, engines, trend }: KpiRailProps) {
   const stats = useMemo(() => {
     let cited = 0;
     let mentioned = 0;
+    let retrieved = 0;
     let total = 0;
     const byEngine = new Map<AIEngine, { hit: number; total: number }>();
     for (const engine of engines) byEngine.set(engine, { hit: 0, total: 0 });
@@ -42,6 +43,7 @@ export default function KpiRail({ queries, engines, trend }: KpiRailProps) {
         e.total += 1;
         if (result.status === 'cited') { cited += 1; e.hit += 1; }
         if (result.status === 'mentioned') { mentioned += 1; e.hit += 1; }
+        if (result.status === 'retrieved') retrieved += 1;
       }
     }
 
@@ -51,6 +53,7 @@ export default function KpiRail({ queries, engines, trend }: KpiRailProps) {
 
     return {
       cited,
+      retrieved,
       appear: cited + mentioned,
       total,
       score: Math.round((100 * (cited + mentioned * 0.5)) / Math.max(total, 1)),
@@ -82,7 +85,7 @@ export default function KpiRail({ queries, engines, trend }: KpiRailProps) {
   if (stats.total === 0) return null;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className={`grid gap-3 sm:grid-cols-2 ${stats.retrieved > 0 ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
       <div className="flex flex-col gap-1.5 rounded-xl bg-[#166337] p-5 text-white">
         <div className="text-[10px] font-semibold uppercase tracking-widest text-[#A9D9B9]">Right now</div>
         <div className="flex items-baseline gap-1.5">
@@ -115,6 +118,18 @@ export default function KpiRail({ queries, engines, trend }: KpiRailProps) {
           <div className="text-xs text-muted-foreground">answers link to you</div>
         </CardContent>
       </Card>
+
+      {stats.retrieved > 0 && (
+        <Card>
+          <CardContent className="flex flex-col gap-1.5 p-5">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Fetched, not cited</div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold leading-none tracking-tight tabular-nums">{stats.retrieved}</span>
+            </div>
+            <div className="text-xs text-muted-foreground">pages AI pulled but left out</div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-1.5 p-5">

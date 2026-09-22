@@ -1,0 +1,146 @@
+{
+  "version": "0.1.20260902",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "cost": 0.004,
+  "tasks": [
+    {
+      "id": "fixture",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "result": [
+        {
+          "keyword": "best crm for small business",
+          "location_code": 2840,
+          "language_code": "en",
+          "model": null,
+          "check_url": "https://chatgpt.com/?prompt=best%20crm%20for%20small%20business&hints=search",
+          "datetime": "2026-09-07 10:53:16 +00:00",
+          "markdown": "The **best CRM for a small business** depends on your sales process, team size, and how much automation you need. These are the strongest options for most small businesses in 2026: [Fit Small Business](https://fitsmallbusiness.com/best-crm-for-small-business/?utm_source=chatgpt.com) [TechnologyAdvice](https://technologyadvice.com/small-business-crm/?utm_source=chatgpt.com)\n\nCRM | Best for | Why it\u2019s a good fit\n--- | --- | ---\n[hubspot.com](https://www.hubspot.com/products/crm?utm_source=chatgpt.com) | **Best overall / getting started** | Free plan, easy setup, strong contact management, email ",
+          "sources": [
+            {
+              "type": "chat_gpt_source",
+              "title": "12 Best Small Business CRM Tools",
+              "domain": "fitsmallbusiness.com",
+              "url": "https://fitsmallbusiness.com/best-crm-for-small-business/?utm_source=chatgpt.com",
+              "source_name": "Fit Small Business",
+              "publication_date": "2026-06-04 00:00:00 +00:00"
+            },
+            {
+              "type": "chat_gpt_source",
+              "title": "Best CRM for Small Business in 2026",
+              "domain": "technologyadvice.com",
+              "url": "https://technologyadvice.com/small-business-crm/?utm_source=chatgpt.com",
+              "source_name": "TechnologyAdvice",
+              "publication_date": null
+            },
+            {
+              "type": "chat_gpt_source",
+              "title": "HubSpot CRM",
+              "domain": "www.hubspot.com",
+              "url": "https://www.hubspot.com/products/crm?utm_source=chatgpt.com",
+              "source_name": "hubspot.com",
+              "publication_date": null
+            },
+            {
+              "type": "chat_gpt_source",
+              "title": "Best small business CRM of 2026",
+              "domain": "www.techradar.com",
+              "url": "https://www.techradar.com/best/best-crm-for-small-business?utm_source=chatgpt.com",
+              "source_name": "TechRadar",
+              "publication_date": "2026-05-29 09:04:25 +00:00"
+            }
+          ],
+          "search_results": [
+            {
+              "type": "chat_gpt_search_result",
+              "url": "https://www.example-retrieved.com/crm-guide",
+              "domain": "www.example-retrieved.com",
+              "title": "CRM guide",
+              "description": "retrieved only"
+            },
+            {
+              "type": "chat_gpt_search_result",
+              "url": "https://fitsmallbusiness.com/best-crm-for-small-business/?utm_source=chatgpt.com",
+              "domain": "fitsmallbusiness.com",
+              "title": "12 Best Small Business CRM Tools",
+              "description": "also cited"
+            }
+          ],
+          "brand_entities": [
+            {
+              "type": "chat_gpt_brand_entity",
+              "title": "HubSpot",
+              "category": "company",
+              "markdown": "HubSpot",
+              "urls": [
+                {
+                  "url": "https://www.hubspot.com/",
+                  "domain": "www.hubspot.com"
+                }
+              ]
+            },
+            {
+              "type": "chat_gpt_brand_entity",
+              "title": "Zoho CRM",
+              "category": "product",
+              "markdown": "Zoho CRM",
+              "urls": null
+            }
+          ],
+          "fan_out_queries": [
+            "best crm for small business 2026",
+            "cheap crm for startups"
+          ],
+          "item_types": [
+            "chat_gpt_text",
+            "chat_gpt_ad"
+          ],
+          "items": [
+            {
+              "type": "chat_gpt_text",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "markdown": "The **best CRM for a small business** depends on your sales process, team size, and how much automation you need. These are the strongest options for most small businesses in 2026: [Fit Small Business](https://fitsmallbusiness.com/best-crm-for-small-business/?utm_source=chatgpt.com) [TechnologyAdvic",
+              "sources": [
+                {
+                  "type": "chat_gpt_source",
+                  "title": "12 Best Small Business CRM Tools",
+                  "domain": "fitsmallbusiness.com",
+                  "url": "https://fitsmallbusiness.com/best-crm-for-small-business/?utm_source=chatgpt.com",
+                  "source_name": "Fit Small Business",
+                  "publication_date": "2026-06-04 00:00:00 +00:00"
+                },
+                {
+                  "type": "chat_gpt_source",
+                  "title": "Best CRM for Small Business in 2026",
+                  "domain": "technologyadvice.com",
+                  "url": "https://technologyadvice.com/small-business-crm/?utm_source=chatgpt.com",
+                  "source_name": "TechnologyAdvice",
+                  "publication_date": null
+                }
+              ],
+              "brand_entities": null
+            },
+            {
+              "type": "chat_gpt_ad",
+              "rank_group": 2,
+              "rank_absolute": 2,
+              "is_rendered": true,
+              "title": "Try Pipedrive",
+              "snippet": "sponsored",
+              "url": "https://www.pipedrive.com/",
+              "domain": "www.pipedrive.com",
+              "image_url": null,
+              "advertiser": {
+                "name": "Pipedrive",
+                "url": "https://www.pipedrive.com/",
+                "favicon_url": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

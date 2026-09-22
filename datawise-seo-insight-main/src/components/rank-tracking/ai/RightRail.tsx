@@ -30,13 +30,15 @@ interface TrendMiniCardProps {
 
 export function TrendMiniCard({ trend, engines, period, onPeriodChange }: TrendMiniCardProps) {
   const rows = useMemo(() => {
-    const byDate = new Map<string, { date: string; cited: number; mentioned: number; absent: number; total: number }>();
+    const byDate = new Map<string, { date: string; cited: number; mentioned: number; retrieved: number; absent: number; total: number; legacy: number }>();
     for (const point of trend) {
       if (!engines.includes(point.engine)) continue;
-      const row = byDate.get(point.date) || { date: point.date, cited: 0, mentioned: 0, absent: 0, total: 0 };
+      const row = byDate.get(point.date) || { date: point.date, cited: 0, mentioned: 0, retrieved: 0, absent: 0, total: 0, legacy: 0 };
       row.cited += point.cited;
       row.mentioned += point.mentioned;
-      row.absent += Math.max(0, point.total - point.cited - point.mentioned);
+      row.retrieved += point.retrieved ?? 0;
+      row.legacy += point.legacy ?? 0;
+      row.absent += Math.max(0, point.total - point.cited - point.mentioned - (point.retrieved ?? 0));
       row.total += point.total;
       byDate.set(point.date, row);
     }
@@ -79,9 +81,10 @@ export function TrendMiniCard({ trend, engines, period, onPeriodChange }: TrendM
             <div className="mt-0.5 flex h-3 overflow-hidden rounded-full">
               {rows[0].cited > 0 && <div style={{ width: `${(100 * rows[0].cited) / rows[0].total}%`, background: AI_OUTCOME_COLORS.cited }} />}
               {rows[0].mentioned > 0 && <div style={{ width: `${(100 * rows[0].mentioned) / rows[0].total}%`, background: AI_OUTCOME_COLORS.mentioned }} />}
+              {rows[0].retrieved > 0 && <div style={{ width: `${(100 * rows[0].retrieved) / rows[0].total}%`, background: AI_OUTCOME_COLORS.retrieved }} />}
               {rows[0].absent > 0 && <div style={{ width: `${(100 * rows[0].absent) / rows[0].total}%`, background: AI_OUTCOME_COLORS.absent }} />}
             </div>
-            <div className="text-[11px] text-muted-foreground">{rows[0].cited} cited · {rows[0].mentioned} mentioned · {rows[0].absent} absent</div>
+            <div className="text-[11px] text-muted-foreground">{rows[0].cited} cited · {rows[0].mentioned} mentioned{rows[0].retrieved > 0 ? ` · ${rows[0].retrieved} fetched` : ''} · {rows[0].absent} absent</div>
           </div>
         )}
 
@@ -94,10 +97,11 @@ export function TrendMiniCard({ trend, engines, period, onPeriodChange }: TrendM
                   <div
                     key={row.date}
                     className="flex min-w-0 flex-1 flex-col justify-end"
-                    title={`${shortDate(row.date)}: ${row.cited} cited, ${row.mentioned} mentioned, ${row.absent} absent of ${row.total}`}
+                    title={`${shortDate(row.date)}: ${row.cited} cited, ${row.mentioned} mentioned, ${row.retrieved} fetched, ${row.absent} absent of ${row.total}${row.legacy === row.total ? ' · API model' : row.legacy > 0 ? ' · mixed sources' : ' · real answers'}`}
                   >
                     {/* Baseline-anchored: cited (dark) grows up from the bottom. */}
                     <div style={{ height: row.absent * scale, background: AI_OUTCOME_COLORS.absent, borderRadius: '2px 2px 0 0' }} />
+                    <div style={{ height: row.retrieved * scale, background: AI_OUTCOME_COLORS.retrieved }} />
                     <div style={{ height: row.mentioned * scale, background: AI_OUTCOME_COLORS.mentioned }} />
                     <div style={{ height: row.cited * scale, background: AI_OUTCOME_COLORS.cited }} />
                   </div>

@@ -19,6 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useProperty } from '@/contexts/PropertyContext';
 import { AddWebsiteDialog } from '@/components/AddWebsiteDialog';
 import { BrandingCard } from '@/components/settings/BrandingCard';
+import { McpAccessCard } from '@/components/settings/McpAccessCard';
 import claudeLogo from '@lobehub/icons-static-svg/icons/claude-color.svg?url';
 import openaiLogo from '@lobehub/icons-static-svg/icons/openai.svg?url';
 import deepseekLogo from '@lobehub/icons-static-svg/icons/deepseek-color.svg?url';
@@ -1065,6 +1066,8 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      <McpAccessCard />
 
       {/* Promo Code */}
       <div className="rounded-xl border bg-card p-6 space-y-4">

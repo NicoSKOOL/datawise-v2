@@ -64,10 +64,10 @@ import {
 } from './routes/competitors';
 import {
   handleGoogleAIMode, handleChatGPTSearch, handlePerplexitySearch,
-  handleClaudeSearch, handleGeminiSearch,
   handlePeopleAlsoAsk, handleLighthouseSEO, handleGeoAnalyzer,
   handleVisibilitySummary, handleVisibilityCheck,
 } from './routes/ai';
+import { handleEngineCheck } from './routes/ai-engine-check';
 import {
   handleListProjects, handleCreateProject, handleUpdateProject, handleDeleteProject,
   handleListKeywords, handleAddKeywords, handleDeleteKeyword,
@@ -156,7 +156,7 @@ import {
 } from './routes/content-writer';
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
-import { checkAndDeductCredit, creditCostForRoute } from './middleware/credits';
+import { checkAndDeductCredit, creditCostForRoute, refundCredit, shouldRefundCredit } from './middleware/credits';
 import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
 import { syncResendContacts } from './email/resend-contacts';
@@ -198,9 +198,14 @@ export default {
       return;
     }
 
-    // Weekly AI visibility tracking run (Monday 06:00 UTC).
-    if (event.cron === '0 6 * * 1') {
-      await runScheduledAIChecks(env);
+    // Daily AI visibility tracking slice (06:00 UTC). Weekly cadence per
+    // query, spread over seven ticks: one Monday run could only finish ~100
+    // of 800+ tracked queries before the 15-minute cron wall and the rest
+    // were silently dropped (2026-09-16: 714 of 827 queries had no scheduled
+    // check in 3 weeks). Same absolute deadline discipline as the GSC sync,
+    // with 3 minutes of headroom for a 120s engine call plus its retry.
+    if (event.cron === '0 6 * * *') {
+      await runScheduledAIChecks(env, tickStart + 12 * 60 * 1000);
       return;
     }
 
@@ -476,20 +481,37 @@ export default {
           }, 403));
         }
         gatedCreditCost = cost;
-        const response = await handler();
-        // Append credit info to successful JSON responses
+        // A credit pays for a result, not an attempt: give it back when the
+        // handler throws, errors, or returns an empty DataForSEO result.
+        const refund = async () => {
+          if (result.unlimited) return;
+          try { await refundCredit(env, user.id, cost); } catch (e) { console.error('credit refund failed:', e); }
+        };
+        let response: Response;
+        try {
+          response = await handler();
+        } catch (e) {
+          await refund();
+          throw e;
+        }
+        // Append credit info to JSON responses
         if (response.headers.get('Content-Type')?.includes('application/json')) {
           const body = await response.json() as Record<string, unknown>;
+          const refunded = shouldRefundCredit(response.status, body);
+          if (refunded) await refund();
+          const creditsUsed = refunded && !result.unlimited ? result.credits_used - cost : result.credits_used;
           body._credits = {
-            credits_used: result.credits_used,
+            credits_used: creditsUsed,
             credits_limit: result.credits_limit,
             unlimited: result.unlimited,
+            ...(refunded ? { refunded: true } : {}),
           };
           return addCors(new Response(JSON.stringify(body), {
             status: response.status,
             headers: { 'Content-Type': 'application/json' },
           }));
         }
+        if (response.status >= 400) await refund();
         return addCors(response);
       };
 
@@ -733,11 +755,8 @@ export default {
       if (path === '/api/ai/perplexity' && method === 'POST') {
         return await withCredit(() => handlePerplexitySearch(request, env));
       }
-      if (path === '/api/ai/claude-search' && method === 'POST') {
-        return await withCredit(() => handleClaudeSearch(request, env));
-      }
-      if (path === '/api/ai/gemini-search' && method === 'POST') {
-        return await withCredit(() => handleGeminiSearch(request, env));
+      if (path === '/api/ai/engine-check' && method === 'POST') {
+        return await withCredit(() => handleEngineCheck(request, env));
       }
       if (path === '/api/ai/people-also-ask' && method === 'POST') {
         return await withCredit(() => handlePeopleAlsoAsk(request, env));

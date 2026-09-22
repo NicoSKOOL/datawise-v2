@@ -1,0 +1,14 @@
+{
+  "version": "0.1.20260902",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "cost": 0.004,
+  "tasks": [
+    {
+      "id": "fixture",
+      "status_code": 50401,
+      "status_message": "Internal Error - Timeout.",
+      "result": null
+    }
+  ]
+}

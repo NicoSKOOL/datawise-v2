@@ -791,16 +791,18 @@ function ServicePageOptimizer() {
   const [generatedSections, setGeneratedSections] = useState<Record<string, string>>({});
   const [generatingSection, setGeneratingSection] = useState<string | null>(null);
 
-  const handleGenerateSection = async (sectionType: string) => {
+  const handleGenerateSection = async (section: { section_type: string; label?: string; why?: string }) => {
+    const sectionType = section.section_type;
     if (!analysis || generatingSection) return;
     setGeneratingSection(sectionType);
     try {
       const result = await generateSection(
-        sectionType,
+        section,
         analysis.service_type,
         analysis.location,
         analysis.tone_analysis || 'professional and helpful',
         pageData?.url || '',
+        pageData?.body_text,
       );
       setGeneratedSections(prev => ({ ...prev, [sectionType]: result.content }));
     } catch (err) {
@@ -1363,7 +1365,7 @@ function ServicePageOptimizer() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleGenerateSection(section.section_type)}
+                          onClick={() => handleGenerateSection({ section_type: section.section_type, label: section.label, why: section.why_needed })}
                           disabled={generatingSection !== null}
                         >
                           {generatingSection === section.section_type ? (
@@ -1417,7 +1419,7 @@ function ServicePageOptimizer() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleGenerateSection(section.section_type)}
+                              onClick={() => handleGenerateSection({ section_type: section.section_type, label: section.label, why: section.why_relevant })}
                               disabled={generatingSection !== null}
                             >
                               {generatingSection === section.section_type ? (

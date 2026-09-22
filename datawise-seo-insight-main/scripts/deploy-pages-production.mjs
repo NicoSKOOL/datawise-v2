@@ -16,9 +16,11 @@ const skipBuild = args.has('--skip-build');
 
 const EXPECTED_BRANCH = 'production';
 const EXPECTED_API_URL = 'https://datawise-api.nico-510.workers.dev';
+const EXPECTED_MCP_URL = 'https://mcp.datawiseseo.com';
 const FORBIDDEN_BUNDLE_MARKERS = [
   ['Local development API URL', 'http://localhost:8787'],
   ['Removed Site Audit browser-polling wording', 'completion no longer depends on browser polling'],
+  ['Local MCP worker URL', 'http://localhost:8788'],
 ];
 const REQUIRED_BUNDLE_MARKERS = [
   ['Content Writer route', '/content-writer'],
@@ -35,6 +37,9 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Keyword metric amber state', 'bg-amber-50'],
   ['Keyword metric red state', 'bg-red-50'],
   ['Blueprint canvas lazy chunk present', 'BlueprintCanvas'],
+  ['MCP settings card', 'MCP & AI assistants'],
+  ['MCP connected apps', 'Connected apps'],
+  ['Production MCP worker URL', EXPECTED_MCP_URL],
 ];
 const REQUIRED_SOURCE_MARKERS = [
   ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
@@ -87,11 +92,15 @@ const REQUIRED_SOURCE_MARKERS = [
   ['Auth chooser create-account path present', 'src/pages/Auth.tsx', 'Create an account'],
   ['Auth chooser syncs mode query param', 'src/pages/Auth.tsx', 'useSearchParams'],
   ['Auth duplicate-email nudge present', 'src/pages/Auth.tsx', 'This email already has an account.'],
+  ['Instant Check renders the engine result panel', 'src/pages/AIOverview.tsx', '<EngineResultPanel'],
+  ['Instant Check drives tabs from the engine order', 'src/pages/AIOverview.tsx', 'AI_ENGINE_ORDER.map'],
+  ['Engine order includes Gemini', 'src/lib/ai-tracking.ts', "'google_ai_mode', 'chatgpt', 'gemini', 'perplexity'"],
 ];
 const FORBIDDEN_SOURCE_MARKERS = [
   ['Dashboard must not render rank position distribution', 'src/pages/Dashboard.tsx', '<RankDistributionChart'],
   ['Dashboard must not import rank distribution chart', 'src/pages/Dashboard.tsx', "import RankDistributionChart from '@/components/rank-tracking/RankDistributionChart';"],
   ['Site Audit must not mention browser polling in user copy', 'src/pages/SiteAudit.tsx', 'completion no longer depends on browser polling'],
+  ['Instant Check must not use the retired per-engine fetcher', 'src/pages/AIOverview.tsx', 'fetchChatGPTSearch'],
 ];
 
 function run(command, commandArgs, options = {}) {
@@ -273,6 +282,10 @@ async function main() {
 
   if (process.env.VITE_API_URL !== EXPECTED_API_URL) {
     throw new Error(`VITE_API_URL must be ${EXPECTED_API_URL}; received ${process.env.VITE_API_URL || 'unset'}.`);
+  }
+
+  if (process.env.VITE_MCP_URL !== EXPECTED_MCP_URL) {
+    throw new Error(`VITE_MCP_URL must be ${EXPECTED_MCP_URL}; received ${process.env.VITE_MCP_URL || 'unset'}.`);
   }
 
   if (deploy) {

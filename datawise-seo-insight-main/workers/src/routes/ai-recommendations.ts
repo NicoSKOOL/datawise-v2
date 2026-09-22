@@ -5,14 +5,14 @@
 export interface RecCitation { domain: string; url: string | null; position: number }
 export interface EngineCheck {
   engine: string;
-  status: 'cited' | 'mentioned' | 'absent' | 'no_answer' | 'error';
+  status: 'cited' | 'mentioned' | 'retrieved' | 'absent' | 'no_answer' | 'error';
   citation_position: number | null;
   citations: RecCitation[];
 }
 export interface Recommendation { title: string; body: string; priority: 'high' | 'medium' | 'low' }
 
 const ENGINE_LABELS: Record<string, string> = {
-  google_ai_mode: 'Google AI Mode', chatgpt: 'ChatGPT', perplexity: 'Perplexity',
+  google_ai_mode: 'Google AI Mode', chatgpt: 'ChatGPT', gemini: 'Gemini', perplexity: 'Perplexity',
 };
 const COMMUNITY_DOMAINS = ['reddit.com', 'quora.com', 'news.ycombinator.com'];
 const DIRECTORY_DOMAINS = ['g2.com', 'capterra.com', 'clutch.co', 'trustpilot.com', 'yelp.com', 'producthunt.com'];
@@ -86,6 +86,17 @@ export function buildRecommendation(query: string, checks: EngineCheck[], userDo
 
   const absent = usable.find(c => c.status === 'absent');
   if (absent) return absentPlay(query, absent);
+
+  const retrieved = usable.find(c => c.status === 'retrieved');
+  if (retrieved) {
+    const own = retrieved.citations.find(c => isUserDomain(c.domain, userDomain));
+    const url = own?.url ? ` (${own.url})` : '';
+    return {
+      title: `${label(retrieved.engine)} fetched your page but did not cite it`,
+      body: `${label(retrieved.engine)} pulled your page${url} while answering "${query}" and left it out of the answer. Add a 40-60 word answer capsule at the top of that page that answers the question directly, include one sourced statistic, and make the page title match the question.`,
+      priority: 'high',
+    };
+  }
 
   const mentioned = usable.find(c => c.status === 'mentioned');
   if (mentioned) {
