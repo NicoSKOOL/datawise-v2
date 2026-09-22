@@ -13,12 +13,13 @@
 //
 //     https://staging.datawise-118.pages.dev
 //
-// That URL always points at the most recent staging deploy. It talks to the
-// live Worker API (the same VITE_API_URL as production), so it is safe for
-// testing screens and bug fixes against real data. It is NOT an isolated
-// data sandbox.
+// That URL always points at the most recent staging deploy. In CI it talks to
+// the branch's Worker preview version (STAGING_API_URL), which gets no live
+// traffic but shares the live D1/KV data. Without STAGING_API_URL it talks to
+// the live Worker API. It is NOT an isolated data sandbox.
 //
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -44,6 +45,28 @@ async function main() {
   //    bundle marker, and archives the exact build. Identical guard,
   //    zero duplication, impossible to drift looser than production.
   run('node', ['scripts/deploy-pages-production.mjs']);
+
+  // 1b. Point staging at the branch's Worker preview version when CI uploaded
+  //     one (STAGING_API_URL). The guard above validated the same source with
+  //     the live API URL; only the baked-in API URL differs.
+  const stagingApiUrl = process.env.STAGING_API_URL;
+  if (stagingApiUrl) {
+    if (!/^https:\/\/[a-z0-9-]+-datawise-api\.nico-510\.workers\.dev$/.test(stagingApiUrl)) {
+      throw new Error(`STAGING_API_URL must be a datawise-api preview alias URL; received ${stagingApiUrl}`);
+    }
+    console.log(`Rebuilding for staging against Worker preview ${stagingApiUrl}`);
+    const result = spawnSync('npx', ['vite', 'build'], {
+      cwd: appRoot,
+      stdio: 'inherit',
+      env: { ...process.env, VITE_API_URL: stagingApiUrl },
+    });
+    if (result.status !== 0) throw new Error('staging rebuild failed');
+    const assets = path.join(appRoot, 'dist', 'assets');
+    const bundles = fs.readdirSync(assets).filter((f) => f.endsWith('.js'));
+    if (!bundles.some((f) => fs.readFileSync(path.join(assets, f), 'utf8').includes(stagingApiUrl))) {
+      throw new Error('staging rebuild does not reference STAGING_API_URL; refusing to publish');
+    }
+  }
 
   // 2. Publish the validated build to the stable staging alias.
   //    --branch=staging is NOT the Cloudflare production branch, so this
