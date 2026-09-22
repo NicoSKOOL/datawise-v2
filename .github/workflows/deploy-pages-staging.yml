@@ -9,6 +9,14 @@ name: Deploy DataWise Pages Staging
 #
 # Builds happen on GitHub from the chosen branch HEAD, never from a laptop,
 # so a stale local copy can never be what gets tested.
+#
+# The branch's Worker code is uploaded as a Worker *version* with the
+# `staging` preview alias (https://staging-datawise-api.nico-510.workers.dev)
+# and the staging SPA is built against it. An uploaded version gets NO live
+# traffic and runs no crons; only a deploy from `production` does. It shares
+# the live D1/KV/R2 bindings and secrets, so treat staging data as real.
+# Google sign-in / Search Console / Bing connect started on staging need the
+# preview alias callback URLs registered with each OAuth provider.
 
 on:
   push:
@@ -34,6 +42,9 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: 510d0ac03a3a8f5ebeac39be4926ed77
       VITE_API_URL: https://datawise-api.nico-510.workers.dev
+      # The guard checks the build against the live API URL; the staging
+      # script then rebuilds against this preview alias before publishing.
+      STAGING_API_URL: https://staging-datawise-api.nico-510.workers.dev
       VITE_MCP_URL: https://mcp.datawiseseo.com
     steps:
       - name: Checkout
@@ -47,6 +58,21 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: datawise-seo-insight-main/package-lock.json
+
+      - name: Setup Node (Worker)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: datawise-seo-insight-main/workers/package-lock.json
+
+      - name: Upload Worker preview version (no live traffic)
+        working-directory: datawise-seo-insight-main/workers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npm ci
+          npm run deploy:preview -- --message="staging-${GITHUB_SHA::7}"
 
       - name: Install dependencies
         working-directory: datawise-seo-insight-main
