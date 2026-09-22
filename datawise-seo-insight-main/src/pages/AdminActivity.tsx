@@ -14,6 +14,7 @@ import {
   type ActivityFunnelStep,
   type ActivityOverview,
   type ActivitySummaryResponse,
+  type ActivityTopAction,
   type ActivityUser,
   type ActivityUserDetail,
 } from '@/lib/admin';
@@ -26,6 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
 import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table';
@@ -93,15 +95,18 @@ export default function AdminActivity() {
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<ActivityOverview | null>(null);
   const [features, setFeatures] = useState<ActivityFeature[]>([]);
+  const [topActions, setTopActions] = useState<ActivityTopAction[]>([]);
   const [users, setUsers] = useState<ActivityUser[]>([]);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [funnel, setFunnel] = useState<ActivityFunnelStep[]>([]);
   const [query, setQuery] = useState('');
   const [tier, setTier] = useState('all');
-  const [sort, setSort] = useState('last_active');
+  const [sort, setSort] = useState('ran');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<ActivityUserDetail | null>(null);
   const [loadingUser, setLoadingUser] = useState(false);
+  // User timelines hide page loads (product GETs) by default.
+  const [showPageLoads, setShowPageLoads] = useState(false);
   const [llmSummary, setLlmSummary] = useState<ActivitySummaryResponse | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
@@ -117,6 +122,7 @@ export default function AdminActivity() {
       ]);
       setOverview(overviewData);
       setFeatures(featureData.features);
+      setTopActions(featureData.top_actions ?? []);
       setUsers(userData.users);
       setFunnel(funnelData.steps);
       setEvents(eventData.events);
@@ -145,7 +151,7 @@ export default function AdminActivity() {
       return;
     }
     setLoadingUser(true);
-    fetchActivityUserDetail(selectedUserId, from, to)
+    fetchActivityUserDetail(selectedUserId, from, to, showPageLoads)
       .then(setSelectedUser)
       .catch((err) => {
         toast({
@@ -155,24 +161,30 @@ export default function AdminActivity() {
         });
       })
       .finally(() => setLoadingUser(false));
-  }, [selectedUserId, from, to, toast]);
+  }, [selectedUserId, from, to, showPageLoads, toast]);
 
   const totals = overview?.totals;
   const totalFailures = (totals?.blocked_events ?? 0) + (totals?.error_events ?? 0);
+  // Tools are ranked by what users actually RAN, not raw event rows (which
+  // are mostly screens loading data and autosaves).
   const toolFeatures = useMemo(
-    () => features.filter((feature) => TOOL_FEATURES.has(feature.feature)),
+    () => features
+      .filter((feature) => TOOL_FEATURES.has(feature.feature))
+      .sort((a, b) => (Number(b.ran || 0) - Number(a.ran || 0)) || (Number(b.events || 0) - Number(a.events || 0))),
     [features],
   );
-  const maxFeatureEvents = useMemo(
-    () => Math.max(1, ...toolFeatures.map((f) => Number(f.events || 0))),
+  const maxFeatureRan = useMemo(
+    () => Math.max(1, ...toolFeatures.map((f) => Number(f.ran || 0))),
     [toolFeatures],
   );
   const mostUsedTool = useMemo(
-    () => [...toolFeatures].sort((a, b) => Number(b.events || 0) - Number(a.events || 0))[0] ?? null,
+    () => toolFeatures.find((f) => Number(f.ran || 0) > 0) ?? null,
     [toolFeatures],
   );
   const broadestTool = useMemo(
-    () => [...toolFeatures].sort((a, b) => Number(b.active_users || 0) - Number(a.active_users || 0))[0] ?? null,
+    () => [...toolFeatures]
+      .filter((f) => Number(f.ran_users || 0) > 0)
+      .sort((a, b) => Number(b.ran_users || 0) - Number(a.ran_users || 0))[0] ?? null,
     [toolFeatures],
   );
 
@@ -269,13 +281,13 @@ export default function AdminActivity() {
           icon={<BarChart3 className="h-5 w-5" />}
           label="Most used tool"
           value={mostUsedTool ? featureLabel(mostUsedTool.feature) : 'No tool usage'}
-          sublabel={mostUsedTool ? `${formatNumber(mostUsedTool.events)} runs in selected range` : 'Run a product tool to populate this.'}
+          sublabel={mostUsedTool ? `${formatNumber(mostUsedTool.ran)} runs in selected range` : 'Run a product tool to populate this.'}
         />
         <ToolHighlight
           icon={<Users className="h-5 w-5" />}
           label="Broadest tool reach"
           value={broadestTool ? featureLabel(broadestTool.feature) : 'No tool usage'}
-          sublabel={broadestTool ? `${formatNumber(broadestTool.active_users)} active users used it` : 'Counts unique users per tool.'}
+          sublabel={broadestTool ? `${formatNumber(broadestTool.ran_users)} users ran it` : 'Counts unique users who ran each tool.'}
         />
         <Card>
           <CardHeader className="pb-3">
@@ -368,10 +380,22 @@ export default function AdminActivity() {
                 <CardTitle className="text-xl">Tool adoption</CardTitle>
               </CardHeader>
               <CardContent>
-                <FeatureTable rows={toolFeatures} maxEvents={maxFeatureEvents} loading={loading} />
+                <FeatureTable rows={toolFeatures} maxRan={maxFeatureRan} loading={loading} />
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Ran counts real actions (tool runs, queries, checks, created items, credit-using calls). Opened counts screens loading data.
+                </p>
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl">Top actions</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <TopActionsTable rows={topActions} loading={loading} />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
@@ -416,6 +440,7 @@ export default function AdminActivity() {
                 <Select value={sort} onValueChange={setSort}>
                   <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="ran">Ran</SelectItem>
                     <SelectItem value="last_active">Last active</SelectItem>
                     <SelectItem value="events">Events</SelectItem>
                     <SelectItem value="credits">Credits</SelectItem>
@@ -462,7 +487,7 @@ export default function AdminActivity() {
           {loadingUser || !selectedUser ? (
             <LoadingRow />
           ) : (
-            <UserDetail detail={selectedUser} />
+            <UserDetail detail={selectedUser} showPageLoads={showPageLoads} onShowPageLoadsChange={setShowPageLoads} />
           )}
         </DialogContent>
       </Dialog>
@@ -513,7 +538,7 @@ function DatasetItem({ label, detail }: { label: string; detail: string }) {
   );
 }
 
-function FeatureTable({ rows, maxEvents, loading }: { rows: ActivityFeature[]; maxEvents: number; loading: boolean }) {
+function FeatureTable({ rows, maxRan, loading }: { rows: ActivityFeature[]; maxRan: number; loading: boolean }) {
   if (loading && rows.length === 0) return <LoadingRow />;
   if (rows.length === 0) return <EmptyRow label="No tool activity in this range yet." />;
   return (
@@ -521,8 +546,9 @@ function FeatureTable({ rows, maxEvents, loading }: { rows: ActivityFeature[]; m
       <TableHeader>
         <TableRow>
           <TableHead>Feature</TableHead>
-          <TableHead className="text-right">Users</TableHead>
-          <TableHead className="text-right">Events</TableHead>
+          <TableHead className="text-right">Ran</TableHead>
+          <TableHead className="text-right">Users who ran</TableHead>
+          <TableHead className="text-right">Opened</TableHead>
           <TableHead className="text-right">Credits</TableHead>
           <TableHead className="text-right">Fail rate</TableHead>
         </TableRow>
@@ -531,23 +557,56 @@ function FeatureTable({ rows, maxEvents, loading }: { rows: ActivityFeature[]; m
         {rows.map((row) => {
           const failures = Number(row.blocked_events || 0) + Number(row.error_events || 0);
           const events = Number(row.events || 0);
+          const ran = Number(row.ran || 0);
           return (
             <TableRow key={row.feature}>
               <TableCell>
                 <div className="space-y-1">
                   <div className="font-medium">{featureLabel(row.feature)}</div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                    <div className="h-full rounded-full bg-primary/80" style={{ width: `${Math.max(4, (events / maxEvents) * 100)}%` }} />
+                    <div className="h-full rounded-full bg-primary/80" style={{ width: `${Math.max(4, (ran / maxRan) * 100)}%` }} />
                   </div>
                 </div>
               </TableCell>
-              <TableCell className="text-right">{formatNumber(row.active_users)}</TableCell>
-              <TableCell className="text-right">{formatNumber(row.events)}</TableCell>
+              <TableCell className="text-right font-medium">{formatNumber(ran)}</TableCell>
+              <TableCell className="text-right">{formatNumber(row.ran_users)}</TableCell>
+              <TableCell className="text-right">{formatNumber(row.opened)}</TableCell>
               <TableCell className="text-right">{formatNumber(row.credits_used)}</TableCell>
               <TableCell className="text-right">{pct(failures, events)}</TableCell>
             </TableRow>
           );
         })}
+      </TableBody>
+    </Table>
+  );
+}
+
+function TopActionsTable({ rows, loading }: { rows: ActivityTopAction[]; loading: boolean }) {
+  if (loading && rows.length === 0) return <LoadingRow />;
+  if (rows.length === 0) return <EmptyRow label="No tool runs in this range yet." />;
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Action</TableHead>
+          <TableHead>Tool</TableHead>
+          <TableHead className="text-right">Runs</TableHead>
+          <TableHead className="text-right">Users</TableHead>
+          <TableHead className="text-right">Credits</TableHead>
+          <TableHead className="text-right">Fail rate</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={`${row.feature}-${row.event_name}-${row.action}`}>
+            <TableCell className="font-medium">{row.event_name}</TableCell>
+            <TableCell>{featureLabel(row.feature)}</TableCell>
+            <TableCell className="text-right">{formatNumber(row.ran)}</TableCell>
+            <TableCell className="text-right">{formatNumber(row.users)}</TableCell>
+            <TableCell className="text-right">{formatNumber(row.credits_used)}</TableCell>
+            <TableCell className="text-right">{pct(Number(row.failures || 0), Number(row.ran || 0))}</TableCell>
+          </TableRow>
+        ))}
       </TableBody>
     </Table>
   );
@@ -564,6 +623,7 @@ function UserTable({ users, loading, onSelect }: { users: ActivityUser[]; loadin
           <TableHead>Tier</TableHead>
           <TableHead>Top feature</TableHead>
           <TableHead className="text-right">Active days</TableHead>
+          <TableHead className="text-right">Ran</TableHead>
           <TableHead className="text-right">Events</TableHead>
           <TableHead className="text-right">Credits</TableHead>
           <TableHead>Last active</TableHead>
@@ -584,6 +644,7 @@ function UserTable({ users, loading, onSelect }: { users: ActivityUser[]; loadin
             </TableCell>
             <TableCell>{featureLabel(user.top_feature)}</TableCell>
             <TableCell className="text-right">{formatNumber(user.active_days)}</TableCell>
+            <TableCell className="text-right font-medium">{formatNumber(user.ran_events)}</TableCell>
             <TableCell className="text-right">{formatNumber(user.total_events)}</TableCell>
             <TableCell className="text-right">{formatNumber(user.credits_used)}</TableCell>
             <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{formatDate(user.last_active)}</TableCell>
@@ -640,7 +701,9 @@ function EventTable({ events, loading, compact = false }: { events: ActivityEven
   );
 }
 
-function UserDetail({ detail }: { detail: ActivityUserDetail }) {
+function UserDetail({
+  detail, showPageLoads, onShowPageLoadsChange,
+}: { detail: ActivityUserDetail; showPageLoads: boolean; onShowPageLoadsChange: (value: boolean) => void }) {
   const user = detail.user;
   const summary = detail.summary || {};
   return (
@@ -662,7 +725,8 @@ function UserDetail({ detail }: { detail: ActivityUserDetail }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+        <MiniMetric label="Ran" value={summary.ran_events ?? 0} />
         <MiniMetric label="Events" value={summary.total_events ?? 0} />
         <MiniMetric label="Active days" value={summary.active_days ?? 0} />
         <MiniMetric label="Credits" value={summary.credits_used ?? 0} />
@@ -680,15 +744,19 @@ function UserDetail({ detail }: { detail: ActivityUserDetail }) {
             ) : detail.features.map((feature) => (
               <div key={feature.feature} className="flex items-center justify-between gap-3 text-sm">
                 <span>{featureLabel(feature.feature)}</span>
-                <span className="text-muted-foreground">{formatNumber(feature.events)} events</span>
+                <span className="text-muted-foreground">{formatNumber(feature.ran)} ran · {formatNumber(feature.events)} events</span>
               </div>
             ))}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0">
             <CardTitle className="text-base">Timeline</CardTitle>
+            <div className="flex items-center gap-2">
+              <Switch id="show-page-loads" checked={showPageLoads} onCheckedChange={onShowPageLoadsChange} />
+              <Label htmlFor="show-page-loads" className="text-sm font-normal text-muted-foreground">Show page loads</Label>
+            </div>
           </CardHeader>
           <CardContent>
             <EventTable events={detail.events} loading={false} compact />

@@ -37,11 +37,51 @@ function isoDaysAgo(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Opened vs Ran. Raw app_events rows overstate usage: most product rows are
+// GET requests from screens loading data, plus PATCH/PUT autosaves. Tool
+// rankings use these two classifications instead of raw row counts.
+//
+// OPENED: a product screen loaded data (product GET).
+// RAN: a real action. Any credit-using call, or a product POST that is not
+//   account plumbing (integration connect/sync, promo redeem, settings,
+//   feedback, client telemetry, and so on).
+// Everything else (edits, autosaves, deletes, plumbing) is neither, but still
+// counts toward the existing total/event columns.
+//
+// Pass the table alias (e.g. 'e') when the query joins other tables.
+const RAN_EXCLUDED_FEATURES = ['integrations', 'auth', 'admin', 'promo', 'settings', 'feedback', 'client'];
+const RAN_EXCLUDED_ACTIONS = ['connect', 'disconnect', 'properties', 'redeem', 'sync'];
+
+const sqlList = (values: string[]) => values.map((v) => `'${v}'`).join(', ');
+
+function openedSql(alias = ''): string {
+  const c = alias ? `${alias}.` : '';
+  return `(${c}event_category = 'product' AND COALESCE(${c}method, '') = 'GET')`;
+}
+
+function ranSql(alias = ''): string {
+  const c = alias ? `${alias}.` : '';
+  return `(${c}event_category = 'product' AND (
+    COALESCE(${c}credit_cost, 0) > 0
+    OR (COALESCE(${c}method, '') = 'POST'
+        AND ${c}feature NOT IN (${sqlList(RAN_EXCLUDED_FEATURES)})
+        AND ${c}action NOT IN (${sqlList(RAN_EXCLUDED_ACTIONS)}))
+  ))`;
+}
+
+// ?include_opened=0 drops page-load (OPENED) rows from event lists.
+function excludeOpened(url: URL): boolean {
+  const v = url.searchParams.get('include_opened');
+  return v === '0' || v === 'false';
+}
+
 interface EventRow {
   id: string;
   event_name: string;
   event_category: string;
   feature: string;
+  action?: string | null;
+  method?: string | null;
   route: string | null;
   error_code: string | null;
   outcome: string | null;
@@ -52,7 +92,7 @@ interface EventRow {
   name?: string | null;
 }
 
-const EVENT_COLUMNS = `e.id, e.event_name, e.event_category, e.feature, e.route,
+const EVENT_COLUMNS = `e.id, e.event_name, e.event_category, e.feature, e.action, e.method, e.route,
   e.error_code, e.outcome, e.status_code, e.credit_cost, e.created_at`;
 
 // GET /api/admin/activity/overview?from=&to=
@@ -61,37 +101,44 @@ export async function handleActivityOverview(request: Request, env: Env, user: A
   const range = parseRange(new URL(request.url));
   if (!range) return json({ error: 'Invalid date range' }, 400);
 
-  const totals = await env.DB.prepare(
-    `SELECT
-       COUNT(DISTINCT user_id) AS active_users,
-       COUNT(*) AS total_events,
-       SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS success_events,
-       SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked_events,
-       SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_events,
-       COALESCE(SUM(credit_cost), 0) AS credits_used,
-       CAST(COALESCE(AVG(duration_ms), 0) AS INTEGER) AS avg_duration_ms
-     FROM app_events
-     WHERE event_category = 'product' AND created_at >= ? AND created_at < ?`
-  ).bind(range.from, range.toExclusive).first();
-
-  const newUsers = await env.DB.prepare(
-    `SELECT COUNT(*) AS new_users FROM users WHERE created_at >= ? AND created_at < ?`
-  ).bind(range.from, range.toExclusive).first();
-
-  const failures = await env.DB.prepare(
-    `SELECT ${EVENT_COLUMNS}, u.email, u.name
-       FROM app_events e
-       LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.outcome IN ('blocked', 'error') AND e.created_at >= ? AND e.created_at < ?
-      ORDER BY e.created_at DESC
-      LIMIT 15`
-  ).bind(range.from, range.toExclusive).all<EventRow>();
+  // Independent reads: run them concurrently.
+  const [totals, newUsers, failures] = await Promise.all([
+    env.DB.prepare(
+      `SELECT
+         COUNT(DISTINCT user_id) AS active_users,
+         COUNT(*) AS total_events,
+         SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran_events,
+         SUM(CASE WHEN ${openedSql()} THEN 1 ELSE 0 END) AS opened_events,
+         COUNT(DISTINCT CASE WHEN ${ranSql()} THEN user_id END) AS ran_users,
+         SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) AS success_events,
+         SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked_events,
+         SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_events,
+         COALESCE(SUM(credit_cost), 0) AS credits_used,
+         CAST(COALESCE(AVG(duration_ms), 0) AS INTEGER) AS avg_duration_ms
+       FROM app_events
+       WHERE event_category = 'product' AND created_at >= ? AND created_at < ?`
+    ).bind(range.from, range.toExclusive).first(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS new_users FROM users WHERE created_at >= ? AND created_at < ?`
+    ).bind(range.from, range.toExclusive).first(),
+    env.DB.prepare(
+      `SELECT ${EVENT_COLUMNS}, u.email, u.name
+         FROM app_events e
+         LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.outcome IN ('blocked', 'error') AND e.created_at >= ? AND e.created_at < ?
+        ORDER BY e.created_at DESC
+        LIMIT 15`
+    ).bind(range.from, range.toExclusive).all<EventRow>(),
+  ]);
 
   return json({
     totals: {
       active_users: Number(totals?.active_users || 0),
       new_users: Number(newUsers?.new_users || 0),
       total_events: Number(totals?.total_events || 0),
+      ran_events: Number(totals?.ran_events || 0),
+      opened_events: Number(totals?.opened_events || 0),
+      ran_users: Number(totals?.ran_users || 0),
       success_events: Number(totals?.success_events || 0),
       blocked_events: Number(totals?.blocked_events || 0),
       error_events: Number(totals?.error_events || 0),
@@ -108,20 +155,39 @@ export async function handleActivityFeatures(request: Request, env: Env, user: A
   const range = parseRange(new URL(request.url));
   if (!range) return json({ error: 'Invalid date range' }, 400);
 
-  const features = await env.DB.prepare(
-    `SELECT feature,
-            COUNT(DISTINCT user_id) AS active_users,
-            COUNT(*) AS events,
-            COALESCE(SUM(credit_cost), 0) AS credits_used,
-            SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked_events,
-            SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_events
-       FROM app_events
-      WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
-      GROUP BY feature
-      ORDER BY events DESC`
-  ).bind(range.from, range.toExclusive).all();
+  const [features, topActions] = await Promise.all([
+    env.DB.prepare(
+      `SELECT feature,
+              COUNT(DISTINCT user_id) AS active_users,
+              COUNT(*) AS events,
+              COALESCE(SUM(credit_cost), 0) AS credits_used,
+              SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked_events,
+              SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_events,
+              SUM(CASE WHEN ${openedSql()} THEN 1 ELSE 0 END) AS opened,
+              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran,
+              COUNT(DISTINCT CASE WHEN ${ranSql()} THEN user_id END) AS ran_users
+         FROM app_events
+        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+        GROUP BY feature
+        ORDER BY ran DESC, events DESC`
+    ).bind(range.from, range.toExclusive).all(),
+    // Top 25 RAN actions. Fail rate counts any non-success outcome.
+    env.DB.prepare(
+      `SELECT feature, event_name, action,
+              COUNT(*) AS ran,
+              COUNT(DISTINCT user_id) AS users,
+              COALESCE(SUM(credit_cost), 0) AS credits_used,
+              SUM(CASE WHEN outcome IN ('blocked', 'error') THEN 1 ELSE 0 END) AS failures,
+              ROUND(100.0 * SUM(CASE WHEN outcome IN ('blocked', 'error') THEN 1 ELSE 0 END) / COUNT(*), 1) AS fail_rate
+         FROM app_events
+        WHERE created_at >= ? AND created_at < ? AND ${ranSql()}
+        GROUP BY feature, event_name, action
+        ORDER BY ran DESC, users DESC
+        LIMIT 25`
+    ).bind(range.from, range.toExclusive).all(),
+  ]);
 
-  return json({ features: features.results || [] });
+  return json({ features: features.results || [], top_actions: topActions.results || [] });
 }
 
 // GET /api/admin/activity/users?from=&to=&query=&tier=&sort=
@@ -136,7 +202,7 @@ export async function handleActivityUsers(request: Request, env: Env, user: Auth
   const sort = url.searchParams.get('sort') || 'last_active';
 
   const filters: string[] = [];
-  const params: unknown[] = [range.from, range.toExclusive, range.from, range.toExclusive];
+  const params: unknown[] = [range.from, range.toExclusive];
   if (query) {
     filters.push('(u.email LIKE ? OR u.name LIKE ?)');
     params.push(`%${query}%`, `%${query}%`);
@@ -147,31 +213,46 @@ export async function handleActivityUsers(request: Request, env: Env, user: Auth
   }
 
   const orderBy = {
-    last_active: 'ua.last_active DESC',
+    last_active: 'ua.last_active DESC, ua.ran_events DESC',
     events: 'ua.total_events DESC',
+    ran: 'ua.ran_events DESC, ua.total_events DESC',
     credits: 'ua.credits_used DESC',
     created: 'u.created_at DESC',
   }[sort] || 'ua.last_active DESC';
 
+  // One pass over the range. A per-user correlated subquery for top_feature
+  // read ~30M rows on a 30-day range (18s); the window function reads each
+  // event once (~0.4s on live data).
   const users = await env.DB.prepare(
-    `WITH ua AS (
+    `WITH b AS (
+       SELECT user_id, feature, created_at, credit_cost,
+              CASE WHEN ${ranSql()} THEN 1 ELSE 0 END AS is_ran
+         FROM app_events
+        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+     ),
+     uf AS (
+       -- Most RAN events wins; users who ran nothing fall back to most events.
+       SELECT user_id, feature,
+              ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY SUM(is_ran) DESC, COUNT(*) DESC) AS rn
+         FROM b
+        GROUP BY user_id, feature
+     ),
+     ua AS (
        SELECT user_id,
               COUNT(*) AS total_events,
+              SUM(is_ran) AS ran_events,
               COUNT(DISTINCT date(created_at)) AS active_days,
               COALESCE(SUM(credit_cost), 0) AS credits_used,
               MAX(created_at) AS last_active
-         FROM app_events
-        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+         FROM b
         GROUP BY user_id
      )
      SELECT u.id, u.email, u.name, u.subscription_tier,
-            ua.total_events, ua.active_days, ua.credits_used, ua.last_active,
-            (SELECT e.feature FROM app_events e
-              WHERE e.user_id = u.id AND e.event_category = 'product'
-                AND e.created_at >= ? AND e.created_at < ?
-              GROUP BY e.feature ORDER BY COUNT(*) DESC LIMIT 1) AS top_feature
+            ua.total_events, ua.ran_events, ua.active_days, ua.credits_used, ua.last_active,
+            uf.feature AS top_feature
        FROM ua
        JOIN users u ON u.id = ua.user_id
+       LEFT JOIN uf ON uf.user_id = ua.user_id AND uf.rn = 1
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
       ORDER BY ${orderBy}
       LIMIT 100`
@@ -182,33 +263,39 @@ export async function handleActivityUsers(request: Request, env: Env, user: Auth
 
 // GET /api/admin/activity/funnel?from=&to=
 // Activation funnel over users who SIGNED UP in the range: connected a site,
-// ran a product tool, came back on a second day. Rates are relative to signups.
+// ran a product tool (RAN, not just opened), came back on a second day. Rates
+// are relative to signups. Events are aggregated once per signup instead of
+// two correlated subqueries per user (42M rows read, 26s on 30 days; now
+// ~170k rows, ~0.1s).
 export async function handleActivityFunnel(request: Request, env: Env, user: AuthUser): Promise<Response> {
   if (!isAdmin(user)) return forbidden();
   const range = parseRange(new URL(request.url));
   if (!range) return json({ error: 'Invalid date range' }, 400);
 
   const row = await env.DB.prepare(
-    `SELECT
+    `WITH s AS (
+       SELECT id FROM users WHERE created_at >= ? AND created_at < ?
+     ),
+     a AS (
+       SELECT user_id,
+              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran,
+              COUNT(DISTINCT date(created_at)) AS days
+         FROM app_events
+        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+          AND user_id IN (SELECT id FROM s)
+        GROUP BY user_id
+     )
+     SELECT
        COUNT(*) AS signed_up,
-       SUM(CASE WHEN EXISTS (SELECT 1 FROM gsc_properties p WHERE p.user_id = u.id)
-                  OR EXISTS (SELECT 1 FROM gsc_connections c WHERE c.user_id = u.id)
-                  OR EXISTS (SELECT 1 FROM bwt_connections b WHERE b.user_id = u.id)
+       SUM(CASE WHEN EXISTS (SELECT 1 FROM gsc_properties p WHERE p.user_id = s.id)
+                  OR EXISTS (SELECT 1 FROM gsc_connections c WHERE c.user_id = s.id)
+                  OR EXISTS (SELECT 1 FROM bwt_connections b WHERE b.user_id = s.id)
             THEN 1 ELSE 0 END) AS connected,
-       SUM(CASE WHEN EXISTS (
-             SELECT 1 FROM app_events e
-              WHERE e.user_id = u.id AND e.event_category = 'product'
-                AND e.created_at >= ? AND e.created_at < ?)
-            THEN 1 ELSE 0 END) AS ran_tool,
-       SUM(CASE WHEN (
-             SELECT COUNT(DISTINCT date(e.created_at)) FROM app_events e
-              WHERE e.user_id = u.id AND e.event_category = 'product'
-                AND e.created_at >= ? AND e.created_at < ?) >= 2
-            THEN 1 ELSE 0 END) AS returned
-     FROM users u
-     WHERE u.created_at >= ? AND u.created_at < ?`
+       SUM(CASE WHEN a.ran > 0 THEN 1 ELSE 0 END) AS ran_tool,
+       SUM(CASE WHEN a.days >= 2 THEN 1 ELSE 0 END) AS returned
+     FROM s
+     LEFT JOIN a ON a.user_id = s.id`
   ).bind(
-    range.from, range.toExclusive,
     range.from, range.toExclusive,
     range.from, range.toExclusive,
   ).first();
@@ -238,12 +325,13 @@ export async function handleActivityEvents(request: Request, env: Env, user: Aut
   const range = parseRange(url);
   if (!range) return json({ error: 'Invalid date range' }, 400);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 60), 1), 200);
+  const openedFilter = excludeOpened(url) ? `AND NOT ${openedSql('e')}` : '';
 
   const events = await env.DB.prepare(
     `SELECT ${EVENT_COLUMNS}, u.email, u.name
        FROM app_events e
        LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.created_at >= ? AND e.created_at < ?
+      WHERE e.created_at >= ? AND e.created_at < ? ${openedFilter}
       ORDER BY e.created_at DESC
       LIMIT ?`
   ).bind(range.from, range.toExclusive, limit).all<EventRow>();
@@ -251,11 +339,13 @@ export async function handleActivityEvents(request: Request, env: Env, user: Aut
   return json({ events: events.results || [] });
 }
 
-// GET /api/admin/activity/users/:id?from=&to=
+// GET /api/admin/activity/users/:id?from=&to=&include_opened=
 export async function handleActivityUserDetail(request: Request, env: Env, user: AuthUser, userId: string): Promise<Response> {
   if (!isAdmin(user)) return forbidden();
-  const range = parseRange(new URL(request.url));
+  const url = new URL(request.url);
+  const range = parseRange(url);
   if (!range) return json({ error: 'Invalid date range' }, 400);
+  const openedFilter = excludeOpened(url) ? `AND NOT ${openedSql('e')}` : '';
 
   const subject = await env.DB.prepare(
     `SELECT id, email, name, subscription_tier, is_admin, is_community_member, created_at
@@ -263,30 +353,33 @@ export async function handleActivityUserDetail(request: Request, env: Env, user:
   ).bind(userId).first();
   if (!subject) return json({ error: 'User not found' }, 404);
 
-  const summary = await env.DB.prepare(
-    `SELECT COUNT(*) AS total_events,
-            COUNT(DISTINCT date(created_at)) AS active_days,
-            COALESCE(SUM(credit_cost), 0) AS credits_used,
-            SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked_events,
-            SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_events
-       FROM app_events
-      WHERE user_id = ? AND event_category = 'product' AND created_at >= ? AND created_at < ?`
-  ).bind(userId, range.from, range.toExclusive).first();
-
-  const features = await env.DB.prepare(
-    `SELECT feature, COUNT(*) AS events
-       FROM app_events
-      WHERE user_id = ? AND event_category = 'product' AND created_at >= ? AND created_at < ?
-      GROUP BY feature ORDER BY events DESC`
-  ).bind(userId, range.from, range.toExclusive).all();
-
-  const events = await env.DB.prepare(
-    `SELECT ${EVENT_COLUMNS}
-       FROM app_events e
-      WHERE e.user_id = ? AND e.created_at >= ? AND e.created_at < ?
-      ORDER BY e.created_at DESC
-      LIMIT 50`
-  ).bind(userId, range.from, range.toExclusive).all<EventRow>();
+  const [summary, features, events] = await Promise.all([
+    env.DB.prepare(
+      `SELECT COUNT(*) AS total_events,
+              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran_events,
+              SUM(CASE WHEN ${openedSql()} THEN 1 ELSE 0 END) AS opened_events,
+              COUNT(DISTINCT date(created_at)) AS active_days,
+              COALESCE(SUM(credit_cost), 0) AS credits_used,
+              SUM(CASE WHEN outcome = 'blocked' THEN 1 ELSE 0 END) AS blocked_events,
+              SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_events
+         FROM app_events
+        WHERE user_id = ? AND event_category = 'product' AND created_at >= ? AND created_at < ?`
+    ).bind(userId, range.from, range.toExclusive).first(),
+    env.DB.prepare(
+      `SELECT feature, COUNT(*) AS events,
+              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran
+         FROM app_events
+        WHERE user_id = ? AND event_category = 'product' AND created_at >= ? AND created_at < ?
+        GROUP BY feature ORDER BY ran DESC, events DESC`
+    ).bind(userId, range.from, range.toExclusive).all(),
+    env.DB.prepare(
+      `SELECT ${EVENT_COLUMNS}
+         FROM app_events e
+        WHERE e.user_id = ? AND e.created_at >= ? AND e.created_at < ? ${openedFilter}
+        ORDER BY e.created_at DESC
+        LIMIT 50`
+    ).bind(userId, range.from, range.toExclusive).all<EventRow>(),
+  ]);
 
   return json({
     user: subject,
@@ -321,15 +414,16 @@ export async function handleActivitySummary(request: Request, env: Env, user: Au
     ).bind(range.from, range.toExclusive).first(),
     env.DB.prepare(
       `SELECT feature, COUNT(DISTINCT user_id) AS active_users, COUNT(*) AS events,
+              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran,
               SUM(CASE WHEN outcome IN ('blocked','error') THEN 1 ELSE 0 END) AS failures
          FROM app_events
         WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
-        GROUP BY feature ORDER BY events DESC`
+        GROUP BY feature ORDER BY ran DESC, events DESC`
     ).bind(range.from, range.toExclusive).all(),
   ]);
 
   const featureLines = (features.results || [])
-    .map((f: Record<string, unknown>) => `- ${f.feature}: ${f.events} events, ${f.active_users} users, ${f.failures} failures`)
+    .map((f: Record<string, unknown>) => `- ${f.feature}: ${f.ran} runs, ${f.events} events, ${f.active_users} users, ${f.failures} failures`)
     .join('\n');
   const aggregates =
     `Range: ${from} to ${to}\n` +
@@ -337,7 +431,7 @@ export async function handleActivitySummary(request: Request, env: Env, user: Au
     `Total product events: ${totals?.total_events || 0}\n` +
     `Blocked: ${totals?.blocked_events || 0}, Errors: ${totals?.error_events || 0}\n` +
     `Credits used: ${totals?.credits_used || 0}\n` +
-    `Per-feature:\n${featureLines || '- none'}`;
+    `Per-feature (runs = real actions; events also include page loads and autosaves):\n${featureLines || '- none'}`;
 
   const generatedAt = new Date().toISOString();
   try {
@@ -369,7 +463,7 @@ export async function handleActivitySummary(request: Request, env: Env, user: Au
       `**Usage readout (local fallback)**\n\n` +
       `${totals?.active_users || 0} active users generated ${totals?.total_events || 0} product events ` +
       `between ${from} and ${to}. ` +
-      (top ? `The most used tool was ${top.feature} (${top.events} events by ${top.active_users} users). ` : '') +
+      (top ? `The most used tool was ${top.feature} (${top.ran} runs, ${top.events} events, by ${top.active_users} users). ` : '') +
       `${totals?.blocked_events || 0} requests were blocked and ${totals?.error_events || 0} errored.`;
     return json({
       summary,
