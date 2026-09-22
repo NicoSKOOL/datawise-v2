@@ -230,11 +230,16 @@ export async function syncBWTProperties(env: Env, userId: string, accessToken: s
     );
     const groupId = sibling?.site_group_id ?? sibling?.id ?? crypto.randomUUID().replace(/-/g, '');
 
+    // Never change `kind` of an existing row. When the Bing URL equals a
+    // Search Console property's URL, the old upsert flipped that GSC row to
+    // kind='bwt': the nightly GSC sync then skipped it, and Disconnect Bing
+    // deleted it together with its search data, planner keywords and
+    // clusters (ON DELETE CASCADE). 88 GSC properties were flipped by
+    // 2026-09-22.
     await env.DB.prepare(`
       INSERT INTO gsc_properties (id, user_id, site_url, permission_level, kind, site_group_id)
       VALUES (?, ?, ?, ?, 'bwt', ?)
       ON CONFLICT(user_id, site_url) DO UPDATE SET
-        kind = 'bwt',
         site_group_id = COALESCE(gsc_properties.site_group_id, excluded.site_group_id)
     `).bind(
       crypto.randomUUID().replace(/-/g, ''),
@@ -282,11 +287,26 @@ export async function handleBWTProperties(env: Env, userId: string): Promise<Res
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 
+// Bing rows safe to delete on disconnect: never synced by GSC and referenced
+// by no user data.
+export const BWT_DISCONNECT_DELETE_SQL = `
+  DELETE FROM gsc_properties
+  WHERE user_id = ? AND kind = 'bwt' AND last_synced_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM gsc_search_data d WHERE d.property_id = gsc_properties.id)
+    AND NOT EXISTS (SELECT 1 FROM planner_keywords k WHERE k.property_id = gsc_properties.id)
+    AND NOT EXISTS (SELECT 1 FROM planner_clusters c WHERE c.property_id = gsc_properties.id)
+    AND NOT EXISTS (SELECT 1 FROM content_writer_workspaces w WHERE w.property_id = gsc_properties.id)
+    AND NOT EXISTS (SELECT 1 FROM chat_conversations h WHERE h.property_id = gsc_properties.id)
+`;
+
 // POST /bwt/disconnect
 export async function handleBWTDisconnect(env: Env, userId: string): Promise<Response> {
   await env.DB.prepare('DELETE FROM bwt_connections WHERE user_id = ?').bind(userId).run();
-  // Delete BWT properties (and their search data via FK cascade)
-  await env.DB.prepare("DELETE FROM gsc_properties WHERE user_id = ? AND kind = 'bwt'").bind(userId).run();
+  // Remove only Bing rows that hold nothing. Deleting a gsc_properties row
+  // cascades to gsc_search_data, planner_keywords and planner_clusters, and
+  // rows flipped from GSC (or picked as the site in the planner/writer/chat)
+  // carry the user's work. Those stay; they cost nothing but a list entry.
+  await env.DB.prepare(BWT_DISCONNECT_DELETE_SQL).bind(userId).run();
 
   return new Response(JSON.stringify({ success: true }), {
     headers: { 'Content-Type': 'application/json' },
