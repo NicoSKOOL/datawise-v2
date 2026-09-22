@@ -57,3 +57,31 @@ describe('pickMyBusinessInfo', () => {
     expect(pickMyBusinessInfo(null)).toBeNull();
   });
 });
+
+import { classifyReviewsTask } from './local-seo';
+
+// Reviews 504s (2026-09 triage): a finished task with no reviews kept polling
+// until timeout, and DataForSEO errors were reported as timeouts.
+describe('classifyReviewsTask', () => {
+  it('treats a finished task with reviews as done', () => {
+    const state = classifyReviewsTask({ status_code: 20000, result: [{ reviews_count: 2, items: [{}, {}] }] });
+    expect(state.kind).toBe('done');
+  });
+
+  it('treats a finished task with no review items as done, not pending', () => {
+    const state = classifyReviewsTask({ status_code: 20000, result: [{ reviews_count: 0, items: null }] });
+    expect(state).toEqual({ kind: 'done', result: { reviews_count: 0, items: null } });
+  });
+
+  it('keeps polling while the task is queued, handed off, or has no result yet', () => {
+    expect(classifyReviewsTask({ status_code: 40602, status_message: 'Task In Queue.' }).kind).toBe('pending');
+    expect(classifyReviewsTask({ status_code: 40601, status_message: 'Task Handed.' }).kind).toBe('pending');
+    expect(classifyReviewsTask({ status_code: 20000, result: null }).kind).toBe('pending');
+    expect(classifyReviewsTask(undefined).kind).toBe('pending');
+  });
+
+  it('stops on a real DataForSEO error and keeps its message', () => {
+    expect(classifyReviewsTask({ status_code: 40102, status_message: 'No Search Results.' }))
+      .toEqual({ kind: 'failed', message: 'No Search Results.' });
+  });
+});

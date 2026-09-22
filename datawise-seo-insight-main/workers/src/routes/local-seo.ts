@@ -8,6 +8,7 @@ import { buildMapsSerpTask, isGeoPoint, mapsSearchAnchor, type GeoPoint, type Ma
 const LOCAL_KEYWORDS_TTL_SECONDS = 86400;
 const LOCAL_GBP_TTL_SECONDS = 3600;
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
+import { chatCompleteEscalating } from '../llm/length-escalation';
 import {
   zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
   ratingDistributionFallback, computeVelocity, computeReviewsHash, validateReviewThemes,
@@ -689,10 +690,18 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
     taskPayload.keyword = business_name;
   }
 
-  const postData = await dataforseoRequest(env, '/business_data/google/reviews/task_post', [taskPayload]);
-  const taskId = postData?.tasks?.[0]?.id;
-
-  if (!taskId) return json({ error: 'Failed to create reviews task' }, 500);
+  // Deep fetches regularly outlast one request's polling window. The task id
+  // is remembered for 30 minutes so a Retry keeps polling the task already
+  // running instead of paying for a new one and discarding the first
+  // (38% of calls timed out in 2026-08, each retry a fresh DataForSEO task).
+  const pendingKey = `gbp-reviews-task:${identifier}:${sort_by}:${depth}`;
+  let taskId = await env.KV.get(pendingKey);
+  if (!taskId) {
+    const postData = await dataforseoRequest(env, '/business_data/google/reviews/task_post', [taskPayload]);
+    taskId = postData?.tasks?.[0]?.id ?? null;
+    if (!taskId) return json({ error: 'Failed to create reviews task' }, 500);
+    await env.KV.put(pendingKey, taskId, { expirationTtl: 1800 });
+  }
 
   // Poll task_get. Deep fetches (depth > 20) take DataForSEO longer to crawl,
   // so they get a longer backoff schedule (~40s total) than the original
@@ -704,14 +713,24 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
   for (const delayMs of pollDelaysMs) {
     await new Promise(resolve => setTimeout(resolve, delayMs));
     const getData = await dataforseoGet(env, `/business_data/google/reviews/task_get/${taskId}`);
-    const task = getData?.tasks?.[0];
-    if (task?.status_code === 20000 && task?.result?.[0]?.items) {
-      result = task.result[0];
+    const state = classifyReviewsTask(getData?.tasks?.[0]);
+    if (state.kind === 'done') {
+      result = state.result;
       break;
+    }
+    if (state.kind === 'failed') {
+      await env.KV.delete(pendingKey);
+      return json({ error: `Google reviews could not be fetched: ${state.message}` }, 502);
     }
   }
 
-  if (!result) return json({ error: 'Reviews task timed out or returned no data' }, 504);
+  if (!result) {
+    return json({
+      error: 'Google is still collecting these reviews. Click Retry in a minute; it picks up the same request.',
+      pending: true,
+    }, 504);
+  }
+  await env.KV.delete(pendingKey);
 
   const reviews = (result.items || []).map((item: any) => ({
     rating: item.rating?.value ?? null,
@@ -796,6 +815,27 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
 // review_indexes for theme-to-review tagging. Cached in D1 keyed by
 // project + SHA-256 of the review set. Never in the report's critical
 // render path: the SPA hydrates themes when this returns.
+// DataForSEO task_get states for the async reviews API. 20000 with a result
+// is finished, even when `items` is null (a business with no reviews used to
+// poll until timeout and return 504). 40601 "Task Handed" / 40602 "Task in
+// Queue", or 20000 without a result yet, mean still running. Anything else
+// is a real error that polling will not fix.
+export type ReviewsTaskState =
+  | { kind: 'done'; result: any }
+  | { kind: 'pending' }
+  | { kind: 'failed'; message: string };
+
+export function classifyReviewsTask(task: any): ReviewsTaskState {
+  if (!task) return { kind: 'pending' };
+  const code = task.status_code;
+  if (code === 20000) {
+    const result = task.result?.[0];
+    return result ? { kind: 'done', result } : { kind: 'pending' };
+  }
+  if (code === 40601 || code === 40602) return { kind: 'pending' };
+  return { kind: 'failed', message: task.status_message || `DataForSEO status ${code}` };
+}
+
 export async function handleReviewThemes(request: Request, env: Env, userId: string, projectId: string): Promise<Response> {
   const { reviews, llm_config, force = false } = await request.json() as {
     reviews?: Array<{ rating: number | null; text: string; date: string | null; owner_response: string | null }>;
@@ -871,9 +911,14 @@ Rules:
   const provider = getLLMProvider(env, llm_config);
 
   try {
-    // Reasoning models (e.g. DeepSeek V4) can spend a chunk of the budget on
-    // hidden reasoning; give the JSON output room so it is not truncated.
-    const result = await provider.chatComplete(messages, env, llm_config, 8192);
+    // Reasoning models (e.g. DeepSeek V4) can spend the whole budget on hidden
+    // reasoning and return truncated JSON; 46% of themes calls failed that way
+    // (2026-09). Escalate the budget on truncation like every other LLM call.
+    const result = await chatCompleteEscalating(provider, messages, env, llm_config, {
+      startTokens: 8192,
+      ceilingTokens: 16384,
+      label: 'local-seo/review-themes',
+    });
     const parsed = extractJsonObject(result.text);
     const validated = validateReviewThemes(parsed, reviews.length);
     if (!validated) {
