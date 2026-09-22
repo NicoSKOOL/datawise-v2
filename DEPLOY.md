@@ -73,14 +73,37 @@ git push origin --tags
 
 ## Worker (API) deploys
 
-The Worker is a separate codebase in `datawise-seo-insight-main/workers/`. Worker deploys are independent of the SPA:
+The Worker (`datawise-seo-insight-main/workers/`, service `datawise-api`) ships
+from `production` only, through the same workflow as the SPA
+(`.github/workflows/deploy-pages-production.yml`, since 2026-09-22, PR #156):
 
-```sh
-cd datawise-seo-insight-main/workers
-npm run deploy     # → wrangler deploy → datawise-api (no env flag)
-```
+1. **`worker` job** runs on every push to `production`. If the push changed
+   anything under `workers/`, it typechecks, runs the Worker tests, and runs
+   `npm run deploy`. Otherwise it skips (and reports success).
+2. **`pages` job** waits for it, then builds, guards, and deploys the SPA. A
+   failed Worker test or deploy therefore blocks the SPA too: no half releases.
 
-DO NOT use `npm run deploy:production` for the worker — see `~/.claude/projects/-Users-nicolasgorrono-Desktop-DataWise-V2/memory/reference_deployment.md` for the naming trap (creates an orphan `datawise-api-production` worker).
+Manual run: Actions → "Deploy DataWise Pages Production" → Run workflow, tick
+`deploy_worker` to force a Worker deploy from `production`.
+
+**Testing unmerged Worker code:** push the branch to `staging`. The staging
+workflow runs `npm run deploy:preview` (`wrangler versions upload --preview-alias staging`),
+which creates a Worker version at `https://staging-datawise-api.nico-510.workers.dev`
+with NO live traffic and no crons, and builds the staging SPA against it. It
+shares the live D1/KV/R2 data and secrets. OAuth flows (Google sign-in, GSC,
+Bing) started on staging need the preview host's callback URLs registered.
+
+**Guard:** `npm run deploy` runs `scripts/guard-worker-deploy.mjs` first and
+refuses unless HEAD is a clean, up-to-date `origin/production` (CI on
+`production` passes). Emergency only: `ALLOW_UNSAFE_DEPLOY=1 npm run deploy`.
+Rollback does not need the guard: `wrangler rollback <version-id>`.
+
+The GitHub secret `CLOUDFLARE_API_TOKEN` must be able to edit Workers, Pages,
+D1, KV, R2 and Queues. A Pages-only token makes the worker job fail and blocks
+every release.
+
+DO NOT use `npm run deploy:production` / `deploy:staging` for the worker: they
+are disabled because they created an orphan `datawise-api-production` worker.
 
 ## MCP worker (`datawise-mcp`) deploys
 
@@ -211,6 +234,7 @@ Named recovery tags (use `git checkout <tag>` to restore source state):
 - `prod-2026-09-08-1158` — AI tracker scraper window 100s to 120s (worker-only), PR #142, merge `bb1bd98`. Member report (holidaysbeckon.com.au, 3 of 20 prompts): manual check rows `status=error` "DataForSEO /ai_optimization/chat_gpt/llm_scraper/live/advanced timed out after 100000ms". DataForSEO documents the live scraper at up to 120s and returns 50401 on its own overrun; our 100s AbortController fired first, so ordinary slow answers became error rows and the retry hit the same window. Measured 2026-09-08: single calls 8-114s (the 114s one returned a valid answer), 2 of 10 concurrent calls over 60s; the failing prompts take 15-18s when quiet. `V2_ENGINE_TIMEOUT_MS` = 120_000, pinned by a test on the `runEngine` options. Worker version `d82c26d3-6517-419e-bb63-823e6725c50e`. NOTE: scheduled tracker runs land SUNDAY 06:00 UTC (the "Monday" note above is wrong); first scheduled v2 run is 2026-09-13. Rollback: `wrangler rollback --message "scraper window regression" 8381909f` (worker only; no SPA change to revert). If timeouts persist, next levers are lower `V2_QUERY_CONCURRENCY` for scraper engines or the DataForSEO standard queue for the Sunday cron.
 - `prod-2026-09-16-2113` — Bug triage pair (worker + SPA copy), PRs #149 + #150, merge commits `05a0e99` + `1f64a97`. (1) GSC positions impression-weighted: every `AVG(position)`/`AVG(ctr)` over `gsc_search_data` gave each (query, page) slice equal weight, so a brand query at #1 with 7k impressions plus 60 deep pages at 20-60 showed 20.1 vs Search Console 1.9 (bug `b32d5c18`, harbourholidays.co.uk). New `gsc/metrics-sql.ts`, applied to `/gsc/data`, `/gsc/queries` and the SEO Assistant GSC context; KV cache key `gsc_data:v1` -> `v2`. (2) AI tracker starvation: the Monday cron walked an unordered project list with no wall-clock budget, so each run finished ~100 of 827 queries and dropped the rest (714 queries had no scheduled check in 3 weeks; bugs `9b29631f`, `7c469e7d`). Cron `0 6 * * 1` -> daily `0 6 * * *` with a 12-min deadline; due = no scheduled check in 6 days; stalest project first; partial projects resume. SPA: three "every Monday" strings now say weekly. Worker version `78823c1c-9800-424c-ac95-32db9c0b70d9` (deployed from a clean detached checkout of `1f64a97`). Rollback both: `git revert 1f64a97 05a0e99 && git push origin production` AND `wrangler rollback --message "triage pair regression" d82c26d3-6517-419e-bb63-823e6725c50e` (rollback also restores the Monday-only cron trigger). Kill switch for the tracker spend: KV `ai-tracking-paused`.
 - `prod-2026-09-22-1909` — Bug batches 7 + 8, PRs #152 + #154, merge commits `6d7b515` + `7c1ac32`. Batch 7: GeoGrid custom keyword input stays mounted (`f182d4dd`), KD fallback via `bulk_keyword_difficulty` (`7d3588e0`), free-credit refund on failed/empty calls + script-based locale for Thai/Japanese/Korean/Greek/Hebrew seeds (`973ffe0c`, `626f52f4`). Batch 8: AI Visibility no longer crashes on rank projects with a NULL domain (`ccd59b9e`, 13 users exposed); optimizer Generate uses a label-driven prompt for unknown section types (`b6ad2cd6`) and writes in the page language detected from a page excerpt (`77158dad`). Worker version `48b72e59-...` deployed from temp branch `tmp/combo-batch-7-8`, whose tree is byte-identical to `7c1ac32`. Rollback both: `git revert -m 1 7c1ac32 6d7b515 && git push origin production` AND `wrangler rollback --message "batch 7+8 regression" 78823c1c-9800-424c-ac95-32db9c0b70d9`.
+- `prod-2026-09-22-1946` — Release pipeline (PR #156, merge `cebc7ca`): the Worker now deploys from `production` in CI before the SPA; manual `npm run deploy` is guarded; staging gets a no-traffic Worker preview. First CI Worker deploy: version `738c28d4-e520-49ac-9d35-4a27f712c862` (runtime code identical to `48b72e59`). Rollback: `wrangler rollback --message "pipeline regression" 48b72e59-f192-436c-ae5b-5bdd3d7ffbf1`; workflow: `git revert -m 1 cebc7ca && git push origin production`.
 
 ## Rollback (Worker, `datawise-api`)
 
