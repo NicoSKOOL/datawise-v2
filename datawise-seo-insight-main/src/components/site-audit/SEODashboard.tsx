@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type {
   StructuredSEO,
   LoadingSummary,
@@ -159,9 +160,21 @@ export function LoadingSpeedHero({ loading }: { loading: LoadingSummary }) {
                 >
                   {score}
                 </span>
-                <span className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1">
-                  Speed score
-                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="text-[10px] uppercase tracking-widest text-muted-foreground mt-1 inline-flex items-center gap-1 cursor-help"
+                      aria-label="Speed score: based on how fast the main content loads (LCP)."
+                    >
+                      Speed score
+                      <Info className="h-3 w-3 opacity-60" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs text-xs">
+                    Based on how fast the main content loads (LCP).
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           </div>

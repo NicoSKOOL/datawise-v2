@@ -172,10 +172,10 @@ export async function runLocalKeywordDiscovery(projectId: string) {
 
 // --- Resolve GBP URL ---
 
-export async function resolveGBPUrl(url: string) {
+export async function resolveGBPUrl(url: string, location_code?: number) {
   return api<BusinessSearchResult>(
     '/api/local-seo/resolve-gbp-url',
-    { method: 'POST', body: { url } }
+    { method: 'POST', body: { url, location_code } }
   );
 }
 

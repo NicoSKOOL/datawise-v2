@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMeta } from './meta-checker';
+import { parseMeta, detectClientRendered } from './meta-checker';
 
 describe('parseMeta', () => {
   it('reads title and description from <head> (classic SSR)', () => {
@@ -58,5 +58,51 @@ describe('parseMeta', () => {
     const r = parseMeta(html);
     expect(r.title).toBeNull();
     expect(r.description).toBeNull();
+  });
+});
+
+// Bug b432e6c3: a client-rendered React SPA (hakorisk.com) serves an empty
+// shell, so the plain fetch finds no title/description while Site Audit (JS
+// rendering) sees them. detectClientRendered lets the UI explain why.
+describe('detectClientRendered', () => {
+  it('flags an empty-root SPA shell with a module script', () => {
+    const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script type="module" crossorigin src="/assets/index-abc123.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-def456.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/assets/main.js"></script>
+  </body>
+</html>`;
+    expect(parseMeta(html)).toEqual({ title: null, description: null });
+    expect(detectClientRendered(html)).toBe(true);
+  });
+
+  it('does not flag a normal page with title and description', () => {
+    const html = `<!DOCTYPE html><html><head>
+      <title>Roofing Services in Austin</title>
+      <meta name="description" content="Licensed roofers serving Austin since 1998.">
+      <script type="module" src="/assets/main.js"></script>
+    </head><body><div id="root"></div></body></html>`;
+    expect(detectClientRendered(html)).toBe(false);
+  });
+
+  it('does not flag a server-rendered page missing a description but with real content', () => {
+    const paragraph =
+      'We repair and replace residential roofs across the metro area, with free inspections, ' +
+      'written estimates, and a ten year workmanship warranty on every job we complete. ';
+    const html = `<!DOCTYPE html><html><head>
+      <script src="/assets/app.js"></script>
+    </head><body>
+      <div id="app"><h1>Roof Repair</h1><p>${paragraph}</p><p>${paragraph}</p></div>
+    </body></html>`;
+    expect(parseMeta(html).description).toBeNull();
+    expect(detectClientRendered(html)).toBe(false);
   });
 });

@@ -1203,113 +1203,223 @@ export async function handleLocalCompetitors(request: Request, env: Env): Promis
   return json({ keyword, competitors });
 }
 
+// --- Resolve GBP URL ---
+
+export interface MapsPlaceUrlInfo {
+  cid?: string;
+  name?: string;
+  lat?: number;
+  lng?: number;
+}
+
+// Pulls the business identity out of a (already expanded) Google Maps URL.
+// Place URLs carry the feature id `!1s0x...:0x...` inside the PATH segment
+// `data=...`, not the query string, so the whole decoded URL is scanned. The
+// second hex half of the feature id is the CID; it exceeds Number precision,
+// so it is converted with BigInt. `!3d`/`!4d` are the business pin; the `@`
+// coordinates are only the map viewport and are deliberately ignored.
+// Returns null when the input is not a parseable URL.
+export function parseMapsPlaceUrl(rawUrl: string): MapsPlaceUrlInfo | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  let decoded = rawUrl;
+  try {
+    decoded = decodeURIComponent(rawUrl);
+  } catch {
+    // Malformed escapes: scan the raw string instead.
+  }
+
+  const info: MapsPlaceUrlInfo = {};
+
+  const hexToCid = (hex: string): string | undefined => {
+    try {
+      const value = BigInt(hex);
+      return value > 0n ? value.toString() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const featureMatch = decoded.match(/!1s0x[0-9a-fA-F]+:(0x[0-9a-fA-F]+)/);
+  if (featureMatch) info.cid = hexToCid(featureMatch[1]);
+
+  if (!info.cid) {
+    const ftid = parsed.searchParams.get('ftid');
+    const ftidMatch = ftid?.match(/^0x[0-9a-fA-F]+:(0x[0-9a-fA-F]+)$/);
+    if (ftidMatch) info.cid = hexToCid(ftidMatch[1]);
+  }
+
+  if (!info.cid) {
+    const cidParam = parsed.searchParams.get('cid');
+    if (cidParam && /^\d+$/.test(cidParam.trim())) info.cid = BigInt(cidParam.trim()).toString();
+  }
+
+  const pinMatch = decoded.match(/!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/);
+  if (pinMatch) {
+    const lat = Number(pinMatch[1]);
+    const lng = Number(pinMatch[2]);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      info.lat = lat;
+      info.lng = lng;
+    }
+  }
+
+  const placePathMatch = parsed.pathname.match(/\/maps\/place\/([^/@]+)/);
+  if (placePathMatch) {
+    let name = placePathMatch[1].replace(/\+/g, ' ');
+    try {
+      name = decodeURIComponent(name);
+    } catch {
+      // Keep the undecoded segment.
+    }
+    name = name.trim();
+    if (name) info.name = name;
+  }
+
+  return info;
+}
+
+const GBP_URL_MATCH_RADIUS_KM = 5;
+const GBP_URL_NO_MATCH_ERROR = "Couldn't match this Maps link to a business. Try the Search tab.";
+
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Picks the candidate that provably is the business the URL points at: an
+// exact CID match first, else the nearest candidate within 5 km of the URL's
+// pin. With neither a CID nor a pin to verify against, the first candidate is
+// the best available answer. Returns null rather than guessing otherwise.
+export function selectVerifiedBusiness(items: any[], target: MapsPlaceUrlInfo): any | null {
+  const candidates = (items || []).filter(Boolean);
+  if (candidates.length === 0) return null;
+
+  if (target.cid) {
+    const byCid = candidates.find((item) => item.cid != null && String(item.cid) === target.cid);
+    if (byCid) return byCid;
+  }
+
+  if (target.lat != null && target.lng != null) {
+    let best: any = null;
+    let bestKm = Infinity;
+    for (const item of candidates) {
+      const lat = Number(item.latitude);
+      const lng = Number(item.longitude);
+      if (item.latitude == null || item.longitude == null || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+      const km = distanceKm(target.lat, target.lng, lat, lng);
+      if (km <= GBP_URL_MATCH_RADIUS_KM && km < bestKm) {
+        best = item;
+        bestKm = km;
+      }
+    }
+    return best;
+  }
+
+  if (!target.cid) return candidates[0];
+  return null;
+}
+
+function toBusinessSearchResult(item: any) {
+  return {
+    title: item.title || '',
+    place_id: item.place_id || null,
+    cid: item.cid || null,
+    address: item.address || '',
+    rating: item.rating?.value ?? null,
+    reviews_count: item.rating?.votes_count ?? null,
+    phone: item.phone || null,
+    category: item.category || null,
+    url: item.url || null,
+  };
+}
+
 // POST /api/local-seo/resolve-gbp-url
 export async function handleResolveGBPUrl(request: Request, env: Env): Promise<Response> {
-  const { url: rawUrl } = await request.json() as any;
-  if (!rawUrl?.trim()) return json({ error: 'URL is required' }, 400);
+  const { url: rawUrl, location_code: rawLocationCode } = await request.json() as any;
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return json({ error: 'URL is required' }, 400);
+
+  let locationCode = 2840;
+  if (rawLocationCode !== undefined && rawLocationCode !== null && rawLocationCode !== '') {
+    const parsedCode = Number(rawLocationCode);
+    if (!Number.isInteger(parsedCode) || parsedCode <= 0) {
+      return json({ error: 'location_code must be a positive integer' }, 400);
+    }
+    locationCode = parsedCode;
+  }
 
   let resolvedUrl = rawUrl.trim();
 
   // Resolve short links (maps.app.goo.gl, goo.gl)
   if (/^https?:\/\/(maps\.app\.goo\.gl|goo\.gl)\//i.test(resolvedUrl)) {
     const resp = await fetch(resolvedUrl, { redirect: 'follow' });
-    resolvedUrl = resp.url;
+    resolvedUrl = resp.url || resolvedUrl;
   }
 
-  // Try to extract place_id from URL parameter (ftid= or place_id=)
-  let placeId: string | null = null;
-  let cid: string | null = null;
-  let businessQuery: string | null = null;
+  const target = parseMapsPlaceUrl(resolvedUrl);
+  if (!target) return json({ error: 'Invalid URL format' }, 400);
 
-  try {
-    const parsed = new URL(resolvedUrl);
-    const ftid = parsed.searchParams.get('ftid');
-    if (ftid) {
-      // ftid format: 0x...:0x... - the second part is CID in hex
-      const parts = ftid.split(':');
-      if (parts.length === 2 && parts[1].startsWith('0x')) {
-        cid = BigInt(parts[1]).toString();
-      }
-    }
-
-    // Check for place_id in data= parameter or URL path
-    const dataParam = parsed.searchParams.get('data');
-    if (dataParam) {
-      const placeMatch = dataParam.match(/!1s(0x[0-9a-fA-F]+:0x[0-9a-fA-F]+)/);
-      if (placeMatch) {
-        const cidParts = placeMatch[1].split(':');
-        if (cidParts.length === 2 && cidParts[1].startsWith('0x')) {
-          cid = BigInt(cidParts[1]).toString();
-        }
-      }
-    }
-
-    // Extract business name from /maps/place/BUSINESS+NAME/ path
-    const placePathMatch = parsed.pathname.match(/\/maps\/place\/([^/@]+)/);
-    if (placePathMatch) {
-      businessQuery = decodeURIComponent(placePathMatch[1].replace(/\+/g, ' '));
-    }
-  } catch {
-    return json({ error: 'Invalid URL format' }, 400);
-  }
-
-  if (!cid && !businessQuery) {
+  if (!target.cid && !target.name) {
     return json({ error: 'Could not extract business info from URL. Paste a Google Maps business URL.' }, 400);
   }
 
-  // Look up business via GBP profile API
-  const keyword = cid ? `cid:${cid}` : businessQuery;
-  const payload = [{
-    keyword,
-    location_code: 2840,
-    language_code: 'en',
-  }];
+  let sawCandidate = false;
 
-  const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', payload, { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
-  const business = pickMyBusinessInfo(data);
-
-  if (!business) {
-    // Fallback: search Maps SERP with business name
-    if (businessQuery) {
-      const searchPayload = [{
-        keyword: businessQuery,
-        location_code: 2840,
-        language_code: 'en',
-        device: 'desktop',
-        os: 'windows',
-        depth: 5,
-      }];
-      const searchData = await dataforseoRequest(env, '/serp/google/maps/live/advanced', searchPayload);
-      const items = searchData?.tasks?.[0]?.result?.[0]?.items || [];
-      const match = items.find((item: any) => item.type === 'maps_search');
-      if (match) {
-        return json({
-          title: match.title || '',
-          place_id: match.place_id || null,
-          cid: match.cid || null,
-          address: match.address || '',
-          rating: match.rating?.value ?? null,
-          reviews_count: match.rating?.votes_count ?? null,
-          phone: match.phone || null,
-          category: match.category || null,
-          url: match.url || null,
-        });
+  // 1. Exact lookup by CID; accepted only if DataForSEO returns that same CID.
+  if (target.cid) {
+    const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
+      keyword: `cid:${target.cid}`,
+      location_code: locationCode,
+      language_code: 'en',
+    }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
+    const business = pickMyBusinessInfo(data);
+    if (business) {
+      sawCandidate = true;
+      if (business.cid != null && String(business.cid) === target.cid) {
+        return json(toBusinessSearchResult(business));
       }
     }
-    return json({ error: 'Business not found from URL' }, 404);
   }
 
-  return json({
-    title: business.title || '',
-    place_id: business.place_id || null,
-    cid: business.cid || null,
-    address: business.address || '',
-    rating: business.rating?.value ?? null,
-    reviews_count: business.rating?.votes_count ?? null,
-    phone: business.phone || null,
-    category: business.category || null,
-    url: business.url || null,
-  });
+  if (target.name) {
+    // 2. Profile lookup by name (only needed when there was no CID to use).
+    if (!target.cid) {
+      const data = await dataforseoRequestCached(env, '/business_data/google/my_business_info/live', [{
+        keyword: target.name,
+        location_code: locationCode,
+        language_code: 'en',
+      }], { ttlSeconds: LOCAL_GBP_TTL_SECONDS });
+      const items = data?.tasks?.[0]?.result?.[0]?.items || [];
+      if (items.length > 0) sawCandidate = true;
+      const match = selectVerifiedBusiness(items, target);
+      if (match) return json(toBusinessSearchResult(match));
+    }
+
+    // 3. Maps SERP by name, verified against the CID or the URL pin.
+    const searchData = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
+      keyword: target.name,
+      location_code: locationCode,
+      language_code: 'en',
+      device: 'desktop',
+      os: 'windows',
+      depth: 20,
+    }]);
+    const items = (searchData?.tasks?.[0]?.result?.[0]?.items || [])
+      .filter((item: any) => item?.type === 'maps_search');
+    if (items.length > 0) sawCandidate = true;
+    const match = selectVerifiedBusiness(items, target);
+    if (match) return json(toBusinessSearchResult(match));
+  }
+
+  return json({ error: GBP_URL_NO_MATCH_ERROR }, sawCandidate ? 422 : 404);
 }
 
 // --- GeoGrid Rank Tracking ---

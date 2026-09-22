@@ -15,6 +15,7 @@ import {
   Target,
   ArrowRight,
   RefreshCw,
+  Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/use-toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   createAudit,
   listAudits,
@@ -270,7 +272,7 @@ function AuditRow({
         {audit.status === 'completed' && (
           <div className="flex items-center gap-4 flex-shrink-0">
             <div className="text-right">
-              <p className="text-xs text-muted-foreground">Score</p>
+              <p className="text-xs text-muted-foreground" title={SCORE_HELP.onpage}>On-page score</p>
               <p className="text-lg font-semibold">{audit.score ?? '—'}</p>
             </div>
             <div className="w-32 hidden sm:block">
@@ -511,10 +513,15 @@ function AuditDetailView({
         <div className="flex items-start gap-4 flex-wrap">
           {audit.status === 'completed' && (
             <div className="flex gap-4 flex-wrap">
-              <MiniScoreBlock label="Performance" score={audit.perf_score} />
-              <MiniScoreBlock label="SEO" score={audit.seo_score} />
-              <MiniScoreBlock label="Accessibility" score={audit.a11y_score} />
-              <MiniScoreBlock label="Best Practices" score={audit.best_practices_score} />
+              <MiniScoreBlock label="On-page score" score={audit.score} help={SCORE_HELP.onpage} />
+              <MiniScoreBlock label="Performance" score={audit.perf_score} help={SCORE_HELP.performance} />
+              <MiniScoreBlock label="SEO" score={audit.seo_score} help={SCORE_HELP.seo} />
+              <MiniScoreBlock label="Accessibility" score={audit.a11y_score} help={SCORE_HELP.accessibility} />
+              <MiniScoreBlock
+                label="Best Practices"
+                score={audit.best_practices_score}
+                help={SCORE_HELP.bestPractices}
+              />
             </div>
           )}
           <ExportMenu
@@ -920,13 +927,43 @@ function CrawledPagesReport({
 }
 
 // ========== MINI SCORE BLOCK (header) ==========
-function MiniScoreBlock({ label, score }: { label: string; score: number | null }) {
+// Explains each header score so users can tell the crawl-based on-page score
+// (the one shown in the audit list) apart from the Lighthouse scores.
+const SCORE_HELP = {
+  onpage:
+    'Overall on-page health from the crawl: titles, meta, links, content and technical checks. This is the score shown in your audit list.',
+  performance: 'Median Lighthouse desktop performance across the pages tested.',
+  seo: 'Median Lighthouse SEO score across the pages tested.',
+  accessibility: 'Median Lighthouse accessibility score across the pages tested.',
+  bestPractices: 'Median Lighthouse best practices score across the pages tested.',
+} as const;
+
+function MiniScoreBlock({ label, score, help }: { label: string; score: number | null; help?: string }) {
   const value = score ?? 0;
   const color =
     value >= 90 ? 'text-green-600' : value >= 70 ? 'text-green-500' : value >= 50 ? 'text-amber-600' : 'text-red-600';
+  const labelEl = (
+    <div className="text-[10px] uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1">
+      {label}
+      {help && <Info className="h-3 w-3 opacity-60" />}
+    </div>
+  );
   return (
     <div className="text-right">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      {help ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" className="cursor-help" aria-label={`${label}: ${help}`}>
+              {labelEl}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs text-xs">
+            {help}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        labelEl
+      )}
       <div className={`text-2xl font-bold tabular-nums leading-tight ${color}`}>
         {score == null ? '—' : score}
       </div>
