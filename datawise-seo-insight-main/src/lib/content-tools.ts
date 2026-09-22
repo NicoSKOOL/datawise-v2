@@ -186,16 +186,29 @@ export async function analyzeServicePage(
 }
 
 export async function generateSection(
-  sectionType: string,
+  section: { section_type: string; label?: string; why?: string },
   serviceType: string,
   location: string,
   tone: string,
   pageUrl: string,
+  pageText?: string,
 ): Promise<{ content: string; usage: UsageInfo }> {
   const llmConfig = requireLLMConfig();
   return api<{ content: string; usage: UsageInfo }>('/api/content-tools/generate-section', {
     method: 'POST',
-    body: { section_type: sectionType, service_type: serviceType, location, tone, page_url: pageUrl, llm_config: llmConfig },
+    body: {
+      section_type: section.section_type,
+      section_label: section.label,
+      why_needed: section.why,
+      service_type: serviceType,
+      location,
+      tone,
+      page_url: pageUrl,
+      // The worker detects the page language from this so generated copy
+      // matches the page (and the analysis) instead of defaulting to English.
+      page_sample: pageText?.slice(0, 1500),
+      llm_config: llmConfig,
+    },
   });
 }
 

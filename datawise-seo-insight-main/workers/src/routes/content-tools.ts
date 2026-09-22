@@ -6,11 +6,13 @@ import {
   getContentOutputInstruction,
   getContentOutputUserReminder,
   getControlsLanguageLabel,
+  type OutputLanguageCode,
 } from '../llm/output-language';
 import {
   detectLanguageFamily,
   expectedFamily,
   buildLanguageRetryPrompt,
+  type LanguageFamily,
 } from '../llm/language-detect';
 
 // ---------------------------------------------------------------------------
@@ -1258,27 +1260,93 @@ Write in this tone: {TONE}
 Return ONLY the section content, no preamble.`,
 };
 
+// The analysis LLM names missing sections freely ("privacy", "faq",
+// "service_area"...), so section types outside SECTION_GENERATION_PROMPTS get
+// this label-driven prompt instead of a 400 (bug b6ad2cd6).
+const GENERIC_SECTION_PROMPT = `You are an expert SEO content writer for local service businesses.
+Write a "{SECTION_LABEL}" section for a {SERVICE_TYPE} business in {LOCATION}.
+{WHY_NEEDED}
+Requirements:
+- 150-300 words
+- Specific to this business, its service and its location: no generic filler that could be pasted onto any other page
+- NEVER use em dashes. Use colons, commas, parentheses, or separate sentences instead
+- Mark any facts that need to be verified by the business owner with [VERIFY]
+
+Format as markdown with a bold heading.
+Write in this tone: {TONE}
+
+Return ONLY the section content, no preamble.`;
+
+const PAGE_SAMPLE_LIMIT = 1500;
+
+const FAMILY_OUTPUT_LANGUAGE: Partial<Record<LanguageFamily, OutputLanguageCode>> = {
+  es: 'es-ES',
+  fr: 'fr-FR',
+  de: 'de-DE',
+  it: 'it-IT',
+  pt: 'pt-PT',
+  nl: 'nl-NL',
+  ja: 'ja-JP',
+};
+
+export interface GenerateSectionInput {
+  section_type: string;
+  section_label?: string;
+  why_needed?: string;
+  service_type?: string;
+  location?: string;
+  tone?: string;
+  page_sample?: string;
+  content_output_controls?: unknown;
+}
+
+function humanizeSectionType(sectionType: string): string {
+  const words = sectionType.replace(/[_-]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// The optimizer has no language picker: its analysis comes back in the page's
+// language because the model mirrors the page text, but Generate never saw
+// that text and wrote English (bug 77158dad). Explicit controls still win;
+// otherwise infer the language from a sample of the analyzed page.
+export function resolveSectionOutputControls(input: GenerateSectionInput): unknown {
+  const explicit = input.content_output_controls as { language?: unknown } | undefined;
+  if (explicit && typeof explicit.language === 'string' && explicit.language) return explicit;
+  const family = detectLanguageFamily(input.page_sample || '');
+  const language = FAMILY_OUTPUT_LANGUAGE[family];
+  return language ? { ...(explicit || {}), language } : explicit;
+}
+
+export function buildSectionPrompt(input: GenerateSectionInput): string {
+  const known = SECTION_GENERATION_PROMPTS[input.section_type];
+  const label = (input.section_label || '').trim().slice(0, 120) || humanizeSectionType(input.section_type);
+  const why = (input.why_needed || '').trim().slice(0, 500);
+
+  let prompt = (known ?? GENERIC_SECTION_PROMPT)
+    .replace(/{SECTION_LABEL}/g, () => label)
+    .replace(/{WHY_NEEDED}/g, () => (why ? `Why this section matters on this page: ${why}\n` : ''))
+    .replace(/{SERVICE_TYPE}/g, () => input.service_type || 'service')
+    .replace(/{LOCATION}/g, () => input.location || 'this area')
+    .replace(/{TONE}/g, () => input.tone || 'professional and helpful');
+
+  const sample = (input.page_sample || '').trim().slice(0, PAGE_SAMPLE_LIMIT);
+  if (sample) {
+    prompt += `\n\nExcerpt from the existing page. Write the section in the same language as this excerpt:\n"""\n${sample}\n"""`;
+  }
+  return prompt;
+}
+
 export async function handleGenerateSection(request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as {
-    section_type: string;
-    service_type: string;
-    location: string;
-    tone: string;
+  const body = await request.json() as GenerateSectionInput & {
     page_url: string;
     llm_config: UserLLMConfig;
-    content_output_controls?: unknown;
   };
 
   if (!body.section_type) return json({ error: 'section_type is required' }, 400);
   if (!body.llm_config?.api_key) return json({ error: 'llm_config.api_key is required' }, 400);
 
-  const promptTemplate = SECTION_GENERATION_PROMPTS[body.section_type];
-  if (!promptTemplate) return json({ error: `Unknown section type: ${body.section_type}` }, 400);
-
-  const prompt = promptTemplate
-    .replace(/{SERVICE_TYPE}/g, body.service_type || 'service')
-    .replace(/{LOCATION}/g, body.location || 'this area')
-    .replace(/{TONE}/g, body.tone || 'professional and helpful');
+  const prompt = buildSectionPrompt(body);
+  body.content_output_controls = resolveSectionOutputControls(body);
 
   const languageInstruction = getContentOutputInstruction(body.content_output_controls, { preserveJsonShape: false });
   const languageReminder = getContentOutputUserReminder(body.content_output_controls);
