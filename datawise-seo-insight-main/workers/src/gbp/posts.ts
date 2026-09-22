@@ -39,7 +39,16 @@ export async function fetchGbpPosts(env: DataForSeoEnv, opts: {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const cacheKey = `gbp-posts:v1:${opts.keyword}:${depth}`;
   const cached = await env.KV.get(cacheKey);
-  if (cached) return normalizePosts(JSON.parse(cached), now);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) {
+        return normalizePosts(parsed, now);
+      }
+    } catch {
+      // Ignore parse error or non-array value, fall through to fresh fetch
+    }
+  }
 
   const post = await dataforseoRequest(env, '/business_data/google/my_business_updates/task_post', [{
     keyword: opts.keyword, location_code: opts.location_code, language_code: opts.language_code, depth,

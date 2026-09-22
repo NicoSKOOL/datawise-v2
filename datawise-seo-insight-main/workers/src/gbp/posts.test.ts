@@ -61,4 +61,15 @@ describe('fetchGbpPosts', () => {
     dfs.request.mockResolvedValueOnce({ tasks: [] });
     await expect(fetchGbpPosts(env, { keyword: 'cid:1', location_code: 2840, language_code: 'en', now, sleep: noSleep })).rejects.toThrow('Failed to create Google posts task');
   });
+  it('ignores corrupted cache and fetches fresh', async () => {
+    kvStore.set('gbp-posts:v1:cid:777:10', '{not json');
+    dfs.request.mockResolvedValueOnce({ tasks: [{ id: 'task-3' }] });
+    dfs.get.mockResolvedValueOnce({ tasks: [{ status_code: 20000, result: [{ items: [{ type: 'google_business_post', post_text: 'Fresh', timestamp: '2026-09-20 00:00:00 +00:00' }] }] }] });
+    const out = await fetchGbpPosts(env, { keyword: 'cid:777', location_code: 2840, language_code: 'en', now, sleep: noSleep });
+    expect(dfs.request).toHaveBeenCalledTimes(1);
+    expect(out.posts_count).toBe(1);
+    const cacheValue = kvStore.get('gbp-posts:v1:cid:777:10');
+    expect(cacheValue).toBeTruthy();
+    expect(JSON.parse(cacheValue!)).toEqual([{ type: 'google_business_post', post_text: 'Fresh', timestamp: '2026-09-20 00:00:00 +00:00' }]);
+  });
 });
