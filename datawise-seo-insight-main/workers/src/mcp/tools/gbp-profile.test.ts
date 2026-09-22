@@ -132,14 +132,29 @@ describe('datawise_gbp_profile', () => {
   it('returns a tool error when the business is not found', async () => {
     const { env } = makeMcpTestEnv();
     dfs.cached.mockResolvedValue({ tasks: [{ result: [{ items: [] }] }] });
-    const out = await gbpProfile.run(gbpProfile.inputSchema.parse({ gbp: 'cid:999' }), { env, identity });
+    // A 12-digit CID matches the CID pattern, so this exercises the
+    // profile-not-found branch directly rather than falling through to the
+    // name-search path (which a short, non-CID-shaped "cid:999" would hit).
+    const out = await gbpProfile.run(gbpProfile.inputSchema.parse({ gbp: 'cid:999000111222' }), { env, identity });
     expect(out.isError).toBe(true);
-    expect(out.content[0].text).toContain('cid:999');
+    expect(out.content[0].text).toContain('Business not found on Google for cid:999000111222');
+    expect(dfs.request).not.toHaveBeenCalled();
+  });
+
+  it('strips HTML and caps the business name in the summary line', async () => {
+    const { env } = makeMcpTestEnv();
+    dfs.cached.mockResolvedValueOnce({
+      tasks: [{ result: [{ keyword: 'cid:123456789012', items: [{ ...businessItem, title: `<b>${'Acme Plumbing '.repeat(15)}</b>` }] }] }],
+    });
+    const out = await gbpProfile.run(gbpProfile.inputSchema.parse({ gbp: 'cid:123456789012', include_reviews: false, include_posts: false }), { env, identity });
+    expect(out.content[0].text).not.toContain('<b>');
+    const title = out.content[0].text.split(',')[0];
+    expect(title.length).toBeLessThanOrEqual(120);
   });
 
   it('is registered at position 15 with a budget line', () => {
     expect(ALL_TOOLS[14].name).toBe('datawise_gbp_profile');
-    expect(estimateCostUsd('datawise_gbp_profile', { include_reviews: true, reviews_depth: 20, include_posts: true })).toBeCloseTo(0.0054 + 0.003 + 0.003 + 0.01, 5);
+    expect(estimateCostUsd('datawise_gbp_profile', { include_reviews: true, reviews_depth: 20, include_posts: true })).toBeCloseTo(0.0054 * 2 + 0.003 + 0.003 + 0.01, 5);
     expect(estimateCostUsd('datawise_gbp_profile', { include_reviews: false, include_posts: false })).toBeCloseTo(0.0054 + 0.003, 5);
   });
 });

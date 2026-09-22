@@ -71,9 +71,12 @@ export function estimateCostUsd(tool: string, args: Record<string, unknown>): nu
       return GBP_INFO;
     case 'datawise_gbp_profile': {
       // my_business_info + a possible Maps search, then reviews per 10 and one posts task.
+      // handleReviews makes its own my_business_info call at the inferred locale
+      // (different body, so it is a separate cache entry), hence the second GBP_INFO.
+      const reviewsInfoCall = args.include_reviews === false ? 0 : GBP_INFO;
       const reviews = args.include_reviews === false ? 0 : REVIEWS_PER_10 * (num(args.reviews_depth, 20) / 10);
       const posts = args.include_posts === false ? 0 : POSTS_TASK;
-      return GBP_INFO + SERP_TASK + reviews + posts;
+      return GBP_INFO + SERP_TASK + reviewsInfoCall + reviews + posts;
     }
     case 'datawise_site_pages': {
       // Direct fetches are free; this is the worst case where every page falls back to content_parsing.

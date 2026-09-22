@@ -49,7 +49,7 @@ export const gbpProfile = defineTool({
   inputSchema: z.object({
     gbp: z.string().min(2).max(2048).describe('Google Maps link (google.com/maps/place/..., maps.app.goo.gl/...), place_id (ChIJ...), CID (digits), or "business name, city".'),
     include_reviews: z.boolean().default(true).describe('Include the latest reviews with owner replies. Default true.'),
-    reviews_depth: z.union([z.literal(10), z.literal(20), z.literal(50)]).default(20).describe('How many reviews to fetch: 10, 20 or 50.'),
+    reviews_depth: z.union([z.literal(10), z.literal(20), z.literal(50)]).default(20).describe('How many reviews to fetch: 10, 20 or 50. reviews_depth: 50 takes about 40 seconds.'),
     include_posts: z.boolean().default(true).describe('Include recent Google Business posts. Default true.'),
     response_format: z.enum(['concise', 'detailed']).default('concise').describe('concise trims long lists; detailed returns more items and popular times.'),
   }),
@@ -141,8 +141,9 @@ export const gbpProfile = defineTool({
       fetched_at: new Date().toISOString(),
     };
     const r = profile.reputation;
+    const summaryTitle = stripHtml(profile.identity.title ?? '').slice(0, 120);
     const summary =
-      `${profile.identity.title}, ${profile.categories.primary ?? 'no category'}, ` +
+      `${summaryTitle}, ${profile.categories.primary ?? 'no category'}, ` +
       `${r.rating ?? '?'} stars from ${r.reviews_count ?? '?'} reviews, ${profile.attributes.available.length} attributes, ` +
       `${profile.services.length} services, ${profile.hours.days_with_hours} days with hours` +
       (posts ? `, ${(posts as any).posts_count} posts, last ${(posts as any).days_since_last_post ?? '?'} days ago` : '') +
