@@ -56,6 +56,22 @@ function attr(tagHtml: string, name: string): string | null {
   return m ? decodeEntities(m[2] ?? m[3] ?? m[4] ?? '') : null;
 }
 
+// Structure-aware trim for an already-parsed JSON-LD node: caps string length,
+// array length and nesting depth without ever re-serialising and re-parsing,
+// so a cut mid-string or mid-array can never throw (unlike slicing the
+// stringified JSON and re-running JSON.parse on the truncated text).
+function trimJson(value: any, depth = 0): any {
+  if (depth > 6) return null;
+  if (typeof value === 'string') return value.slice(0, 500);
+  if (Array.isArray(value)) return value.slice(0, 20).map((v) => trimJson(v, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) out[k] = trimJson(v, depth + 1);
+    return out;
+  }
+  return value;
+}
+
 function jsonLd(html: string): Array<Record<string, any>> {
   const out: Array<Record<string, any>> = [];
   for (const m of html.matchAll(/<script\b[^>]*type\s*=\s*["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -68,8 +84,7 @@ function jsonLd(html: string): Array<Record<string, any>> {
       const types = Array.isArray(n['@type']) ? n['@type'] : [n['@type']];
       if (types.some((t: unknown) => typeof t === 'string' && LOCAL_TYPES.test(t))) {
         const { '@graph': _g, ...rest } = n;
-        const text = JSON.stringify(rest);
-        out.push(text.length > 4000 ? JSON.parse(text.slice(0, 4000).replace(/,[^,]*$/, '') + '}') : rest);
+        out.push(trimJson(rest));
       }
       if (out.length >= 10) return out;
     }
@@ -79,7 +94,11 @@ function jsonLd(html: string): Array<Record<string, any>> {
 
 // Controller ruling: allow an optional leading "(" so "(03) 9000 0001" is
 // captured whole (the brief's regex without it split on the parenthesis).
-const PHONE = /(?:\+?\(?\d[\d\s().-]{6,}\d)/g;
+// The middle class is bounded ({6,40}, not {6,}) so a very long run of
+// digits or punctuation can't trigger quadratic backtracking; no real phone
+// number needs more than 40 middle characters, and the digit-length filter
+// below still rejects anything over 15 digits regardless.
+const PHONE = /(?:\+?\(?\d[\d\s().-]{6,40}\d)/g;
 export function extractPhones(text: string): string[] {
   const out: string[] = [];
   for (const m of text.match(PHONE) ?? []) {

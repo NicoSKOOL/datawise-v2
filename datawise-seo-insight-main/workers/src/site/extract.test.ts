@@ -56,11 +56,23 @@ describe('extractPageFacts', () => {
     expect(b.blocked).toBe(true);
     expect(b.body_text).toBeNull();
   });
+  it('trims oversized json-ld blocks without throwing', () => {
+    const bigDescription = 'x'.repeat(6000);
+    const sameAs = Array.from({ length: 40 }, (_, i) => `https://example.com/${i}`);
+    const bigHtml = `<html><head><script type="application/ld+json">${JSON.stringify({ '@type': 'LocalBusiness', description: bigDescription, sameAs })}</script></head><body></body></html>`;
+    const b = extractPageFacts(bigHtml, 'https://acme.com.au/', 200, { bodyChars: 100 });
+    expect(b.schema).toHaveLength(1);
+    expect(b.schema[0].description.length).toBe(500);
+    expect(b.schema[0].sameAs.length).toBe(20);
+  });
 });
 
 describe('helpers', () => {
   it('extractPhones dedupes and rejects short or long digit runs', () => {
     expect(extractPhones('Call 1300 123 456 or 1300 123 456. Ref 12345. Big 123456789012345678')).toEqual(['1300 123 456']);
+  });
+  it('extractPhones handles a very long digit run without hanging or throwing', () => {
+    expect(extractPhones('9'.repeat(60000))).toEqual([]);
   });
   it('extractAddresses finds street lines', () => {
     expect(extractAddresses('Find us at Unit 4/12 Smith Road, Cremorne VIC 3121 near the station.')).toEqual(['Unit 4/12 Smith Road, Cremorne VIC 3121']);
