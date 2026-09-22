@@ -202,7 +202,7 @@ export async function handleActivityUsers(request: Request, env: Env, user: Auth
   const sort = url.searchParams.get('sort') || 'last_active';
 
   const filters: string[] = [];
-  const params: unknown[] = [range.from, range.toExclusive, range.from, range.toExclusive];
+  const params: unknown[] = [range.from, range.toExclusive];
   if (query) {
     filters.push('(u.email LIKE ? OR u.name LIKE ?)');
     params.push(`%${query}%`, `%${query}%`);
@@ -220,29 +220,39 @@ export async function handleActivityUsers(request: Request, env: Env, user: Auth
     created: 'u.created_at DESC',
   }[sort] || 'ua.last_active DESC';
 
+  // One pass over the range. A per-user correlated subquery for top_feature
+  // read ~30M rows on a 30-day range (18s); the window function reads each
+  // event once (~0.4s on live data).
   const users = await env.DB.prepare(
-    `WITH ua AS (
+    `WITH b AS (
+       SELECT user_id, feature, created_at, credit_cost,
+              CASE WHEN ${ranSql()} THEN 1 ELSE 0 END AS is_ran
+         FROM app_events
+        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+     ),
+     uf AS (
+       -- Most RAN events wins; users who ran nothing fall back to most events.
+       SELECT user_id, feature,
+              ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY SUM(is_ran) DESC, COUNT(*) DESC) AS rn
+         FROM b
+        GROUP BY user_id, feature
+     ),
+     ua AS (
        SELECT user_id,
               COUNT(*) AS total_events,
-              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran_events,
+              SUM(is_ran) AS ran_events,
               COUNT(DISTINCT date(created_at)) AS active_days,
               COALESCE(SUM(credit_cost), 0) AS credits_used,
               MAX(created_at) AS last_active
-         FROM app_events
-        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+         FROM b
         GROUP BY user_id
      )
      SELECT u.id, u.email, u.name, u.subscription_tier,
             ua.total_events, ua.ran_events, ua.active_days, ua.credits_used, ua.last_active,
-            (SELECT e.feature FROM app_events e
-              WHERE e.user_id = u.id AND e.event_category = 'product'
-                AND e.created_at >= ? AND e.created_at < ?
-              GROUP BY e.feature
-              -- Most RAN events wins; users who ran nothing fall back to most events.
-              ORDER BY SUM(CASE WHEN ${ranSql('e')} THEN 1 ELSE 0 END) DESC, COUNT(*) DESC
-              LIMIT 1) AS top_feature
+            uf.feature AS top_feature
        FROM ua
        JOIN users u ON u.id = ua.user_id
+       LEFT JOIN uf ON uf.user_id = ua.user_id AND uf.rn = 1
       ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
       ORDER BY ${orderBy}
       LIMIT 100`
@@ -253,33 +263,39 @@ export async function handleActivityUsers(request: Request, env: Env, user: Auth
 
 // GET /api/admin/activity/funnel?from=&to=
 // Activation funnel over users who SIGNED UP in the range: connected a site,
-// ran a product tool, came back on a second day. Rates are relative to signups.
+// ran a product tool (RAN, not just opened), came back on a second day. Rates
+// are relative to signups. Events are aggregated once per signup instead of
+// two correlated subqueries per user (42M rows read, 26s on 30 days; now
+// ~170k rows, ~0.1s).
 export async function handleActivityFunnel(request: Request, env: Env, user: AuthUser): Promise<Response> {
   if (!isAdmin(user)) return forbidden();
   const range = parseRange(new URL(request.url));
   if (!range) return json({ error: 'Invalid date range' }, 400);
 
   const row = await env.DB.prepare(
-    `SELECT
+    `WITH s AS (
+       SELECT id FROM users WHERE created_at >= ? AND created_at < ?
+     ),
+     a AS (
+       SELECT user_id,
+              SUM(CASE WHEN ${ranSql()} THEN 1 ELSE 0 END) AS ran,
+              COUNT(DISTINCT date(created_at)) AS days
+         FROM app_events
+        WHERE event_category = 'product' AND created_at >= ? AND created_at < ?
+          AND user_id IN (SELECT id FROM s)
+        GROUP BY user_id
+     )
+     SELECT
        COUNT(*) AS signed_up,
-       SUM(CASE WHEN EXISTS (SELECT 1 FROM gsc_properties p WHERE p.user_id = u.id)
-                  OR EXISTS (SELECT 1 FROM gsc_connections c WHERE c.user_id = u.id)
-                  OR EXISTS (SELECT 1 FROM bwt_connections b WHERE b.user_id = u.id)
+       SUM(CASE WHEN EXISTS (SELECT 1 FROM gsc_properties p WHERE p.user_id = s.id)
+                  OR EXISTS (SELECT 1 FROM gsc_connections c WHERE c.user_id = s.id)
+                  OR EXISTS (SELECT 1 FROM bwt_connections b WHERE b.user_id = s.id)
             THEN 1 ELSE 0 END) AS connected,
-       SUM(CASE WHEN EXISTS (
-             SELECT 1 FROM app_events e
-              WHERE e.user_id = u.id AND e.event_category = 'product'
-                AND e.created_at >= ? AND e.created_at < ?)
-            THEN 1 ELSE 0 END) AS ran_tool,
-       SUM(CASE WHEN (
-             SELECT COUNT(DISTINCT date(e.created_at)) FROM app_events e
-              WHERE e.user_id = u.id AND e.event_category = 'product'
-                AND e.created_at >= ? AND e.created_at < ?) >= 2
-            THEN 1 ELSE 0 END) AS returned
-     FROM users u
-     WHERE u.created_at >= ? AND u.created_at < ?`
+       SUM(CASE WHEN a.ran > 0 THEN 1 ELSE 0 END) AS ran_tool,
+       SUM(CASE WHEN a.days >= 2 THEN 1 ELSE 0 END) AS returned
+     FROM s
+     LEFT JOIN a ON a.user_id = s.id`
   ).bind(
-    range.from, range.toExclusive,
     range.from, range.toExclusive,
     range.from, range.toExclusive,
   ).first();

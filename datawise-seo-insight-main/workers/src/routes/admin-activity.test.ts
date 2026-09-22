@@ -192,4 +192,21 @@ describe('admin activity ran vs opened', () => {
     const logsAll = await (await handleActivityEvents(get(`events?${RANGE}&limit=200`), env, admin)).json() as any;
     expect(logsAll.events.length).toBe(35);
   });
+
+  it('funnel counts a signup as "ran a tool" only when they ran something, not just opened', async () => {
+    const { env, raw } = fixture();
+    // ud signed up and only opened screens, on two different days.
+    raw.prepare('INSERT INTO users (id, email, name, created_at) VALUES (?, ?, ?, ?)')
+      .run('ud', 'ud@example.com', 'ud', `${DAY} 08:00:00`);
+    const insert = raw.prepare(
+      `INSERT INTO app_events (event_name, event_category, user_id, feature, action, method, outcome, credit_cost, created_at)
+       VALUES ('Site Audit Viewed', 'product', 'ud', 'site_audit', 'view', 'GET', 'success', 0, ?)`,
+    );
+    insert.run(`${DAY} 09:00:00`);
+    insert.run('2026-09-11 09:00:00');
+
+    const body = await (await handleActivityFunnel(get('funnel?from=2026-09-10&to=2026-09-11'), env, admin)).json() as any;
+    const steps = Object.fromEntries(body.steps.map((s: any) => [s.key, s.users]));
+    expect(steps).toMatchObject({ signed_up: 4, ran_tool: 3, returned: 1 });
+  });
 });
