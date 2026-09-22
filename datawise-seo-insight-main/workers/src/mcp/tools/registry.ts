@@ -7,6 +7,7 @@ import { rankTracking, aiVisibility, localReviews, searchConsole } from './store
 import { peopleAlsoAsk } from './paa';
 import { gbpAudit } from './gbp-audit';
 import { gbpProfile } from './gbp-profile';
+import { sitePages } from './site-pages';
 
 // Order is deliberate and stable: clients cache tools/list by position and
 // prompt caches key on it (spec section 5).
@@ -28,4 +29,5 @@ export const ALL_TOOLS: ToolDef[] = [
   gbpAudit,
   // Added 2026-09-22 (spec docs/superpowers/specs/2026-09-22-mcp-gbp-site-alignment-design.md).
   gbpProfile,
+  sitePages,
 ];
