@@ -9,13 +9,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 could ship.** Short version:
 
 1. Start every change from live: `scripts/start-change.sh fix/<name>` (or `feat/`, `chore/`). Never edit a stale copy.
-2. Open a PR into `production`. Push to the `staging` branch (or run the "Deploy DataWise Pages Staging" workflow) to test at `https://staging.datawise-118.pages.dev` (same guard as production).
-3. Merge into `production` → it auto-deploys live via GitHub Actions (build + guard run on GitHub from `production`, never from a laptop).
+2. Open a PR into `production`. Push to the `staging` branch (or run the "Deploy DataWise Pages Staging" workflow) to test at `https://staging.datawise-118.pages.dev` (same guard as production). Staging also uploads the branch's Worker as a no-traffic preview version at `https://staging-datawise-api.nico-510.workers.dev` and points the staging SPA at it, so unmerged Worker changes are testable without touching live (it shares live D1/KV data).
+3. Merge into `production` → GitHub Actions deploys live: the Worker first (only if `workers/` changed, after typecheck + tests), then the SPA. Nothing is deployed from a laptop.
 
 **Never:**
 - Run raw `wrangler pages deploy` for the frontend. It bypasses the feature guard and caused the May 2026 outage.
 - Deploy the frontend from a laptop, or from any branch other than `production`.
-- Use `npm run deploy:staging` / `npm run deploy:production` inside `workers/`. Those create orphan workers. The worker deploy is just `npm run deploy`.
+- Deploy the Worker by hand from a feature branch. That silently rolled back live fixes (PR #140, 2026-09-08). `npm run deploy` now refuses unless HEAD is a clean `origin/production`; use `npm run deploy:preview` to test unmerged Worker code. `deploy:staging` / `deploy:production` are disabled (they created orphan workers).
 
 The frontend guard (`datawise-seo-insight-main/scripts/deploy-pages-production.mjs`) refuses any build missing Content Writer, AI Visibility, Brand Tracker, Content Planner, etc. Do not weaken or bypass it.
 
@@ -69,9 +69,8 @@ npm run lint         # ESLint
 ```sh
 npm install          # Install dependencies
 npm run dev          # Start local worker (wrangler dev)
-npm run deploy       # Deploy to Cloudflare
-npm run deploy:staging
-npm run deploy:production
+npm run deploy:preview  # Upload a no-traffic preview version (staging alias). Safe on any branch.
+npm run deploy       # Live deploy; guarded: clean, up-to-date production only. Normally CI does this on merge.
 npm run db:migrate   # Run D1 schema migration (dev)
 npm run db:migrate:staging
 npm run db:migrate:production
