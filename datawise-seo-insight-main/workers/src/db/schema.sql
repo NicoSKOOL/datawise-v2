@@ -67,6 +67,10 @@ CREATE TABLE IF NOT EXISTS gsc_properties (
   kind TEXT NOT NULL DEFAULT 'gsc',
   site_group_id TEXT,
   purged_at TEXT,
+  -- Last time the sync cron DISPATCHED this property, success or not. Distinct
+  -- from last_synced_at (successes only) so the slice ordering can rotate past
+  -- a property that fails every time instead of re-attempting it every tick.
+  last_attempt_at TEXT,
   UNIQUE(user_id, site_url)
 );
 

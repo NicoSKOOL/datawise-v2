@@ -17,32 +17,84 @@ export const GSC_NIGHTLY_CONCURRENCY = 8;
 // instead of churning through hundreds of guaranteed failures.
 export const GSC_SYNC_BREAKER_THRESHOLD = 5;
 
-// Daily GSC re-sync over enabled properties whose owner has logged in within
-// the 30-day session lifetime (a currently-valid session). Properties owned by
-// dormant users are skipped: their data is NOT deleted, and the next daily run
-// picks them up automatically once they log in again. This avoids rewriting
-// 90-day Search Console data that nobody is currently looking at, which is the
-// dominant driver of D1 "rows written" cost.
-// Skips properties whose refresh token can no longer mint an access token
-// (user must reconnect); skipping does not delete the property.
-// Processes with a shared-index worker pool to stay within Worker CPU limits.
-export async function runDailyGSCSync(
+// Properties attempted per tick. The whole point of slicing is that the
+// subrequest cap is per INVOCATION, so the fix for "the run dies at ~30
+// properties" is more invocations, not a longer deadline. One property costs
+// ~16 subrequests in the cheap case and far more for a large property
+// (agg90 at 50k rows is 100 insert batches alone), and processSiteAuditQueue
+// spends from the same budget earlier in the tick, so a slice stays well
+// under the cap. At the */5 cadence 10 per tick is 2,880 attempts a day,
+// against a due set that stood at 2,234 on 2026-09-23.
+export const GSC_SLICE_LIMIT = 10;
+
+// A property is not re-attempted inside this window. Without it the ordering
+// is deterministic, so every tick would re-attempt the same head of the queue
+// and a permanently failing property (deleted in Search Console, permission
+// revoked) would block every property behind it forever. With it, the head
+// rotates and a broken property costs at most ~12 attempts a day.
+export const GSC_ATTEMPT_COOLDOWN = '-2 hours';
+
+// Only re-sync a property if it has not been refreshed in the last few days.
+// Google Search Console data itself lags ~2-3 days, so a daily rewrite of the
+// full 90-day window produced no fresher data while dominating D1 write cost.
+// last_synced_at is set only on a SUCCESSFUL sync, so token-expired properties
+// (which write nothing) stay eligible and are retried at ~zero cost.
+// The manual "Sync" button bypasses this and force-refreshes on demand.
+const STALE_AFTER = '-3 days';
+
+export interface GSCSliceResult {
+  /** Properties whose sync returned 2xx. */
+  synced: number;
+  /** Properties skipped because the token could not be refreshed (403). */
+  skipped: number;
+  failed: number;
+  /** Properties dispatched, i.e. the size of the slice actually worked. */
+  processed: number;
+  /** Properties due and past their attempt cooldown, before the slice limit. */
+  eligible: number;
+  breaker_tripped: boolean;
+  duration_ms: number;
+}
+
+export interface GSCSliceOptions {
+  /** Max properties to attempt. */
+  limit?: number;
+  /** Lanes in flight. */
+  concurrency?: number;
+}
+
+/**
+ * Sync one slice of the GSC due set.
+ *
+ * Scope: enabled GSC properties whose owner has logged in within the 30-day
+ * session lifetime (a currently-valid session). Properties owned by dormant
+ * users are skipped: their data is NOT deleted, and a later run picks them up
+ * automatically once they log in again. This avoids rewriting 90-day Search
+ * Console data that nobody is currently looking at, which is the dominant
+ * driver of D1 "rows written" cost. Properties whose refresh token can no
+ * longer mint an access token are skipped; skipping does not delete anything.
+ *
+ * Runs from the every-5-minute tick, once per invocation, because the binding
+ * limit is
+ * the per-invocation subrequest cap and not wall-clock time: the single daily
+ * run it replaces was stamping ~35 properties a night (all inside its first
+ * two minutes, of an 11-minute budget) while 2,234 were due, so every active
+ * user's dashboard was frozen at whatever the manual Sync button last fetched.
+ */
+export async function runGSCSyncSlice(
   env: Env,
   deadline: number,
+  options: GSCSliceOptions = {},
   syncFn: (env: Env, userId: string, propertyId: string) => Promise<Response> = syncProperty,
-): Promise<void> {
+): Promise<GSCSliceResult> {
   const startedAt = Date.now();
-  // Only re-sync a property if it has not been refreshed in the last few days.
-  // Google Search Console data itself lags ~2-3 days, so a daily rewrite of the
-  // full 90-day window produced no fresher data while dominating D1 write cost.
-  // last_synced_at is set only on a SUCCESSFUL sync, so token-expired properties
-  // (which write nothing) stay eligible and are retried each day at ~zero cost.
-  // The manual "Sync" button bypasses this and force-refreshes on demand.
-  const STALE_AFTER = "-3 days";
-  // The due set is far larger than one cron window can sync, so ordering
-  // decides who gets data tonight. orderSyncQueue owns that policy: see
-  // gsc/sync-queue.ts for why never-synced properties are no longer last.
-  // This query is deliberately unordered; do not add an ORDER BY here.
+  const limit = options.limit ?? GSC_SLICE_LIMIT;
+  const concurrency = options.concurrency ?? GSC_NIGHTLY_CONCURRENCY;
+
+  // The due set is far larger than one slice, so ordering decides who gets
+  // data now. orderSyncQueue owns that policy: see gsc/sync-queue.ts for why
+  // never-synced properties are no longer last. This query is deliberately
+  // unordered; do not add an ORDER BY here.
   // user_has_synced tells the ordering whether the owner currently sees any
   // data at all. kind='gsc' excludes manual/bwt rows that can never GSC-sync
   // but were occupying sync slots.
@@ -59,16 +111,30 @@ export async function runDailyGSCSync(
       WHERE p.is_enabled = 1
         AND p.kind = 'gsc'
         AND (p.last_synced_at IS NULL OR p.last_synced_at < datetime('now', ?))
+        AND (p.last_attempt_at IS NULL OR p.last_attempt_at < datetime('now', ?))
         AND EXISTS (
           SELECT 1 FROM sessions s
            WHERE s.user_id = p.user_id
              AND s.expires_at > datetime('now')
         )`
-  ).bind(STALE_AFTER).all<SyncQueueRow>();
+  ).bind(STALE_AFTER, GSC_ATTEMPT_COOLDOWN).all<SyncQueueRow>();
 
-  const due = props.results || [];
-  const composition = describeSyncQueue(due);
-  const rows = orderSyncQueue(due);
+  const eligible = props.results || [];
+  const composition = describeSyncQueue(eligible);
+  const rows = orderSyncQueue(eligible).slice(0, limit);
+
+  // Stamp the whole slice as attempted BEFORE syncing any of it, in one batch.
+  // Before, not after, so a slice that dies mid-flight (subrequest cap, CPU
+  // limit, the 15-minute wall) cannot hand the next tick the same head; and in
+  // one batch so the bookkeeping costs one subrequest instead of one per
+  // property. A successful sync stamps last_synced_at on top of this.
+  if (rows.length > 0) {
+    await env.DB.batch(
+      rows.map(p => env.DB.prepare(
+        `UPDATE gsc_properties SET last_attempt_at = datetime('now') WHERE id = ?`
+      ).bind(p.id))
+    );
+  }
 
   let synced = 0, skipped = 0, failed = 0;
   let next = 0;
@@ -96,19 +162,31 @@ export async function runDailyGSCSync(
       }
       if (!tripped && consecutiveFailures >= GSC_SYNC_BREAKER_THRESHOLD) {
         tripped = true;
-        console.error(`GSC nightly sync breaker tripped after ${GSC_SYNC_BREAKER_THRESHOLD} consecutive failures; halting dispatch`);
+        console.error(`GSC sync breaker tripped after ${GSC_SYNC_BREAKER_THRESHOLD} consecutive failures; halting dispatch`);
       }
     }
   };
-  await Promise.all(Array.from({ length: GSC_NIGHTLY_CONCURRENCY }, () => worker()));
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
-  const processed = Math.min(next, rows.length);
-  console.log(
-    `GSC daily sync done (active + due-for-refresh scope): ${synced} synced, ${skipped} skipped (token), ` +
-    `${failed} failed, ${processed}/${rows.length} due properties processed, ${Date.now() - startedAt}ms` +
-    ` [queue: ${composition.onboarding} onboarding, ${composition.expansion} expansion, ` +
-    `${composition.refresh} refresh]` +
-    (processed < rows.length ? ` (time budget reached, ${rows.length - processed} roll to next run)` : '') +
-    (tripped ? ` (breaker tripped)` : '')
-  );
+  const result: GSCSliceResult = {
+    synced,
+    skipped,
+    failed,
+    processed: Math.min(next, rows.length),
+    eligible: eligible.length,
+    breaker_tripped: tripped,
+    duration_ms: Date.now() - startedAt,
+  };
+
+  if (result.processed > 0 || tripped) {
+    console.log(
+      `GSC sync slice: ${synced} synced, ${skipped} skipped (token), ${failed} failed, ` +
+      `${result.processed}/${rows.length} dispatched, ${eligible.length} eligible, ${result.duration_ms}ms` +
+      ` [queue: ${composition.onboarding} onboarding, ${composition.expansion} expansion, ` +
+      `${composition.refresh} refresh]` +
+      (tripped ? ' (breaker tripped)' : '')
+    );
+  }
+
+  return result;
 }

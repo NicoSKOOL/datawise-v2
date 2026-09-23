@@ -52,7 +52,7 @@ import { recordRequestActivity, pruneAppEvents, ACTIVITY_ERROR_CODE_HEADER } fro
 import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisconnect, handleGSCPropertyUpdate, handleGSCPropertiesRefresh } from './gsc/oauth';
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, purgeDormantGSCData, resyncPurgedProperties, purgeLongTailGSCData, handleAdminLongTailPurge } from './gsc/sync';
-import { runDailyGSCSync } from './gsc/sync-runner';
+import { runGSCSyncSlice } from './gsc/sync-runner';
 import { handleChat, handleListConversations, handleGetConversation, handleDeleteConversation, handleRenameConversation } from './chat/handler';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
@@ -187,14 +187,37 @@ export default {
       );
     }
 
-    // Daily GSC re-sync (runs once a day, separate from the 6h email cron).
-    if (event.cron === '0 11 * * *') {
-      // Scheduled handlers die at the 15-minute wall. Measure from tick start
-      // so the site-audit queue above is charged to the same clock, and keep
-      // 4 minutes of headroom: the slowest observed single sync is 191s, and
-      // an in-flight sync killed at the wall can strand a property mid-rewrite,
-      // so the margin must exceed the straggler tail, not just the log write.
-      await runDailyGSCSync(env, tickStart + 11 * 60 * 1000);
+    // GSC sync slice, on every 5-minute tick.
+    //
+    // This replaced a single 11-minute daily run that could only ever stamp
+    // ~35 properties a night, all of them inside its first two minutes, while
+    // 2,234 properties were due across 285 active users (measured 2026-09-23).
+    // Wall-clock time was never the binding limit: the per-invocation
+    // subrequest cap is, and a longer deadline cannot buy more subrequests.
+    // Throughput therefore has to come from more invocations, and the */5 tick
+    // already exists. The deadline still leaves a minute of headroom before
+    // the next tick, so two slices do not normally overlap; if one does run
+    // long, the attempt stamp taken before dispatch keeps the next tick off
+    // the same properties. KV key `gsc-sync-paused` is the kill switch.
+    if (event.cron === '*/5 * * * *') {
+      if (await env.KV.get('gsc-sync-paused')) {
+        console.log('GSC sync slice skipped: gsc-sync-paused');
+        return;
+      }
+      try {
+        const slice = await runGSCSyncSlice(env, tickStart + 4 * 60 * 1000);
+        // One-glance throughput without opening the dashboard. Only written on
+        // a tick that did something, so a quiet key means a quiet queue and
+        // not a dead cron.
+        if (slice.processed > 0 || slice.breaker_tripped) {
+          await env.KV.put(
+            'gsc-sync-last-slice',
+            JSON.stringify({ at: new Date().toISOString(), ...slice })
+          );
+        }
+      } catch (err) {
+        console.error('runGSCSyncSlice failed:', err);
+      }
       return;
     }
 
