@@ -6,6 +6,15 @@ compatibility_date = "2024-12-01"
 # Site audit queue heartbeat at */5 (down from */2). User-triggered audits do not
 # wait on this cron — handleListAudits / audit-create call processSiteAuditQueue
 # inline, so cron is just a backstop for tab-closed / crashed sessions.
+# "*/5 * * * *" also runs the GSC sync slice: see src/gsc/sync-runner.ts
+# runGSCSyncSlice. It replaced a single 11-minute daily run, because the limit
+# on how many properties one run can sync is the per-invocation subrequest cap,
+# not wall-clock time; 10 properties per tick is ~2,880 attempts a day against
+# a due set of 2,234 (measured 2026-09-23), where the daily run managed ~35 a
+# night. KV key `gsc-sync-paused` is the kill switch, `gsc-sync-last-slice`
+# holds the most recent run summary.
+# "0 11 * * *" no longer syncs GSC. It is kept only as a second site-audit
+# queue backstop; do not add work to it without reading the note above first.
 # "0 6 * * *": daily AI visibility tracking slice (06:00 UTC) — see
 # src/routes/ai-tracking.ts runScheduledAIChecks. Each tick checks the queries
 # not scheduled-checked in the last 6 days, stalest project first, under a
@@ -23,6 +32,15 @@ compatibility_date = "2024-12-01"
 # initial load with POST /api/admin/email/sync-contacts rather than waiting for
 # this to walk the table.
 crons = ["*/5 * * * *", "0 11 * * *", "0 */6 * * *", "0 6 * * *", "0 8 * * 2,4,6", "0 4 * * *"]
+
+# Workers Logs retention. Without this there are no retained logs at all, which
+# is why the GSC sync could stamp only ~35 properties a night for months
+# without anyone being able to see why: the cron path writes no app_events
+# rows either (it bypasses the HTTP middleware), so the run summary line had
+# nowhere to land. head_sampling_rate = 1 keeps every invocation.
+[observability]
+enabled = true
+head_sampling_rate = 1
 
 [vars]
 ENVIRONMENT = "development"
