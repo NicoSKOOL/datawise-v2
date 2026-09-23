@@ -205,7 +205,16 @@ export default {
         return;
       }
       try {
-        const slice = await runGSCSyncSlice(env, tickStart + 4 * 60 * 1000);
+        // Slice size is KV-tunable (`gsc-sync-slice-limit`) so throughput, and
+        // the D1 write cost that comes with it, can be ramped or throttled
+        // without a deploy. Capped at 50: a fat-fingered value must not be
+        // able to blow the per-invocation subrequest budget this fix exists
+        // to respect.
+        const configured = Number(await env.KV.get('gsc-sync-slice-limit'));
+        const options = Number.isFinite(configured) && configured > 0
+          ? { limit: Math.min(configured, 50) }
+          : {};
+        const slice = await runGSCSyncSlice(env, tickStart + 4 * 60 * 1000, options);
         // One-glance throughput without opening the dashboard. Only written on
         // a tick that did something, so a quiet key means a quiet queue and
         // not a dead cron.
