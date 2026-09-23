@@ -214,6 +214,17 @@ describe('runGSCSyncSlice attempt bookkeeping', () => {
     expect(result.eligible).toBe(0);
   });
 
+  it('leaves out owners whose refresh token can no longer mint an access token', async () => {
+    const { env, calls } = makeEnvWithDue([{ id: 'p0', user_id: 'u0' }]);
+    await runGSCSyncSlice(env, Date.now() + 60_000, {}, async () => okResponse());
+    // They cannot sync until they reconnect, they are already shown the
+    // Reconnect Google banner, and attempting them spends a slot in every
+    // slice: 104 of 106 onboarding properties on 2026-09-23.
+    expect(calls.selectSql).toMatch(
+      /NOT EXISTS \(\s*SELECT 1 FROM gsc_connections c\s+WHERE c\.user_id = p\.user_id\s+AND c\.refresh_failed_at IS NOT NULL\s*\)/
+    );
+  });
+
   it('filters the due set by the attempt cooldown', async () => {
     const { env, calls } = makeEnvWithDue([{ id: 'p0', user_id: 'u0' }]);
     await runGSCSyncSlice(env, Date.now() + 60_000, {}, async () => okResponse());

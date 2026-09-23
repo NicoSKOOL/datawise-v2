@@ -116,6 +116,25 @@ export async function runGSCSyncSlice(
           SELECT 1 FROM sessions s
            WHERE s.user_id = p.user_id
              AND s.expires_at > datetime('now')
+        )
+        -- Owners whose refresh token can no longer mint an access token cannot
+        -- sync until they reconnect Google, and they are already told: oauth.ts
+        -- stamps refresh_failed_at and the SPA shows a persistent "Reconnect
+        -- Google" banner off needs_reconnect. Attempting them anyway only
+        -- re-confirms a dead token, and it is not free: it spends a slot in
+        -- every slice. On 2026-09-23, 104 of the 106 onboarding properties (the
+        -- class the ordering deliberately puts FIRST) belonged to 6 such users,
+        -- so they re-occupied the head of the queue for ~11 ticks out of every
+        -- two hours and the 94 users who could sync waited behind them.
+        -- Self-healing: refresh_failed_at is cleared on a successful reconnect
+        -- AND on any successful refresh, the due set already requires a live
+        -- session, and every dashboard load refreshes the token, so a flag set
+        -- by a transient Google failure clears itself the next time the owner
+        -- opens the app.
+        AND NOT EXISTS (
+          SELECT 1 FROM gsc_connections c
+           WHERE c.user_id = p.user_id
+             AND c.refresh_failed_at IS NOT NULL
         )`
   ).bind(STALE_AFTER, GSC_ATTEMPT_COOLDOWN).all<SyncQueueRow>();
 
