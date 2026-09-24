@@ -7,9 +7,11 @@ import KeywordIdeas from './KeywordIdeas';
 import KeywordDifficulty from './KeywordDifficulty';
 import PeopleAlsoAsk from './PeopleAlsoAsk';
 import FanOutQueries from './FanOutQueries';
+import SerpAnalysis from './SerpAnalysis';
 
 const keywordResearchTabs = new Set([
   'overview',
+  'serp-analysis',
   'related',
   'suggestions',
   'ideas',
@@ -45,6 +47,7 @@ export default function KeywordResearch() {
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         <TabsList className="inline-flex h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="serp-analysis">SERP Analysis</TabsTrigger>
           <TabsTrigger value="related">Related</TabsTrigger>
           <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
           <TabsTrigger value="ideas">Ideas</TabsTrigger>
@@ -59,6 +62,9 @@ export default function KeywordResearch() {
             state survives unmount via usePersistentState in each tab. */}
         <TabsContent value="overview" className="mt-6">
           <KeywordOverview />
+        </TabsContent>
+        <TabsContent value="serp-analysis" className="mt-6">
+          <SerpAnalysis />
         </TabsContent>
         <TabsContent value="related" className="mt-6">
           <RelatedKeywords />

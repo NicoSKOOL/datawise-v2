@@ -156,6 +156,7 @@ import {
 } from './routes/content-writer';
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
+import { handleSerpAnalysis, handleSerpLocations } from './routes/serp-analysis';
 import { checkAndDeductCredit, creditCostForRoute, refundCredit, shouldRefundCredit } from './middleware/credits';
 import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
@@ -493,6 +494,11 @@ export default {
         return addCors(await handleDeleteBrandingLogo(env, user.id));
       }
 
+      // --- SERP location search (auth-required, free catalog lookup) ---
+      if (path === '/api/keywords/serp-locations' && method === 'GET') {
+        return addCors(await handleSerpLocations(request, env));
+      }
+
       // --- Promo Codes (auth-required, not credit-gated) ---
       if (path === '/api/promo/redeem' && method === 'POST') {
         return addCors(await handleRedeemPromo(request, env, user.id));
@@ -562,6 +568,10 @@ export default {
       }
       if (path === '/api/keywords/overview' && method === 'POST') {
         return await withCredit(() => handleKeywordOverview(request, env));
+      }
+      // SERP Analysis: live SERP + Labs overview + backlinks bulk summary, so 2 credits.
+      if (path === '/api/keywords/serp-analysis' && method === 'POST') {
+        return await withCredit(() => handleSerpAnalysis(request, env), 2);
       }
 
       // --- Competitor Analysis (credit-gated) ---

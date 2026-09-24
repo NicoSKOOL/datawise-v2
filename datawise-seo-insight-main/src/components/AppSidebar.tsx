@@ -82,6 +82,7 @@ const mainNavItems: NavItem[] = [
     icon: Search,
     subItems: [
       { label: 'Overview', tab: 'overview' },
+      { label: 'SERP Analysis', tab: 'serp-analysis' },
       { label: 'Related', tab: 'related' },
       { label: 'Suggestions', tab: 'suggestions' },
       { label: 'Ideas', tab: 'ideas' },

@@ -47,6 +47,25 @@ export async function fetchKeywordOverview(params: {
   return api('/api/keywords/overview', { method: 'POST', body: params });
 }
 
+export async function fetchSerpAnalysis(params: {
+  keyword: string;
+  location_code: number;
+  serp_location_code?: number;
+  language_code: string;
+  country_iso?: string;
+  country_label?: string;
+}) {
+  return api('/api/keywords/serp-analysis', { method: 'POST', body: params });
+}
+
+export async function searchSerpLocations(country: string, q: string) {
+  const params = new URLSearchParams({ country, q });
+  return api<{ locations: Array<{ location_code: number; location_name: string; location_type: string }> }>(
+    `/api/keywords/serp-locations?${params.toString()}`,
+    { method: 'GET' },
+  );
+}
+
 // --- Competitor Analysis ---
 
 export async function fetchRankedKeywords(params: {

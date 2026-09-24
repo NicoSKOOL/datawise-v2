@@ -12,7 +12,7 @@ export function Layout({ children }: LayoutProps) {
     <SidebarProvider>
       <div className="min-h-screen flex w-full">
         <AppSidebar />
-        <main className="flex-1 flex flex-col">
+        <main className="flex-1 flex flex-col min-w-0">
           <header className="h-14 flex items-center border-b bg-background px-4">
             <SidebarTrigger />
           </header>
