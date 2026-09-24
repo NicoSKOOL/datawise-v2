@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
 import { Check, ChevronDown, ChevronRight, Download, ExternalLink, FileSearch, Globe, MapPin, Minus, Search, Star, Target, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableCell, TableHead, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
@@ -194,6 +194,48 @@ function HeaderHint({ label, hint }: { label: string; hint: string }) {
       </TooltipTrigger>
       <TooltipContent className="max-w-[260px] text-xs leading-relaxed">{hint}</TooltipContent>
     </Tooltip>
+  );
+}
+
+// # | Result | Domain Rank | Page Rank | Links to page | Links to site | Est. traffic | Kw in title | Kw in URL | Words | Related terms
+const RESULT_COL_WIDTHS = [56, 380, 96, 96, 100, 100, 100, 104, 104, 92, 112];
+
+// A table whose header row sticks to the top of the window while you scroll
+// through the rows, and settles back in place when you scroll above the table.
+// CSS sticky alone cannot do this here: the table needs its own horizontal
+// scroll box, and a sticky <thead> inside that box sticks to the box, not the
+// page. So the header lives in a separate sticky strip with the same fixed
+// column widths, and its horizontal scroll is kept in sync with the body.
+function StickyHeaderTable({ colWidths, header, children }: { colWidths: number[]; header: ReactNode; children: ReactNode }) {
+  const headRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const minWidth = colWidths.reduce((sum, w) => sum + w, 0);
+  const tableStyle: CSSProperties = { width: "100%", minWidth, tableLayout: "fixed" };
+  const cols = (
+    <colgroup>
+      {colWidths.map((w, i) => (
+        <col key={i} style={{ width: w }} />
+      ))}
+    </colgroup>
+  );
+  const syncScroll = () => {
+    if (headRef.current && bodyRef.current) headRef.current.scrollLeft = bodyRef.current.scrollLeft;
+  };
+  return (
+    <>
+      <div ref={headRef} className="sticky top-0 z-20 overflow-hidden border-b bg-card shadow-[0_4px_6px_-4px_rgba(0,0,0,0.12)]">
+        <table className="caption-bottom text-sm" style={tableStyle}>
+          {cols}
+          <thead>{header}</thead>
+        </table>
+      </div>
+      <div ref={bodyRef} className="overflow-x-auto" onScroll={syncScroll}>
+        <table className="caption-bottom text-sm" style={tableStyle}>
+          {cols}
+          <tbody className="[&_tr:last-child]:border-0">{children}</tbody>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -637,12 +679,12 @@ export default function SerpAnalysis() {
               </CardDescription>
             </CardHeader>
             <CardContent className="px-0 pb-2">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10 pl-6">#</TableHead>
-                      <TableHead className="min-w-[320px]">Result</TableHead>
+              <StickyHeaderTable
+                colWidths={RESULT_COL_WIDTHS}
+                header={
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="pl-6">#</TableHead>
+                      <TableHead>Result</TableHead>
                       <TableHead className="text-center"><HeaderHint label="Domain Rank" hint="DataForSEO authority score for the whole site, 0 to 100. Similar in spirit to DA or DR." /></TableHead>
                       <TableHead className="text-center"><HeaderHint label="Page Rank" hint="DataForSEO authority score for this exact page, 0 to 100." /></TableHead>
                       <TableHead className="text-center"><HeaderHint label="Links to page" hint="Number of unique websites linking to this exact page." /></TableHead>
@@ -653,8 +695,8 @@ export default function SerpAnalysis() {
                       <TableHead className="text-center"><HeaderHint label="Words" hint="Words of main content on the page (menus and footer excluded)." /></TableHead>
                       <TableHead className="pr-6 text-center"><HeaderHint label="Related terms" hint="Share of the related terms (see the Related terms checker below) that this page uses." /></TableHead>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                }
+              >
                     {data.results.map((r) => {
                       const isOpen = expanded.has(r.position);
                       const strengths = r.reasons.filter((x) => x.kind === "strength");
@@ -759,9 +801,7 @@ export default function SerpAnalysis() {
                         </Fragment>
                       );
                     })}
-                  </TableBody>
-                </Table>
-              </div>
+              </StickyHeaderTable>
             </CardContent>
           </Card>
 
@@ -856,11 +896,12 @@ export default function SerpAnalysis() {
                     )}
                   </div>
 
-                  <div className="overflow-x-auto rounded-lg border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="min-w-[200px] pl-4">Term</TableHead>
+                  <div className="rounded-lg border">
+                    <StickyHeaderTable
+                      colWidths={[220, 96, ...(myReport?.status === "ok" ? [64] : []), ...data.results.map(() => 60)]}
+                      header={
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="pl-4">Term</TableHead>
                           <TableHead className="text-center">Used by</TableHead>
                           {myReport?.status === "ok" && <TableHead className="text-center">You</TableHead>}
                           {data.results.map((r) => (
@@ -872,8 +913,8 @@ export default function SerpAnalysis() {
                             </TableHead>
                           ))}
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
+                      }
+                    >
                         {contentData.terms.map((t) => (
                           <TableRow key={t.term}>
                             <TableCell className="pl-4 font-medium">{t.term}</TableCell>
@@ -903,8 +944,7 @@ export default function SerpAnalysis() {
                             })}
                           </TableRow>
                         ))}
-                      </TableBody>
-                    </Table>
+                    </StickyHeaderTable>
                   </div>
                 </>
               )}
