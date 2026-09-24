@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const dfs = { calls: [] as Array<{ path: string; payload: any }>, impl: null as null | ((path: string, payload: any) => any) };
 vi.mock('../dataforseo/client', () => ({
-  dataforseoRequestCached: async (_env: unknown, path: string, payload: any) => {
+  dataforseoRequest: async (_env: unknown, path: string, payload: any) => {
     dfs.calls.push({ path, payload });
     return dfs.impl ? dfs.impl(path, payload) : null;
   },
@@ -68,6 +68,17 @@ describe('parsePageContent', () => {
   });
 });
 
+const makeEnv = () => {
+  const store = new Map<string, { value: string; ttl?: number }>();
+  return {
+    store,
+    KV: {
+      get: async (k: string) => store.get(k)?.value ?? null,
+      put: async (k: string, value: string, opts?: { expirationTtl?: number }) => { store.set(k, { value, ttl: opts?.expirationTtl }); },
+    },
+  } as any;
+};
+
 describe('handleSerpContent', () => {
   beforeEach(() => { dfs.calls = []; dfs.impl = null; });
   const req = (body: unknown) => new Request('https://x/api/keywords/serp-content', { method: 'POST', body: JSON.stringify(body) });
@@ -80,7 +91,7 @@ describe('handleSerpContent', () => {
       if (url === 'https://js.test/' && !enable_javascript) return empty;
       return parsed('roof cleaning and driveway cleaning with mould removal');
     };
-    const res = await handleSerpContent(req({ keyword: 'pressure washing', urls: ['https://a.test/', 'https://js.test/', 'ftp://bad'], my_url: 'https://mine.test/' }), {} as any);
+    const res = await handleSerpContent(req({ keyword: 'pressure washing', urls: ['https://a.test/', 'https://js.test/', 'ftp://bad'], my_url: 'https://mine.test/' }), makeEnv());
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.pages).toHaveLength(2);
@@ -91,15 +102,26 @@ describe('handleSerpContent', () => {
   });
 
   it('rejects a non-http own-page URL', async () => {
-    const res = await handleSerpContent(req({ keyword: 'k', urls: ['https://a.test/'], my_url: 'javascript:alert(1)' }), {} as any);
+    const res = await handleSerpContent(req({ keyword: 'k', urls: ['https://a.test/'], my_url: 'javascript:alert(1)' }), makeEnv());
     expect(res.status).toBe(400);
   });
 
   it('caps ranking URLs at 10', async () => {
     dfs.impl = () => parsed('roof cleaning');
     const urls = Array.from({ length: 15 }, (_, i) => `https://p${i}.test/`);
-    const res = await handleSerpContent(req({ keyword: 'k', urls }), {} as any);
+    const res = await handleSerpContent(req({ keyword: 'k', urls }), makeEnv());
     const body = await res.json() as any;
     expect(body.pages).toHaveLength(10);
+  });
+
+  it('caches good reads for a week, empty reads for 6h, and serves repeats from cache', async () => {
+    dfs.impl = (_p, payload) => (payload[0].url === 'https://blocked.test/' ? empty : parsed('roof cleaning'));
+    const env = makeEnv();
+    await handleSerpContent(req({ keyword: 'k', urls: ['https://a.test/', 'https://blocked.test/'] }), env);
+    const ttls = [...env.store.values()].map((v: any) => v.ttl).sort();
+    expect(ttls).toEqual([21600, 604800]);
+    const before = dfs.calls.length;
+    await handleSerpContent(req({ keyword: 'k', urls: ['https://a.test/', 'https://blocked.test/'] }), env);
+    expect(dfs.calls.length).toBe(before);
   });
 });

@@ -1,5 +1,5 @@
 import type { Env } from '../index';
-import { dataforseoRequestCached, getTaskError } from '../dataforseo/client';
+import { dataforseoRequest, getTaskError } from '../dataforseo/client';
 import { keywordTokens, titleMatch, type MatchLevel } from './serp-analysis';
 
 // Related-terms ("LSI") checker for SERP Analysis. Reads the main content of
@@ -9,6 +9,10 @@ import { keywordTokens, titleMatch, type MatchLevel } from './serp-analysis';
 // the pages Google already rewards is a practical proxy for topical coverage.
 
 const CONTENT_TTL_SECONDS = 604800;
+// Empty reads (blocked page, flaky JS render) are retried sooner instead of
+// being pinned for a week like the generic DataForSEO cache would.
+const EMPTY_TTL_SECONDS = 21600;
+const CACHE_PREFIX = 'serp-content:v1:';
 const MAX_URLS = 10;
 const MAX_TERMS = 25;
 
@@ -173,22 +177,37 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
+async function cacheKey(url: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(url));
+  return CACHE_PREFIX + Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function parseLive(env: Env, url: string, enableJavascript: boolean): Promise<ParsedPage> {
+  const task: Record<string, unknown> = { url };
+  if (enableJavascript) task.enable_javascript = true;
+  const data = await dataforseoRequest(env, '/on_page/content_parsing/live', [task], enableJavascript ? 30000 : 20000);
+  if (getTaskError(data)) return { url, status: 'error', text: '', h1: null, headings: 0 };
+  return parsePageContent(url, data?.tasks?.[0]?.result?.[0]?.items?.[0]);
+}
+
 async function fetchPage(env: Env, url: string): Promise<ParsedPage> {
+  const key = await cacheKey(url);
+  const cached = await env.KV.get(key);
+  if (cached) return JSON.parse(cached) as ParsedPage;
+  let page: ParsedPage;
   try {
     // Plain HTML first (10x cheaper); fall back to a JS render for pages that
     // build their content client-side and come back empty.
-    const plain = await dataforseoRequestCached(env, '/on_page/content_parsing/live', [{ url }], { ttlSeconds: CONTENT_TTL_SECONDS, timeoutMs: 20000 });
-    if (!getTaskError(plain)) {
-      const parsed = parsePageContent(url, plain?.tasks?.[0]?.result?.[0]?.items?.[0]);
-      if (parsed.status === 'ok') return parsed;
-    }
-    const rendered = await dataforseoRequestCached(env, '/on_page/content_parsing/live', [{ url, enable_javascript: true }], { ttlSeconds: CONTENT_TTL_SECONDS, timeoutMs: 30000 });
-    if (getTaskError(rendered)) return { url, status: 'error', text: '', h1: null, headings: 0 };
-    return parsePageContent(url, rendered?.tasks?.[0]?.result?.[0]?.items?.[0]);
+    page = await parseLive(env, url, false);
+    if (page.status !== 'ok') page = await parseLive(env, url, true);
   } catch (e) {
     console.error('serp-content fetch failed:', url, e);
-    return { url, status: 'error', text: '', h1: null, headings: 0 };
+    page = { url, status: 'error', text: '', h1: null, headings: 0 };
   }
+  // Cap stored text: KV values stay small and scoring only needs the words.
+  const stored = { ...page, text: page.text.slice(0, 60000) };
+  await env.KV.put(key, JSON.stringify(stored), { expirationTtl: page.status === 'ok' ? CONTENT_TTL_SECONDS : EMPTY_TTL_SECONDS });
+  return stored;
 }
 
 function isHttpUrl(value: unknown): value is string {
