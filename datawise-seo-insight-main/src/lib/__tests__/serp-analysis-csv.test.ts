@@ -20,21 +20,15 @@ const row: SerpCsvRow = {
 };
 
 describe('serpAnalysisToCsv', () => {
-  it('writes one header + one line per result with quoting, traffic and content columns', () => {
-    const csv = serpAnalysisToCsv([row], [{ url: 'https://a.test/', status: 'ok', wordCount: 720, h1: 'Hi', coverage: 0.8, termsMissing: ['roof cleaning', 'mould'] }]);
+  it('writes one header + one line per result with quoting, traffic and reasons', () => {
+    const csv = serpAnalysisToCsv([row]);
     const lines = csv.split('\n');
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('Est. site traffic/mo');
     expect(lines[1]).toContain('"Pressure Washing, Sydney | ""Best"""');
     expect(lines[1]).toContain(',685,192,2112,');
     expect(lines[1]).toContain(',93,2016-01-01,');
-    expect(lines[1]).toContain('roof cleaning; mould');
-    expect(lines[1]).toContain(',80,');
-  });
-
-  it('leaves content columns blank when the page could not be read', () => {
-    const csv = serpAnalysisToCsv([row], [{ url: 'https://a.test/', status: 'empty', wordCount: 0, h1: null, coverage: 0, termsMissing: [] }]);
-    expect(csv.split('\n')[1]).not.toContain(',0,,0,');
+    expect(lines[1]).toContain(',Homepage ranking,Small link profile');
   });
 });
 

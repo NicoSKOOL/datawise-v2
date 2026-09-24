@@ -58,10 +58,6 @@ export async function fetchSerpAnalysis(params: {
   return api('/api/keywords/serp-analysis', { method: 'POST', body: params });
 }
 
-export async function fetchSerpContent(params: { keyword: string; urls: string[]; my_url?: string }) {
-  return api('/api/keywords/serp-content', { method: 'POST', body: params });
-}
-
 export async function searchSerpLocations(country: string, q: string) {
   const params = new URLSearchParams({ country, q });
   return api<{ locations: Array<{ location_code: number; location_name: string; location_type: string }> }>(

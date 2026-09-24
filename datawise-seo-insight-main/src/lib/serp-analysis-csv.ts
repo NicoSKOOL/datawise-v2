@@ -1,5 +1,5 @@
 // CSV export for the SERP Analysis tab. Shapes mirror the worker response
-// (workers/src/routes/serp-analysis.ts + serp-content.ts).
+// (workers/src/routes/serp-analysis.ts).
 
 export interface SerpCsvRow {
   position: number;
@@ -19,22 +19,12 @@ export interface SerpCsvRow {
   beatable: boolean;
 }
 
-export interface SerpCsvContent {
-  url: string;
-  status: string;
-  wordCount: number;
-  h1: string | null;
-  coverage: number;
-  termsMissing: string[];
-}
-
 const HEADER = [
   'Position', 'Title', 'URL', 'Domain',
   'Domain Rank', 'Page Rank', 'Referring domains (page)', 'Backlinks (page)',
   'Referring domains (site)', 'Backlinks (site)', 'Local link share %', 'Link profile since',
   'Est. site traffic/mo', 'Site ranking keywords', 'Est. Local Pack traffic/mo', 'Est. page traffic/mo', 'Page ranking keywords',
   'Keyword in title', 'Keyword in URL', 'Homepage', 'In Local Pack', 'Rating', 'Reviews',
-  'Word count', 'H1', 'Related-term coverage %', 'Missing related terms',
   'Weak spot', 'Why it ranks', 'Vulnerabilities',
 ];
 
@@ -46,12 +36,9 @@ export function escapeCsv(value: string | number | boolean | null | undefined): 
   return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-export function serpAnalysisToCsv(rows: SerpCsvRow[], content: SerpCsvContent[] = []): string {
-  const byUrl = new Map(content.map((c) => [c.url, c]));
+export function serpAnalysisToCsv(rows: SerpCsvRow[]): string {
   const lines = [HEADER.map(escapeCsv).join(',')];
   for (const r of rows) {
-    const c = byUrl.get(r.url);
-    const readable = c && c.status === 'ok';
     lines.push([
       r.position, r.title, r.url, r.domain,
       r.site?.rank, r.page?.rank, r.page?.referringDomains, r.page?.backlinks,
@@ -61,8 +48,6 @@ export function serpAnalysisToCsv(rows: SerpCsvRow[], content: SerpCsvContent[] 
       r.siteTraffic?.etv, r.siteTraffic?.keywords, r.siteTraffic?.localPackEtv, r.pageTraffic?.etv, r.pageTraffic?.keywords,
       r.titleMatch, r.urlMatch, r.isHomepage ? 'Yes' : 'No', r.inLocalPack ? 'Yes' : 'No',
       r.rating?.value, r.rating?.votes,
-      readable ? c.wordCount : null, readable ? c.h1 : null,
-      readable ? Math.round(c.coverage * 100) : null, readable ? c.termsMissing.join('; ') : null,
       r.beatable ? 'Yes' : 'No',
       r.reasons.filter((x) => x.kind === 'strength').map((x) => x.label).join('; '),
       r.reasons.filter((x) => x.kind === 'weakness').map((x) => x.label).join('; '),

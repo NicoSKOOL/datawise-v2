@@ -157,7 +157,6 @@ import {
 import { handleMetaRewrite } from './routes/meta-rewrite';
 import { handleCreateManualProperty, handleDeleteManualProperty } from './routes/properties';
 import { handleSerpAnalysis, handleSerpLocations } from './routes/serp-analysis';
-import { handleSerpContent } from './routes/serp-content';
 import { checkAndDeductCredit, creditCostForRoute, refundCredit, shouldRefundCredit } from './middleware/credits';
 import { processEmailSequences } from './email/sequences';
 import { handleUnsubscribe } from './email/unsubscribe';
@@ -498,11 +497,6 @@ export default {
       // --- SERP location search (auth-required, free catalog lookup) ---
       if (path === '/api/keywords/serp-locations' && method === 'GET') {
         return addCors(await handleSerpLocations(request, env));
-      }
-      // Related-terms checker for a SERP Analysis the user already paid a credit for.
-      // Capped at 10 ranking URLs + 1 own page (~$0.002-0.02 per call), not credit-gated.
-      if (path === '/api/keywords/serp-content' && method === 'POST') {
-        return addCors(await handleSerpContent(request, env));
       }
 
       // --- Promo Codes (auth-required, not credit-gated) ---
