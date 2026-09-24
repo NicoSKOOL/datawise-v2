@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts";
-import { ChevronDown, ChevronRight, ExternalLink, Globe, MapPin, Search, Star, Target, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Download, ExternalLink, FileSearch, Globe, MapPin, Minus, Search, Star, Target, X } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
-import { fetchSerpAnalysis, searchSerpLocations } from "@/lib/dataforseo";
+import { fetchSerpAnalysis, fetchSerpContent, searchSerpLocations } from "@/lib/dataforseo";
+import { serpAnalysisToCsv } from "@/lib/serp-analysis-csv";
+import { downloadCsv, slugify } from "@/lib/planner-export";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useKeywordFilters } from "@/hooks/use-keyword-filters";
 
@@ -25,6 +27,33 @@ interface LinkStats {
   spamScore: number | null;
   firstSeen: string | null;
   localLinkShare: number | null;
+}
+
+interface TrafficStats {
+  etv: number;
+  keywords: number;
+  localPackEtv: number;
+}
+
+interface PageContentReport {
+  url: string;
+  status: "ok" | "empty" | "error";
+  wordCount: number;
+  h1: string | null;
+  h1Match: MatchLevel;
+  headings: number;
+  keywordMentions: number;
+  termsFound: string[];
+  termsMissing: string[];
+  coverage: number;
+}
+
+interface SerpContentResponse {
+  keyword: string;
+  terms: Array<{ term: string; pages: number }>;
+  pages: PageContentReport[];
+  my_page: PageContentReport | null;
+  summary: { pagesRead: number; medianWordCount: number; medianCoverage: number; medianKeywordMentions: number };
 }
 
 interface SerpRow {
@@ -40,6 +69,8 @@ interface SerpRow {
   urlMatch: MatchLevel;
   page: LinkStats | null;
   site: LinkStats | null;
+  pageTraffic: TrafficStats | null;
+  siteTraffic: TrafficStats | null;
   reasons: Array<{ kind: "strength" | "weakness"; label: string }>;
   beatable: boolean;
 }
@@ -66,12 +97,14 @@ interface SerpAnalysisResponse {
     search_intent: string | null;
   } | null;
   backlinks_available: boolean;
+  traffic_available?: boolean;
   results: SerpRow[];
   localPack: LocalPackEntry[];
   summary: {
     organicCount: number;
     medianDomainRank: number;
     medianPageReferringDomains: number;
+    medianSiteTraffic?: number | null;
     exactTitleCount: number;
     keywordInTitleCount: number;
     keywordInUrlCount: number;
@@ -260,6 +293,12 @@ export default function SerpAnalysis() {
   const [data, setData] = usePersistentState<SerpAnalysisResponse | null>("serp-analysis:data", null);
   const [searchedLabel, setSearchedLabel] = usePersistentState<string>("serp-analysis:label", "");
   const [loading, setLoading] = useState(false);
+  const [content, setContent] = usePersistentState<{ key: string; data: SerpContentResponse } | null>("serp-analysis:content", null);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
+  const [myUrl, setMyUrl] = usePersistentState<string>("serp-analysis:my-url", "");
+  const [myReport, setMyReport] = useState<PageContentReport | null>(null);
+  const [myLoading, setMyLoading] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const { toast } = useToast();
 
@@ -282,11 +321,64 @@ export default function SerpAnalysis() {
       })) as SerpAnalysisResponse;
       setData(res);
       setSearchedLabel(activeCity ? activeCity.name.replace(/,/g, ", ") : country?.label ?? "");
-    } catch (error: any) {
-      toast({ title: "SERP analysis failed", description: error.message || "Please try again", variant: "destructive" });
+    } catch (error: unknown) {
+      toast({ title: "SERP analysis failed", description: error instanceof Error ? error.message : "Please try again", variant: "destructive" });
     } finally {
       setLoading(false);
     }
+  };
+
+  const contentKey = data ? `${data.keyword}|${data.checked_at ?? ""}|${data.results.map((r) => r.url).join(",")}` : "";
+  const contentData = content && content.key === contentKey ? content.data : null;
+
+  // Page content is a second, slower call (up to ~20s when pages need a JS
+  // render), so the table shows first and the content columns fill in.
+  useEffect(() => {
+    if (!data || data.results.length === 0 || contentData) return;
+    let cancelled = false;
+    setContentLoading(true);
+    setContentError(null);
+    setMyReport(null);
+    fetchSerpContent({ keyword: data.keyword, urls: data.results.map((r) => r.url) })
+      .then((res) => {
+        if (!cancelled) setContent({ key: contentKey, data: res as SerpContentResponse });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setContentError(e instanceof Error ? e.message : "Could not read the ranking pages");
+      })
+      .finally(() => {
+        if (!cancelled) setContentLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      setContentLoading(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contentKey]);
+
+  const checkMyPage = async () => {
+    if (!data || !myUrl.trim()) return;
+    let url = myUrl.trim();
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    setMyLoading(true);
+    try {
+      const res = (await fetchSerpContent({ keyword: data.keyword, urls: data.results.map((r) => r.url), my_url: url })) as SerpContentResponse;
+      setContent({ key: contentKey, data: { ...res, my_page: null } });
+      setMyReport(res.my_page);
+      if (res.my_page && res.my_page.status !== "ok") {
+        toast({ title: "Could not read that page", description: "It may block crawlers or need a login. Try another URL.", variant: "destructive" });
+      }
+    } catch (e: unknown) {
+      toast({ title: "Page check failed", description: e instanceof Error ? e.message : "Please try again", variant: "destructive" });
+    } finally {
+      setMyLoading(false);
+    }
+  };
+
+  const exportCsv = () => {
+    if (!data) return;
+    const csv = serpAnalysisToCsv(data.results, contentData?.pages ?? []);
+    downloadCsv(`serp-analysis-${slugify(data.keyword)}-${slugify(searchedLabel.split(",")[0] || "location")}.csv`, csv);
   };
 
   const toggle = (pos: number) =>
@@ -296,6 +388,18 @@ export default function SerpAnalysis() {
       else next.add(pos);
       return next;
     });
+
+  const contentByUrl = new Map((contentData?.pages ?? []).map((c) => [c.url, c]));
+  const medianWords = contentData?.summary.medianWordCount ?? 0;
+  const contentCell = (url: string, kind: "words" | "coverage") => {
+    if (contentLoading && !contentData) return <span className="inline-block h-6 w-12 animate-pulse rounded-md bg-muted" />;
+    const c = contentByUrl.get(url);
+    if (!c) return <MetricCell value="--" tone="neutral" />;
+    if (c.status !== "ok") return <MetricCell value="n/a" tone="neutral" title="DataForSEO could not read this page (blocked or empty)" />;
+    if (kind === "words") return <MetricCell value={c.wordCount.toLocaleString()} tone={strengthTone(c.wordCount, medianWords)} />;
+    const pct = Math.round(c.coverage * 100);
+    return <MetricCell value={`${pct}%`} tone={pct >= 80 ? "red" : pct >= 50 ? "amber" : "green"} title={`${c.termsFound.length} of ${c.termsFound.length + c.termsMissing.length} related terms`} />;
+  };
 
   const m = data?.metrics;
   const kd = m?.keyword_difficulty ?? null;
@@ -432,10 +536,11 @@ export default function SerpAnalysis() {
               <CardDescription className="text-sm leading-relaxed text-foreground/80">{s.verdict}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
                 {[
                   { label: "Typical Domain Rank", value: String(s.medianDomainRank) },
                   { label: "Typical links to page", value: `${s.medianPageReferringDomains} sites` },
+                  { label: "Typical site traffic", value: s.medianSiteTraffic != null ? `${fmt(s.medianSiteTraffic)}/mo` : "--" },
                   { label: "Keyword in title", value: `${s.keywordInTitleCount} of ${s.organicCount}` },
                   { label: "Homepages ranking", value: `${s.homepageCount} of ${s.organicCount}` },
                   { label: "Weak spots", value: `${s.beatableCount} of ${s.organicCount}` },
@@ -520,7 +625,13 @@ export default function SerpAnalysis() {
 
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Who ranks and why</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-base">Who ranks and why</CardTitle>
+                <Button variant="outline" size="sm" onClick={exportCsv}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Export CSV
+                </Button>
+              </div>
               <CardDescription>
                 Colors show how hard each result is to beat compared with the rest of this page: green is weaker, red is stronger. Click a row to see why it ranks.
               </CardDescription>
@@ -536,8 +647,11 @@ export default function SerpAnalysis() {
                       <TableHead className="text-center"><HeaderHint label="Page Rank" hint="DataForSEO authority score for this exact page, 0 to 100." /></TableHead>
                       <TableHead className="text-center"><HeaderHint label="Links to page" hint="Number of unique websites linking to this exact page." /></TableHead>
                       <TableHead className="text-center"><HeaderHint label="Links to site" hint="Number of unique websites linking anywhere on this domain." /></TableHead>
+                      <TableHead className="text-center"><HeaderHint label="Est. traffic" hint="Estimated monthly visits the whole site gets from Google organic search in this country (DataForSEO). Hover a value for keyword counts." /></TableHead>
                       <TableHead className="text-center"><HeaderHint label="Keyword in title" hint="Exact = the full phrase appears. Yes = every word appears. Partial = some words." /></TableHead>
-                      <TableHead className="pr-6 text-center"><HeaderHint label="Keyword in URL" hint="Whether the keyword words appear in the domain or page address." /></TableHead>
+                      <TableHead className="text-center"><HeaderHint label="Keyword in URL" hint="Whether the keyword words appear in the domain or page address." /></TableHead>
+                      <TableHead className="text-center"><HeaderHint label="Words" hint="Words of main content on the page (menus and footer excluded)." /></TableHead>
+                      <TableHead className="pr-6 text-center"><HeaderHint label="Related terms" hint="Share of the related terms (see the Related terms checker below) that this page uses." /></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -585,13 +699,22 @@ export default function SerpAnalysis() {
                             <TableCell className="text-center align-top"><MetricCell value={r.page ? String(r.page.rank) : "--"} tone={strengthTone(r.page?.rank, median(data.results.map((x) => x.page?.rank ?? 0)))} /></TableCell>
                             <TableCell className="text-center align-top"><MetricCell value={fmt(r.page?.referringDomains)} tone={strengthTone(r.page?.referringDomains, s.medianPageReferringDomains)} title={r.page ? `${r.page.backlinks.toLocaleString()} backlinks` : undefined} /></TableCell>
                             <TableCell className="text-center align-top"><MetricCell value={fmt(r.site?.referringDomains)} tone={strengthTone(r.site?.referringDomains, median(data.results.map((x) => x.site?.referringDomains ?? 0)))} title={r.site ? `${r.site.backlinks.toLocaleString()} backlinks` : undefined} /></TableCell>
+                            <TableCell className="text-center align-top">
+                              <MetricCell
+                                value={r.siteTraffic ? fmt(r.siteTraffic.etv) : "--"}
+                                tone={r.siteTraffic && s.medianSiteTraffic != null ? strengthTone(r.siteTraffic.etv, s.medianSiteTraffic) : "neutral"}
+                                title={r.siteTraffic ? `${r.siteTraffic.keywords.toLocaleString()} ranking keywords site-wide${r.pageTraffic ? `; this page ~${r.pageTraffic.etv.toLocaleString()}/mo from ${r.pageTraffic.keywords.toLocaleString()} keywords` : ""}${r.siteTraffic.localPackEtv ? `; ~${r.siteTraffic.localPackEtv.toLocaleString()}/mo from Local Pack` : ""}` : undefined}
+                              />
+                            </TableCell>
                             <TableCell className="text-center align-top"><MatchCell level={r.titleMatch} /></TableCell>
-                            <TableCell className="pr-6 text-center align-top"><MatchCell level={r.urlMatch === "all" ? "all" : r.urlMatch} /></TableCell>
+                            <TableCell className="text-center align-top"><MatchCell level={r.urlMatch} /></TableCell>
+                            <TableCell className="text-center align-top">{contentCell(r.url, "words")}</TableCell>
+                            <TableCell className="pr-6 text-center align-top">{contentCell(r.url, "coverage")}</TableCell>
                           </TableRow>
                           {isOpen && (
                             <TableRow className="bg-muted/30 hover:bg-muted/30">
                               <TableCell />
-                              <TableCell colSpan={7} className="pb-4 pr-6">
+                              <TableCell colSpan={10} className="pb-4 pr-6">
                                 <div className="grid gap-4 md:grid-cols-2">
                                   <div>
                                     <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Why it ranks</div>
@@ -614,7 +737,22 @@ export default function SerpAnalysis() {
                                     )}
                                   </div>
                                 </div>
-                                {r.description && <p className="mt-3 text-xs text-muted-foreground">Snippet: {r.description}</p>}
+                                {(() => {
+                                  const c = contentByUrl.get(r.url);
+                                  if (!c || c.status !== "ok") return null;
+                                  return (
+                                    <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                                      <p>
+                                        <span className="font-medium text-foreground">On the page:</span> {c.wordCount.toLocaleString()} words, {c.headings} headings
+                                        {c.h1 ? <>, H1 "{c.h1}"</> : ", no H1 found"}
+                                      </p>
+                                      {c.termsMissing.length > 0 && (
+                                        <p><span className="font-medium text-foreground">Related terms it skips:</span> {c.termsMissing.join(", ")}</p>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                {r.description && <p className="mt-2 text-xs text-muted-foreground">Snippet: {r.description}</p>}
                               </TableCell>
                             </TableRow>
                           )}
@@ -624,6 +762,152 @@ export default function SerpAnalysis() {
                   </TableBody>
                 </Table>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileSearch className="h-4 w-4" />
+                Related terms checker
+              </CardTitle>
+              <CardDescription>
+                Phrases that most of the ranking pages use in their main content (often called LSI keywords). Pages that cover more of them tend to read as more complete on the topic.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {contentLoading && !contentData && (
+                <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
+                  Reading the ranking pages. Pages that need JavaScript can take up to 20 seconds.
+                </div>
+              )}
+              {contentError && !contentData && <p className="text-sm text-destructive">{contentError}</p>}
+              {contentData && contentData.terms.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Not enough readable pages to find shared terms ({contentData.summary.pagesRead} of {data.results.length} pages could be read).
+                </p>
+              )}
+              {contentData && contentData.terms.length > 0 && (
+                <>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {[
+                      { label: "Pages read", value: `${contentData.summary.pagesRead} of ${data.results.length}` },
+                      { label: "Related terms found", value: String(contentData.terms.length) },
+                      { label: "Typical word count", value: contentData.summary.medianWordCount.toLocaleString() },
+                      { label: "Typical term coverage", value: `${Math.round(contentData.summary.medianCoverage * 100)}%` },
+                    ].map((t) => (
+                      <div key={t.label} className="rounded-lg border px-3 py-2.5">
+                        <div className="text-xs text-muted-foreground">{t.label}</div>
+                        <div className="mt-0.5 text-base font-semibold tabular-nums">{t.value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-4">
+                    <Label htmlFor="serp-my-url" className="text-sm font-medium">Check your page</Label>
+                    <p className="mb-2 text-xs text-muted-foreground">Paste the page you want to rank for this keyword to see which related terms it is missing.</p>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Input
+                        id="serp-my-url"
+                        placeholder="https://yoursite.com/pressure-washing"
+                        value={myUrl}
+                        onChange={(e) => setMyUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && checkMyPage()}
+                      />
+                      <Button onClick={checkMyPage} disabled={myLoading || !myUrl.trim()} className="shrink-0">
+                        {myLoading ? "Checking..." : "Check page"}
+                      </Button>
+                    </div>
+                    {myReport && myReport.status === "ok" && (
+                      <div className="mt-4 space-y-3">
+                        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                          <div className="rounded-lg border bg-background px-3 py-2.5">
+                            <div className="text-xs text-muted-foreground">Your term coverage</div>
+                            <div className="mt-0.5 text-base font-semibold tabular-nums">
+                              {Math.round(myReport.coverage * 100)}%
+                              <span className="ml-1 text-xs font-normal text-muted-foreground">vs {Math.round(contentData.summary.medianCoverage * 100)}% typical</span>
+                            </div>
+                          </div>
+                          <div className="rounded-lg border bg-background px-3 py-2.5">
+                            <div className="text-xs text-muted-foreground">Your word count</div>
+                            <div className="mt-0.5 text-base font-semibold tabular-nums">
+                              {myReport.wordCount.toLocaleString()}
+                              <span className="ml-1 text-xs font-normal text-muted-foreground">vs {contentData.summary.medianWordCount.toLocaleString()} typical</span>
+                            </div>
+                          </div>
+                          <div className="rounded-lg border bg-background px-3 py-2.5 md:col-span-2">
+                            <div className="text-xs text-muted-foreground">Your H1</div>
+                            <div className="mt-0.5 truncate text-sm font-medium">{myReport.h1 ?? "No H1 found"}</div>
+                          </div>
+                        </div>
+                        {myReport.termsMissing.length > 0 ? (
+                          <div>
+                            <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">Missing from your page</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {myReport.termsMissing.map((t) => (
+                                <Badge key={t} variant="outline" className="border-red-200 text-red-700 dark:border-red-900 dark:text-red-300">{t}</Badge>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-emerald-700 dark:text-emerald-400">Your page already uses every related term.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-[200px] pl-4">Term</TableHead>
+                          <TableHead className="text-center">Used by</TableHead>
+                          {myReport?.status === "ok" && <TableHead className="text-center">You</TableHead>}
+                          {data.results.map((r) => (
+                            <TableHead key={r.url} className="px-2 text-center" title={r.url}>
+                              <div className="flex flex-col items-center gap-1">
+                                <Favicon domain={r.domain} />
+                                <span className="text-[11px] tabular-nums">#{r.position}</span>
+                              </div>
+                            </TableHead>
+                          ))}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {contentData.terms.map((t) => (
+                          <TableRow key={t.term}>
+                            <TableCell className="pl-4 font-medium">{t.term}</TableCell>
+                            <TableCell className="text-center text-xs tabular-nums text-muted-foreground">{t.pages} of {contentData.summary.pagesRead}</TableCell>
+                            {myReport?.status === "ok" && (
+                              <TableCell className="text-center">
+                                {myReport.termsFound.includes(t.term) ? (
+                                  <Check className="mx-auto h-4 w-4 text-emerald-600" />
+                                ) : (
+                                  <X className="mx-auto h-4 w-4 text-red-500" />
+                                )}
+                              </TableCell>
+                            )}
+                            {data.results.map((r) => {
+                              const c = contentByUrl.get(r.url);
+                              return (
+                                <TableCell key={r.url} className="px-2 text-center">
+                                  {!c || c.status !== "ok" ? (
+                                    <Minus className="mx-auto h-3.5 w-3.5 text-muted-foreground/50" />
+                                  ) : c.termsFound.includes(t.term) ? (
+                                    <Check className="mx-auto h-4 w-4 text-emerald-600" />
+                                  ) : (
+                                    <span className="mx-auto block h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+                                  )}
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </>

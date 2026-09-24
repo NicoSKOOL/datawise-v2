@@ -100,6 +100,12 @@ export interface LinkStats {
   localLinkShare: number | null; // 0-1, share of referring links from the searched country
 }
 
+export interface TrafficStats {
+  etv: number; // estimated monthly organic visits in the searched country
+  keywords: number; // organic keywords the target ranks for
+  localPackEtv: number;
+}
+
 export interface Reason {
   kind: 'strength' | 'weakness';
   label: string;
@@ -119,6 +125,8 @@ export interface SerpRow {
   urlMatch: MatchLevel;
   page: LinkStats | null;
   site: LinkStats | null;
+  pageTraffic: TrafficStats | null;
+  siteTraffic: TrafficStats | null;
   reasons: Reason[];
   beatable: boolean;
 }
@@ -137,6 +145,7 @@ export interface SerpSummary {
   organicCount: number;
   medianDomainRank: number;
   medianPageReferringDomains: number;
+  medianSiteTraffic: number | null;
   exactTitleCount: number;
   keywordInTitleCount: number;
   keywordInUrlCount: number;
@@ -170,6 +179,16 @@ function toLinkStats(item: any, countryIso: string | null): LinkStats | null {
   };
 }
 
+function toTrafficStats(item: any): TrafficStats | null {
+  const m = item?.metrics;
+  if (!m) return null;
+  return {
+    etv: Math.round(m.organic?.etv ?? 0),
+    keywords: m.organic?.count ?? 0,
+    localPackEtv: Math.round(m.local_pack?.etv ?? 0),
+  };
+}
+
 function rating(raw: any): { value: number; votes: number } | null {
   if (!raw || typeof raw.value !== 'number') return null;
   return { value: raw.value, votes: typeof raw.votes_count === 'number' ? raw.votes_count : 0 };
@@ -197,10 +216,15 @@ export function analyzeSerp(input: {
   keyword: string;
   serpItems: any[];
   backlinkItems: any[];
+  trafficItems?: any[];
   countryIso: string | null;
   countryLabel: string | null;
 }): { results: SerpRow[]; localPack: LocalPackEntry[]; summary: SerpSummary } {
   const { keyword, serpItems, backlinkItems, countryIso, countryLabel } = input;
+  const trafficByTarget = new Map<string, any>();
+  for (const item of input.trafficItems ?? []) {
+    if (item && typeof item.target === 'string') trafficByTarget.set(item.target.toLowerCase(), item);
+  }
   const byTarget = new Map<string, any>();
   for (const item of backlinkItems) {
     if (item && typeof item.url === 'string') byTarget.set(item.url.toLowerCase(), item);
@@ -232,6 +256,8 @@ export function analyzeSerp(input: {
       urlMatch: urlMatch(i.url, keyword),
       page: toLinkStats(byTarget.get(i.url.toLowerCase()), countryIso),
       site: toLinkStats(byTarget.get(domain), countryIso),
+      pageTraffic: toTrafficStats(trafficByTarget.get(i.url.toLowerCase())),
+      siteTraffic: toTrafficStats(trafficByTarget.get(domain)),
       reasons: [],
       beatable: false,
     };
@@ -239,6 +265,8 @@ export function analyzeSerp(input: {
 
   const medianDomainRank = median(rows.map((r) => r.site?.rank ?? 0));
   const medianPageRd = median(rows.map((r) => r.page?.referringDomains ?? 0));
+  const hasTraffic = rows.some((r) => r.siteTraffic);
+  const medianSiteTraffic = hasTraffic ? median(rows.map((r) => r.siteTraffic?.etv ?? 0)) : null;
   const nowYear = new Date().getUTCFullYear();
 
   for (const r of rows) {
@@ -272,6 +300,20 @@ export function analyzeSerp(input: {
       reasons.push({ kind: 'strength', label: `Link profile established since ${firstSeenYear}` });
     }
 
+    const st = r.siteTraffic;
+    if (st && medianSiteTraffic != null) {
+      if (st.keywords >= 1000 && st.etv >= Math.max(medianSiteTraffic * 3, 1000)) {
+        reasons.push({ kind: 'strength', label: `Site gets ~${st.etv.toLocaleString()} search visits/mo from ${st.keywords.toLocaleString()} keywords, so Google already trusts it widely` });
+      } else if (st.etv >= Math.max(medianSiteTraffic * 2, 200)) {
+        reasons.push({ kind: 'strength', label: `More search traffic than most here (~${st.etv.toLocaleString()} visits/mo)` });
+      }
+      if (st.localPackEtv >= 500) reasons.push({ kind: 'strength', label: `~${st.localPackEtv.toLocaleString()} visits/mo from Local Pack listings` });
+      if (st.etv < 50 && st.keywords < 20) reasons.push({ kind: 'weakness', label: `Site barely gets search traffic (~${st.etv}/mo from ${st.keywords} keywords)` });
+    }
+    if (r.pageTraffic && r.pageTraffic.keywords >= 20 && !r.isHomepage) {
+      reasons.push({ kind: 'strength', label: `This page ranks for ${r.pageTraffic.keywords.toLocaleString()} keywords` });
+    }
+
     if (r.page && pageRd <= 2 && !r.isHomepage) reasons.push({ kind: 'weakness', label: 'Almost no links to this page' });
     if (siteRd > 0 && siteRd < 20) reasons.push({ kind: 'weakness', label: `Small link profile (${siteRd} referring domains)` });
     if ((r.site?.spamScore ?? 0) >= 30) reasons.push({ kind: 'weakness', label: `High link spam score (${r.site!.spamScore})` });
@@ -295,6 +337,7 @@ export function analyzeSerp(input: {
     organicCount: rows.length,
     medianDomainRank,
     medianPageReferringDomains: medianPageRd,
+    medianSiteTraffic,
     exactTitleCount: rows.filter((r) => r.titleMatch === 'exact').length,
     keywordInTitleCount: rows.filter((r) => r.titleMatch === 'exact' || r.titleMatch === 'all').length,
     keywordInUrlCount: rows.filter((r) => r.urlMatch === 'all').length,
@@ -375,17 +418,36 @@ export async function handleSerpAnalysis(request: Request, env: Env): Promise<Re
     ...organic.map((i) => i.url as string),
     ...organic.map((i) => bareDomain(i.domain || i.url)),
   ])];
-  let backlinkItems: any[] = [];
-  try {
-    const bl = await dataforseoRequestCached(env, '/backlinks/bulk_pages_summary/live', [{ targets }], { ttlSeconds: BACKLINKS_TTL_SECONDS });
-    if (!getTaskError(bl)) backlinkItems = bl?.tasks?.[0]?.result?.[0]?.items ?? [];
-  } catch (e) {
-    // Best-effort: the SERP is still useful without link data.
-    console.error('serp-analysis backlinks failed:', e);
-  }
+  // Both best-effort: the SERP is still useful without link or traffic data.
+  const [backlinkItems, trafficItems] = await Promise.all([
+    (async () => {
+      try {
+        const bl = await dataforseoRequestCached(env, '/backlinks/bulk_pages_summary/live', [{ targets }], { ttlSeconds: BACKLINKS_TTL_SECONDS });
+        return getTaskError(bl) ? [] : (bl?.tasks?.[0]?.result?.[0]?.items ?? []) as any[];
+      } catch (e) {
+        console.error('serp-analysis backlinks failed:', e);
+        return [] as any[];
+      }
+    })(),
+    (async () => {
+      try {
+        // Labs traffic is country-level: the city SERP code is not a Labs location.
+        const tr = await dataforseoRequestCached(env, '/dataforseo_labs/google/bulk_traffic_estimation/live', [{
+          targets,
+          location_code,
+          language_code,
+          item_types: ['organic', 'local_pack'],
+        }], { ttlSeconds: BACKLINKS_TTL_SECONDS });
+        return getTaskError(tr) ? [] : (tr?.tasks?.[0]?.result?.[0]?.items ?? []) as any[];
+      } catch (e) {
+        console.error('serp-analysis traffic failed:', e);
+        return [] as any[];
+      }
+    })(),
+  ]);
 
   const overviewItem = overviewSettled?.tasks?.[0]?.result?.[0]?.items?.[0] ?? null;
-  const analysis = analyzeSerp({ keyword, serpItems, backlinkItems, countryIso, countryLabel });
+  const analysis = analyzeSerp({ keyword, serpItems, backlinkItems, trafficItems, countryIso, countryLabel });
 
   return json({
     keyword,
@@ -410,6 +472,7 @@ export async function handleSerpAnalysis(request: Request, env: Env): Promise<Re
       search_intent: overviewItem.search_intent_info?.main_intent ?? null,
     } : null,
     backlinks_available: backlinkItems.length > 0,
+    traffic_available: trafficItems.length > 0,
     ...analysis,
   });
 }

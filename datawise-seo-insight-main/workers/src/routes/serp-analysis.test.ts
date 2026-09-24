@@ -92,6 +92,10 @@ describe('handleSerpAnalysis', () => {
       if (path.includes('/serp/')) return ok({ items: serpItems });
       if (path.includes('keyword_overview')) return ok({ items: [{ keyword: 'pressure washing sydney', keyword_info: { search_volume: 110, monthly_searches: [{ year: 2026, month: 8, search_volume: 700 }] }, keyword_properties: { keyword_difficulty: 23 } }] });
       if (path.includes('bulk_pages_summary')) return ok({ items: backlinkItems });
+      if (path.includes('bulk_traffic_estimation')) return ok({ items: [
+        { target: 'airtasker.com', metrics: { organic: { etv: 494320.1, count: 67083 }, local_pack: { etv: 36 } } },
+        { target: 'thejetco.com.au', metrics: { organic: { etv: 684.6, count: 192 }, local_pack: { etv: 2112 } } },
+      ] });
       return null;
     };
     const res = await handleSerpAnalysis(req({ keyword: 'pressure washing sydney', location_code: 2036, serp_location_code: 1000286, language_code: 'en', country_iso: 'AU', country_label: 'Australia' }), {} as any);
@@ -107,6 +111,14 @@ describe('handleSerpAnalysis', () => {
     expect(body.metrics.monthly_searches).toHaveLength(1);
     expect(body.results).toHaveLength(3);
     expect(body.backlinks_available).toBe(true);
+    const trCall = dfs.calls.find((c) => c.path.includes('bulk_traffic_estimation'))!;
+    expect(trCall.payload[0].location_code).toBe(2036);
+    expect(body.traffic_available).toBe(true);
+    const jet = body.results.find((r: any) => r.domain === 'thejetco.com.au');
+    expect(jet.siteTraffic).toEqual({ etv: 685, keywords: 192, localPackEtv: 2112 });
+    expect(jet.reasons.map((r: any) => r.label).join('|')).toContain('from Local Pack listings');
+    const air = body.results.find((r: any) => r.domain === 'airtasker.com');
+    expect(air.reasons.map((r: any) => r.label).join('|')).toContain('67,083 keywords');
   });
 
   it('still returns the SERP when the backlinks call fails', async () => {
