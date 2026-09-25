@@ -9,7 +9,8 @@ export type MetaRewriteIssueType =
   | 'duplicate_title'
   | 'missing_desc'
   | 'long_desc'
-  | 'short_desc';
+  | 'short_desc'
+  | 'improve';
 
 export interface MetaRewritePageContext {
   h1?: string;

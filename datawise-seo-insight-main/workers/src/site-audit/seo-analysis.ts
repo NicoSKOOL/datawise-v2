@@ -747,13 +747,13 @@ function computeSchema(pageMeta: InstantPageMeta | null): SchemaAnalysis {
   const has_service = lower.includes('service');
   const present = unique.length > 0 || Boolean(pageMeta?.has_schema);
 
-  // If we detected FAQ-style questions in headings but no FAQPage schema,
-  // the recommendation should still include FAQPage.
+  // FAQPage is intentionally not recommended: since August 2023 Google only
+  // shows FAQ rich results for well-known government and health sites
+  // (report 2983ae25). has_faq is still reported when present.
   const recommended_missing: string[] = [];
   if (!has_local_business && !has_organization)
     recommended_missing.push('LocalBusiness or Organization');
   if (!has_service) recommended_missing.push('Service');
-  if (!has_faq) recommended_missing.push('FAQPage');
 
   return {
     present,

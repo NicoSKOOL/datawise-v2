@@ -68,7 +68,8 @@ function rowToIssueType(row: ClassifiedRow): MetaRewriteIssueType | null {
     case 'missing': return 'missing_desc';
     case 'too_long': return 'long_desc';
     case 'too_short': return 'short_desc';
-    default: return null;
+    // Nothing flagged: the user can still ask for a stronger version (report af5ccffd).
+    default: return 'improve';
   }
 }
 
@@ -295,10 +296,11 @@ export function MetaChecker() {
     qc.invalidateQueries({ queryKey: ['tasks'] });
   }
 
-  // Build the list of selected rows that have a fixable issue.
+  // Selected rows the AI can rewrite: flagged ones get a fix, passing ones an
+  // "improve" pass. Only fetch errors are excluded.
   const selectedFixableRows = useMemo(() => {
     if (!results) return [] as ClassifiedRow[];
-    return results.filter((r) => selectedRows.has(r.url) && r.has_issue && !r.error);
+    return results.filter((r) => selectedRows.has(r.url) && !r.error);
   }, [results, selectedRows]);
 
   async function runBulkRewrite() {
@@ -908,15 +910,16 @@ function ResultRow({
       </div>
 
       <div className="w-20 flex justify-end">
-        {row.has_issue && !row.error && (
+        {!row.error && (
           <Button
             size="sm"
             variant="outline"
             className="h-7 px-2 text-[11px]"
             onClick={onRewrite}
+            title={row.has_issue ? undefined : 'Passes the checks. Ask the AI for a stronger version anyway.'}
           >
             <Sparkles className="h-3 w-3 mr-1" />
-            Rewrite
+            {row.has_issue ? 'Rewrite' : 'Improve'}
           </Button>
         )}
       </div>

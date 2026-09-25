@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/DataTable';
 import { useProperty } from '@/contexts/PropertyContext';
-import { bulkAddPlannerKeywords, type PlannerIntent } from '@/lib/planner';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { bulkAddPlannerKeywords, INTENT_LABELS, INTENT_ORDER, type PlannerIntent } from '@/lib/planner';
 import {
   buildPlannerItem,
   getKeywordRowKey,
@@ -39,6 +40,9 @@ export function KeywordPlannerDataTable({
   const queryClient = useQueryClient();
   const { selectedPropertyId } = useProperty();
   const [selectedKeywordKeys, setSelectedKeywordKeys] = useState<Set<string>>(new Set());
+  // Intent applied to every keyword in a bulk save. 'auto' keeps the per-row
+  // intent (or the page default); anything else overrides it (report ebfc8fbd).
+  const [bulkIntent, setBulkIntent] = useState<PlannerIntent | 'auto'>('auto');
 
   const rowSignature = useMemo(
     () => data.map((row, index) => getKeywordRowKey(row, index)).join('\u001f'),
@@ -60,7 +64,11 @@ export function KeywordPlannerDataTable({
   );
 
   const saveMutation = useMutation({
-    mutationFn: () => bulkAddPlannerKeywords(selectedPropertyId, { items: selectedItems }),
+    mutationFn: () => bulkAddPlannerKeywords(selectedPropertyId, {
+      items: bulkIntent === 'auto'
+        ? selectedItems
+        : selectedItems.map((item) => ({ ...item, intent: bulkIntent })),
+    }),
     onSuccess: ({ added, skipped }) => {
       queryClient.invalidateQueries({ queryKey: ['planner-keywords', selectedPropertyId] });
       setSelectedKeywordKeys(new Set());
@@ -86,6 +94,18 @@ export function KeywordPlannerDataTable({
     Boolean(selectedPropertyId) && selectedItems.length > 0 && !saveMutation.isPending;
 
   const saveSelectedButton = (
+    <div className="flex items-center gap-2">
+    <Select value={bulkIntent} onValueChange={(v) => setBulkIntent(v as PlannerIntent | 'auto')}>
+      <SelectTrigger className="h-9 w-[170px] text-xs" aria-label="Intent for saved keywords">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="auto">Intent: auto</SelectItem>
+        {INTENT_ORDER.map((i) => (
+          <SelectItem key={i} value={i}>Save as {INTENT_LABELS[i]}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
     <Button
       variant="outline"
       size="sm"
@@ -105,6 +125,7 @@ export function KeywordPlannerDataTable({
         ? `Save to planner (${selectedItems.length})`
         : 'Save to planner'}
     </Button>
+    </div>
   );
 
   return (

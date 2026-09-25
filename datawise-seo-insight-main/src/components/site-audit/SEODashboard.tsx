@@ -1064,7 +1064,7 @@ export function SchemaCard({
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No JSON-LD schema detected. Schema unlocks rich results in Google: FAQ, Local Business, Service, Breadcrumb, and more.
+            No JSON-LD schema detected. Schema unlocks rich results in Google: Local Business, Product, Breadcrumb, Review, and more.
           </p>
         )}
 

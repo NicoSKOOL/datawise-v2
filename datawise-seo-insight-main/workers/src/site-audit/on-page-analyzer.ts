@@ -589,7 +589,7 @@ export function analyzeOnPage(
       description:
         'No JSON-LD or microdata was detected. Schema helps Google understand your content and enables rich results.',
       how_to_fix:
-        'Add JSON-LD for Organization or LocalBusiness, plus relevant types (Service, Product, FAQPage, Article). Test with schema.org validator.',
+        'Add JSON-LD for Organization or LocalBusiness, plus relevant types (Service, Product, Article). Test with schema.org validator.',
       impact: 'quick_win',
     });
   }
@@ -898,7 +898,7 @@ export function buildStructuredSEO(
   if (!hasType('organization') && !hasType('localbusiness')) recommended.push('Organization');
   if (!hasType('localbusiness')) recommended.push('LocalBusiness');
   if (!hasType('service')) recommended.push('Service');
-  if (!hasType('faqpage')) recommended.push('FAQPage');
+  // No FAQPage: Google limited FAQ rich results in August 2023 (report 2983ae25).
   const schema: SchemaAnalysis = {
     present: schemaPresent,
     types: schemaTypes,
