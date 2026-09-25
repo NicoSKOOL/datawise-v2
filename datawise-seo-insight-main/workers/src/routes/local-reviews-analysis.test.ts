@@ -7,27 +7,38 @@ import {
   aggregateGeogridCompetitors,
   computeReviewsHash,
   computeVelocity,
+  pickBaselineCount,
+  reviewVelocityFromSamples,
+  withUserRowFacts,
   validateReviewThemes,
   extractJsonObject,
   type GeoGridPointResult,
 } from './local-reviews-analysis';
 
 describe('zoomForRadius', () => {
-  it('uses 15z up to 1km', () => {
-    expect(zoomForRadius(0.5)).toBe('15z');
-    expect(zoomForRadius(1)).toBe('15z');
+  // Calibrated live 2026-09-25 at 53N (Nottingham): the east edge dropped out
+  // at 5km/13z and 10km/12z because desktop Maps hides whatever sits under the
+  // left results panel. One zoom out brought every edge point back.
+  it('zooms out at UK latitudes so the east edge stays clear of the panel', () => {
+    expect(zoomForRadius(5, 52.97)).toBe('12z');
+    expect(zoomForRadius(10, 52.97)).toBe('11z');
+    expect(zoomForRadius(2.5, 52.97)).toBe('13z');
   });
-  it('uses 14z up to 2.5km', () => {
-    expect(zoomForRadius(1.1)).toBe('14z');
-    expect(zoomForRadius(2.5)).toBe('14z');
+  it('keeps the zoom that already worked at UK latitudes', () => {
+    expect(zoomForRadius(3, 52.97)).toBe('13z');
   });
-  it('uses 13z up to 5km', () => {
-    expect(zoomForRadius(3)).toBe('13z');
-    expect(zoomForRadius(5)).toBe('13z');
+  it('matches the old radius buckets at US latitudes', () => {
+    expect(zoomForRadius(1, 35)).toBe('15z');
+    expect(zoomForRadius(2.5, 35)).toBe('14z');
+    expect(zoomForRadius(5, 35)).toBe('13z');
+    expect(zoomForRadius(10, 35)).toBe('12z');
   });
-  it('uses 12z above 5km', () => {
-    expect(zoomForRadius(10)).toBe('12z');
-    expect(zoomForRadius(20)).toBe('12z');
+  it('never goes tighter than 15z or wider than 10z', () => {
+    expect(zoomForRadius(0.5, 0)).toBe('15z');
+    expect(zoomForRadius(20, 70)).toBe('10z');
+  });
+  it('falls back to the equator when latitude is missing or invalid', () => {
+    expect(zoomForRadius(5, Number.NaN)).toBe(zoomForRadius(5, 0));
   });
 });
 
@@ -102,12 +113,24 @@ describe('aggregateGeogridCompetitors', () => {
     expect(rivalA.rating).toBe(4.5);
     expect(rivalA.is_user).toBe(false);
   });
-  it('synthesizes the user business from per-point positions (top 3 only)', () => {
+  it('synthesizes the user business from per-point positions', () => {
     const out = aggregateGeogridCompetitors(points, 'My Shop');
     const own = out.find(c => c.is_user)!;
     expect(own.name).toBe('My Shop');
-    expect(own.appearances).toBe(1); // only the position-1 point is top 3
+    expect(own.appearances).toBe(1); // top 3 share: only the position-1 point
     expect(own.best_position).toBe(1);
+  });
+  it('averages the user position over every found point, like the scan summary', () => {
+    const own = aggregateGeogridCompetitors(points, 'My Shop').find(c => c.is_user)!;
+    expect(own.avg_position).toBe(2.5); // (1 + 4) / 2, not top-3 only
+  });
+  it('fills the user rating and reviews when provided', () => {
+    const own = aggregateGeogridCompetitors(points, 'My Shop', { rating: 5, reviews: 141 }).find(c => c.is_user)!;
+    expect(own.rating).toBe(5);
+    expect(own.reviews).toBe(141);
+    const bare = aggregateGeogridCompetitors(points, 'My Shop').find(c => c.is_user)!;
+    expect(bare.rating).toBeNull();
+    expect(bare.reviews).toBeNull();
   });
   it('omits the user entry when never in top 3 or no name given', () => {
     expect(aggregateGeogridCompetitors(points, null).some(c => c.is_user)).toBe(false);
@@ -236,5 +259,65 @@ describe('extractJsonObject', () => {
   it('returns null when there is no JSON', () => {
     expect(extractJsonObject('no json here')).toBeNull();
     expect(extractJsonObject('')).toBeNull();
+  });
+});
+
+describe('pickBaselineCount', () => {
+  const day = 86400000;
+  const now = Date.UTC(2026, 8, 23, 13, 0, 0);
+  const at = (daysAgo: number) => new Date(now - daysAgo * day).toISOString().replace('T', ' ').slice(0, 19);
+  it('picks the sample closest to the target within tolerance', () => {
+    const samples = [{ count: 128, at: at(34) }, { count: 130, at: at(31) }, { count: 141, at: at(0) }];
+    expect(pickBaselineCount(samples, now - 30 * day, 7.5 * day)).toBe(130);
+  });
+  it('returns null when nothing is near the target (no stale fallback)', () => {
+    const samples = [{ count: 128, at: at(34) }, { count: 141, at: at(0) }];
+    expect(pickBaselineCount(samples, now - 7 * day, 2 * day)).toBeNull();
+  });
+  it('ignores null counts and unparseable dates', () => {
+    const samples = [{ count: null, at: at(7) }, { count: 5, at: 'nope' }];
+    expect(pickBaselineCount(samples, now - 7 * day, 2 * day)).toBeNull();
+  });
+});
+
+describe('reviewVelocityFromSamples', () => {
+  const day = 86400000;
+  const now = Date.UTC(2026, 8, 23, 13, 0, 0);
+  const at = (daysAgo: number) => new Date(now - daysAgo * day).toISOString().replace('T', ' ').slice(0, 19);
+  // Stephen d0c90bb4 on 2026-09-23: snapshots 126 (08-10), 128 (08-20),
+  // 141 (09-23); rank checks 130 (08-23), 141 (09-23).
+  const stephen = [
+    { count: 126, at: at(44) }, { count: 128, at: at(34) }, { count: 130, at: at(31) }, { count: 141, at: at(0) },
+  ];
+  it('gives the same 30-day answer to every screen', () => {
+    expect(reviewVelocityFromSamples(stephen, 141, 30, now)).toEqual({ current: 11, previous: null });
+  });
+  it('reports no 7-day velocity instead of a 34-day delta', () => {
+    expect(reviewVelocityFromSamples(stephen, 141, 7, now)).toEqual({ current: null, previous: null });
+  });
+  it('computes both periods when history exists', () => {
+    const samples = [{ count: 100, at: at(60) }, { count: 110, at: at(30) }, { count: 125, at: at(0) }];
+    expect(reviewVelocityFromSamples(samples, 125, 30, now)).toEqual({ current: 15, previous: 10 });
+  });
+  it('never reports negative growth from a noisy sample', () => {
+    const samples = [{ count: 130, at: at(30) }];
+    expect(reviewVelocityFromSamples(samples, 128, 30, now)).toEqual({ current: 0, previous: null });
+  });
+});
+
+describe('withUserRowFacts', () => {
+  const base = { appearances: 70, total_points: 81, best_position: 1, is_user: false } as const;
+  const rows = [
+    { ...base, name: 'Gutter Cleaned', avg_position: 1.5, rating: null, reviews: null, is_user: true },
+    { ...base, name: 'Rival', avg_position: 2.2, rating: 4.8, reviews: 108 },
+  ];
+  it('aligns the stored user row with the scan summary and snapshot', () => {
+    const out = withUserRowFacts(rows, { avgPosition: 1.6, rating: 5, reviews: 141 });
+    expect(out[0]).toMatchObject({ avg_position: 1.6, rating: 5, reviews: 141 });
+    expect(out[1]).toEqual(rows[1]);
+  });
+  it('keeps stored values when facts are missing', () => {
+    const out = withUserRowFacts(rows, { avgPosition: null, rating: null, reviews: null });
+    expect(out[0]).toMatchObject({ avg_position: 1.5, rating: null, reviews: null });
   });
 });
