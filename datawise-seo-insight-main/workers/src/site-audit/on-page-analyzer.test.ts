@@ -211,3 +211,13 @@ describe('analyzeOnPage bot-challenge handling', () => {
     expect(codes).toContain('missing_title');
   });
 });
+
+import { buildStructuredSEO } from './on-page-analyzer';
+
+describe('schema recommendations (report 2983ae25)', () => {
+  it('never recommends FAQPage, which Google stopped showing as a rich result', () => {
+    const seo = buildStructuredSEO({} as any, { url: 'https://example.com/', meta: {}, checks: {} } as any, [], null);
+    expect(seo.schema.recommended_missing).toContain('Service');
+    expect(seo.schema.recommended_missing).not.toContain('FAQPage');
+  });
+});

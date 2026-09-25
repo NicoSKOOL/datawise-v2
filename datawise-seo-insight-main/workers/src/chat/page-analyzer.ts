@@ -331,7 +331,7 @@ export function formatPageAnalysis(
     out += `**CTA Above Fold**: ${a.ctaAboveFold ? 'Yes' : 'No (add CTA in first visible section)'}\n`;
     out += `**Trust Signals**: ${a.trustSignals.length > 0 ? a.trustSignals.join(', ') : 'None detected (add reviews, testimonials, certifications)'}\n`;
     out += `**Local SEO**: ${a.localSeoSignals.length > 0 ? a.localSeoSignals.join(', ') : 'None detected'}\n`;
-    out += `**Schema Markup**: ${a.schemaTypes.length > 0 ? a.schemaTypes.join(', ') : 'None (add LocalBusiness, Service, or FAQPage schema)'}\n`;
+    out += `**Schema Markup**: ${a.schemaTypes.length > 0 ? a.schemaTypes.join(', ') : 'None (add LocalBusiness or Service schema)'}\n`;
   }
 
   // GSC queries for this page

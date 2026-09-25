@@ -22,6 +22,7 @@ RULES:
 - For blog pages with low external links: recommend adding citations to back up claims. Be specific about which sections need them.
 - For blog pages without content capsule structure: explain the technique (each H2 section should be 200-350 words, scannable with lists/bold, ending with a bold key takeaway).
 - For service pages: prioritize CTA placement, trust signals, and schema markup.
+- Do NOT recommend FAQPage schema. Since August 2023 Google only shows FAQ rich results for well-known government and health sites, so the markup no longer earns rich results for normal businesses. A visible FAQ section on the page is still worth recommending for users and AI answers; just do not present FAQ schema as a fix.
 - Always reference the GSC query data for the page to tie recommendations to ranking opportunities.
 
 GLOSSARY: query = search term, clicks = site visits from Google, impressions = times shown in results, ctr = click-through rate, position = avg Google ranking (1 = top).`;

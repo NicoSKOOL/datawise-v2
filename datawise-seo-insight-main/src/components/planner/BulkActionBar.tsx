@@ -6,8 +6,8 @@ import {
 import { toast } from 'sonner';
 import { Link2, ChevronDown, Copy, X } from 'lucide-react';
 import {
-  STATUS_LABELS, STATUS_ORDER,
-  type PlannerKeyword, type PlannerStatus,
+  STATUS_LABELS, STATUS_ORDER, INTENT_LABELS, INTENT_ORDER,
+  type PlannerKeyword, type PlannerStatus, type PlannerIntent,
 } from '@/lib/planner';
 import { copyText } from '@/lib/clipboard';
 import { keywordsToList, keywordsToCsv } from '@/lib/planner-export';
@@ -16,10 +16,11 @@ interface BulkActionBarProps {
   selectedItems: PlannerKeyword[];
   onAssign: () => void;
   onSetStatus: (status: PlannerStatus) => void;
+  onSetIntent: (intent: PlannerIntent) => void;
   onClear: () => void;
 }
 
-export function BulkActionBar({ selectedItems, onAssign, onSetStatus, onClear }: BulkActionBarProps) {
+export function BulkActionBar({ selectedItems, onAssign, onSetStatus, onSetIntent, onClear }: BulkActionBarProps) {
   const count = selectedItems.length;
   if (count === 0) return null;
 
@@ -52,6 +53,23 @@ export function BulkActionBar({ selectedItems, onAssign, onSetStatus, onClear }:
           {STATUS_ORDER.map((s) => (
             <DropdownMenuItem key={s} onClick={() => onSetStatus(s)}>
               {STATUS_LABELS[s]}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline">
+            Set intent <ChevronDown className="h-3.5 w-3.5 ml-1" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="center">
+          <DropdownMenuLabel className="text-xs">Change search intent</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {INTENT_ORDER.map((i) => (
+            <DropdownMenuItem key={i} onClick={() => onSetIntent(i)}>
+              {INTENT_LABELS[i]}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

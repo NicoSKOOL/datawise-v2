@@ -12,7 +12,9 @@ export type IssueType =
   | 'duplicate_title'
   | 'missing_desc'
   | 'long_desc'
-  | 'short_desc';
+  | 'short_desc'
+  // Passes every check; the user wants a stronger version anyway (report af5ccffd).
+  | 'improve';
 
 export interface PageContext {
   h1?: string;
@@ -71,6 +73,8 @@ function summarizeIssue(issue: IssueType, currentTitle: string | null, currentDe
       return `Current description is too long (${currentDesc ? [...currentDesc].length : 0} chars). Tighten while preserving the core promise and CTA.`;
     case 'short_desc':
       return `Current description is too short (${currentDesc ? [...currentDesc].length : 0} chars). Expand with a benefit and a soft CTA grounded in the page content.`;
+    case 'improve':
+      return 'The current title and description already pass length and uniqueness checks. The user still wants a stronger version: sharpen keyword alignment and click appeal, grounded in the page content, within the same length limits. Do not return the current text unchanged.';
   }
 }
 

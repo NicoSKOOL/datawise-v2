@@ -891,7 +891,7 @@ Return exactly this structure:
     "placement": "Where to add this section"
   },
   "schema_existing": ["LocalBusiness"],
-  "schema_missing": ["Service", "FAQPage"],
+  "schema_missing": ["Service"],
   "schema_generated": {},
   "faq": [
     { "question": "question tailored to service and location", "answer": "concise 2-3 sentence answer" }
@@ -909,6 +909,7 @@ Rules:
 - Generate exactly 5 FAQ items
 - The local_content_section MUST be written in the same tone as the original page
 - schema_generated should be a complete, valid JSON-LD object following schema.org best practices
+- Never list FAQPage in schema_missing and never generate FAQPage schema: Google stopped showing FAQ rich results for most sites in August 2023. The visible faq items are still wanted
 - NEVER use em dashes in any generated content. Use colons, commas, parentheses, or separate sentences instead
 - All generated content must be specific to the detected service type and location
 - cta_audit.score must be one of: "none", "weak", "strong"

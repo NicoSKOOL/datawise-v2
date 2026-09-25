@@ -10,6 +10,7 @@ import { runGeoGridScan, fetchGeoGridHistory, fetchGeoGridScan, fetchGeoGridInsi
 import { getLLMConfig } from '@/lib/chat';
 import type { GeoGridScanResult, GeoGridHistoryItem, LocalTrackedKeyword, GeoGridInsights, GeoGridCompetitor } from '@/types/local-seo';
 import GeoGridMap from './GeoGridMap';
+import { radiusOptions, formatRadius, loadDistanceUnit, saveDistanceUnit, type DistanceUnit } from '@/lib/distance-units';
 import GeoGridCompetitorsList from './GeoGridCompetitorsList';
 import GeoGridInsightsCard from './GeoGridInsights';
 
@@ -30,6 +31,25 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
   const [customMode, setCustomMode] = useState(false);
   const [gridSize, setGridSize] = useState('7');
   const [radiusKm, setRadiusKm] = useState('3');
+  // Display/input unit only; radius is always held and sent in km.
+  const [radiusUnit, setRadiusUnit] = useState<DistanceUnit>(() => loadDistanceUnit());
+  const changeRadiusUnit = (unit: DistanceUnit) => {
+    setRadiusUnit(unit);
+    saveDistanceUnit(unit);
+    // Snap to the closest option in the new unit so the select never shows blank.
+    const opts = radiusOptions(unit);
+    const current = parseFloat(radiusKm);
+    const closest = opts.reduce((best, o) =>
+      Math.abs(Number(o.value) - current) < Math.abs(Number(best.value) - current) ? o : best, opts[0]);
+    setRadiusKm(closest.value);
+  };
+  const radiusChoices = (() => {
+    const opts = radiusOptions(radiusUnit);
+    // A loaded scan may use a radius from the other unit: keep it selectable.
+    return opts.some((o) => o.value === radiusKm)
+      ? opts
+      : [...opts, { value: radiusKm, label: formatRadius(parseFloat(radiusKm), radiusUnit) }];
+  })();
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<GeoGridScanResult | null>(null);
   const [history, setHistory] = useState<GeoGridHistoryItem[]>([]);
@@ -217,17 +237,30 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
               </Select>
             </div>
             <div>
-              <Label className="text-xs">Radius</Label>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Radius</Label>
+                <div className="flex rounded border text-[10px] leading-none overflow-hidden" role="group" aria-label="Radius unit">
+                  {(['km', 'mi'] as const).map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      aria-pressed={radiusUnit === u}
+                      onClick={() => changeRadiusUnit(u)}
+                      className={`px-1.5 py-0.5 ${radiusUnit === u ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <Select value={radiusKm} onValueChange={setRadiusKm}>
                 <SelectTrigger className="h-9 text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1">1 km</SelectItem>
-                  <SelectItem value="3">3 km</SelectItem>
-                  <SelectItem value="5">5 km</SelectItem>
-                  <SelectItem value="10">10 km</SelectItem>
-                  <SelectItem value="15">15 km</SelectItem>
+                  {radiusChoices.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -301,7 +334,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
               )}
 
               <p className="text-[10px] text-muted-foreground text-center">
-                Keyword: "{scanResult.keyword}" | {scanResult.grid_size}x{scanResult.grid_size} grid | {scanResult.radius_km}km radius | Scanned: {new Date(scanResult.scanned_at).toLocaleString()}
+                Keyword: "{scanResult.keyword}" | {scanResult.grid_size}x{scanResult.grid_size} grid | {formatRadius(scanResult.radius_km, radiusUnit)} radius | Scanned: {new Date(scanResult.scanned_at).toLocaleString()}
               </p>
 
               {/* AI Insights button */}
@@ -367,7 +400,7 @@ export default function GeoGridPanel({ projectId, businessName, keywords }: GeoG
                     <div>
                       <div className="text-sm font-medium">{scan.keyword}</div>
                       <div className="text-[10px] text-muted-foreground">
-                        {scan.grid_size}x{scan.grid_size} | {scan.radius_km}km | {new Date(scan.scanned_at).toLocaleDateString()}
+                        {scan.grid_size}x{scan.grid_size} | {formatRadius(scan.radius_km, radiusUnit)} | {new Date(scan.scanned_at).toLocaleDateString()}
                       </div>
                     </div>
                     <div className="text-right">

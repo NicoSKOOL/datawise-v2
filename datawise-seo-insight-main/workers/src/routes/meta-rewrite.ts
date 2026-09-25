@@ -54,7 +54,7 @@ export function escalateTruncationBudget(current: number): number {
 
 const VALID_ISSUES: IssueType[] = [
   'missing_title', 'long_title', 'short_title', 'duplicate_title',
-  'missing_desc', 'long_desc', 'short_desc',
+  'missing_desc', 'long_desc', 'short_desc', 'improve',
 ];
 
 const STOPWORDS = new Set([

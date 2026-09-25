@@ -332,6 +332,15 @@ export default function ContentPlanner() {
     clearSelection();
   };
 
+  const bulkSetIntent = async (intent: PlannerIntent) => {
+    const ids = Array.from(selectedIds);
+    const { ok, failed } = await bulkPatch(ids, { intent });
+    if (failed === 0 && ok > 0) {
+      toast.success(`Set ${ok} keyword${ok === 1 ? '' : 's'} to ${INTENT_LABELS[intent]}`);
+    }
+    clearSelection();
+  };
+
   const selectedItems = useMemo(
     () => items.filter((i) => selectedIds.has(i.id)),
     [items, selectedIds],
@@ -626,6 +635,7 @@ export default function ContentPlanner() {
         onClear={clearSelection}
         onAssign={() => setAssignOpen(true)}
         onSetStatus={bulkSetStatus}
+        onSetIntent={bulkSetIntent}
       />
       <AssignToPageDialog
         open={assignOpen}
