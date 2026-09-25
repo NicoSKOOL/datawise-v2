@@ -85,3 +85,28 @@ describe('classifyReviewsTask', () => {
       .toEqual({ kind: 'failed', message: 'No Search Results.' });
   });
 });
+
+import { normalizeGbpProfile } from './local-seo';
+
+describe('normalizeGbpProfile', () => {
+  // Raw DataForSEO my_business_info record, as keyword discovery used to cache it.
+  const raw = {
+    title: 'Eureka 89 - Dining & Events',
+    rating: { rating_type: 'Max5', value: 4.6, votes_count: 1848, rating_max: null },
+    rating_distribution: { '1': 85, '2': 58, '3': 63, '4': 155, '5': 1487 },
+    place_id: 'ChIJZ-xZZrJC1moRuDmVvlWC5fM',
+  };
+  it('flattens the raw record so the card has a numeric rating and review count', () => {
+    const p = normalizeGbpProfile(raw);
+    expect(p.rating).toBe(4.6);
+    expect(p.reviews_count).toBe(1848);
+    expect(p.rating_distribution).toEqual(raw.rating_distribution);
+  });
+  it('is idempotent, so re-normalizing a cached profile changes nothing', () => {
+    const once = normalizeGbpProfile(raw);
+    expect(normalizeGbpProfile(once)).toEqual(once);
+  });
+  it('falls back to the requested place_id', () => {
+    expect(normalizeGbpProfile({ title: 'X' }, 'abc').place_id).toBe('abc');
+  });
+});

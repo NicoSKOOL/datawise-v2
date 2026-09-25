@@ -145,6 +145,35 @@ async function resolveMapsAnchor(env: Env, project: GeoAnchoredProject, ...locat
 // useless object: the call gets treated as "no data", GBP fields show as
 // missing, and geo-grid centering falls back to a loose name search that can
 // resolve to the wrong location. Always read items[0].
+// The single shape stored under `gbp-profile:<place_id|name>` in KV. Keyword
+// discovery used to write the raw DataForSEO record into the same key (rating
+// as an object, no reviews_count), so the profile card divided star counts by
+// a fallback of 1 and showed "5 star 148700%". Idempotent: normalizing an
+// already-normalized profile returns the same values, which also repairs
+// entries cached in the raw shape.
+export function normalizeGbpProfile(business: any, fallbackPlaceId?: string | null) {
+  return {
+    title: business.title || '',
+    address: business.address || '',
+    phone: business.phone || null,
+    url: business.url || null,
+    category: business.category || null,
+    additional_categories: business.additional_categories || [],
+    rating: typeof business.rating === 'number' ? business.rating : (business.rating?.value ?? null),
+    rating_distribution: business.rating_distribution ?? null,
+    reviews_count: business.reviews_count ?? business.rating?.votes_count ?? null,
+    is_claimed: business.is_claimed ?? null,
+    description: business.description || null,
+    place_id: business.place_id || fallbackPlaceId || null,
+    cid: business.cid || null,
+    work_time: business.work_time || null,
+    popular_times: business.popular_times || null,
+    total_photos: business.total_photos ?? null,
+    latitude: business.latitude ?? null,
+    longitude: business.longitude ?? null,
+  };
+}
+
 export function pickMyBusinessInfo(data: any): any | null {
   return data?.tasks?.[0]?.result?.[0]?.items?.[0] ?? null;
 }
@@ -516,7 +545,7 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
   // Check KV cache first (only return if data is non-empty)
   const cacheKey = `gbp-profile:${place_id || business_name}`;
   const cached = await env.KV.get(cacheKey, 'json') as any;
-  if (cached && cached.title) return json(cached);
+  if (cached && cached.title) return json(normalizeGbpProfile(cached, place_id));
 
   // Try my_business_info first for rich data
   let business: any = null;
@@ -578,26 +607,7 @@ export async function handleGBPProfile(request: Request, env: Env): Promise<Resp
 
   if (!business || !business.title) return json({ error: 'Business not found' }, 404);
 
-  const profile = {
-    title: business.title || '',
-    address: business.address || '',
-    phone: business.phone || null,
-    url: business.url || null,
-    category: business.category || null,
-    additional_categories: business.additional_categories || [],
-    rating: typeof business.rating === 'number' ? business.rating : (business.rating?.value ?? null),
-    rating_distribution: business.rating_distribution ?? null,
-    reviews_count: business.rating?.votes_count ?? business.reviews_count ?? null,
-    is_claimed: business.is_claimed ?? null,
-    description: business.description || null,
-    place_id: business.place_id || place_id,
-    cid: business.cid || null,
-    work_time: business.work_time || null,
-    popular_times: business.popular_times || null,
-    total_photos: business.total_photos ?? null,
-    latitude: business.latitude ?? null,
-    longitude: business.longitude ?? null,
-  };
+  const profile = normalizeGbpProfile(business, place_id);
 
   // Only cache if we got useful data
   if (profile.title) {
@@ -1097,7 +1107,8 @@ export async function handleLocalKeywordDiscovery(env: Env, userId: string, proj
         location_code: locationCode,
         language_code: 'en',
       }]);
-      gbp = pickMyBusinessInfo(data);
+      const info = pickMyBusinessInfo(data);
+      gbp = info?.title ? normalizeGbpProfile(info, project.place_id) : null;
       if (gbp) await env.KV.put(gbpKey, JSON.stringify(gbp), { expirationTtl: LOCAL_KEYWORDS_TTL_SECONDS });
     } catch { gbp = null; }
   }
