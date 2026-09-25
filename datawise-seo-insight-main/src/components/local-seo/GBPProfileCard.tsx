@@ -194,8 +194,11 @@ export default function GBPProfileCard({ placeId, businessName, locationCode }: 
         {profile.rating_distribution && (
           <div className="space-y-1">
             {[5, 4, 3, 2, 1].map((stars) => {
-              const count = profile.rating_distribution?.[stars] ?? 0;
-              const total = profile.reviews_count || 1;
+              // Share of the distribution itself, so the bars always sum to
+              // ~100% even when reviews_count is missing or out of date.
+              const counts = [5, 4, 3, 2, 1].map(s => Number(profile.rating_distribution?.[s] ?? 0));
+              const total = counts.reduce((a, b) => a + b, 0) || 1;
+              const count = Number(profile.rating_distribution?.[stars] ?? 0);
               const pct = Math.round((count / total) * 100);
               return (
                 <div key={stars} className="flex items-center gap-2 text-xs">
