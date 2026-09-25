@@ -11,9 +11,10 @@ import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/pro
 import { chatCompleteEscalating } from '../llm/length-escalation';
 import {
   zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
-  ratingDistributionFallback, computeVelocity, computeReviewsHash, validateReviewThemes,
-  extractJsonObject,
-  type AggregatedCompetitor,
+  ratingDistributionFallback, computeReviewsHash, validateReviewThemes,
+  extractJsonObject, reviewVelocityFromSamples, baselineToleranceMs,
+  withUserRowFacts,
+  type AggregatedCompetitor, type ReviewCountSample,
 } from './local-reviews-analysis';
 
 const json = (data: unknown, status = 200) =>
@@ -34,6 +35,38 @@ interface LocalProject {
   place_id: string | null;
   cid: string | null;
   business_name: string | null;
+}
+
+// Every review-count observation for a project in the lookback window: daily
+// snapshots plus the count captured on each rank check. Feeds the single
+// velocity rule in reviewVelocityFromSamples.
+async function loadReviewCountSamples(env: Env, projectId: string, periodDays: number): Promise<ReviewCountSample[]> {
+  const lookbackDays = Math.ceil(periodDays * 2 + baselineToleranceMs(periodDays) / 86400000 + 1);
+  const [snaps, checks] = await Promise.all([
+    env.DB.prepare(
+      `SELECT reviews_count AS count, created_at AS at FROM local_review_snapshots
+       WHERE project_id = ? AND reviews_count IS NOT NULL AND created_at >= datetime('now', '-' || ? || ' days')`
+    ).bind(projectId, lookbackDays).all(),
+    env.DB.prepare(
+      `SELECT lrh.reviews_count AS count, lrh.checked_at AS at FROM local_rank_history lrh
+       JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+       WHERE tk.project_id = ? AND lrh.reviews_count IS NOT NULL AND lrh.checked_at >= datetime('now', '-' || ? || ' days')`
+    ).bind(projectId, lookbackDays).all(),
+  ]);
+  return [...(snaps.results as any[]), ...(checks.results as any[])] as ReviewCountSample[];
+}
+
+function latestSampleCount(samples: ReviewCountSample[]): number | null {
+  let best: ReviewCountSample | null = null;
+  for (const s of samples) if (s.count != null && (!best || s.at > best.at)) best = s;
+  return best?.count ?? null;
+}
+
+async function loadLatestReviewFacts(env: Env, projectId: string): Promise<{ rating: number | null; reviews: number | null }> {
+  const row = await env.DB.prepare(
+    'SELECT rating, reviews_count FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
+  ).bind(projectId).first() as any;
+  return { rating: row?.rating ?? null, reviews: row?.reviews_count ?? null };
 }
 
 function findLocalPackPosition(items: any[], project: LocalProject) {
@@ -261,18 +294,6 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     ORDER BY lrh.checked_at ASC
   `).bind(projectId, period * 2, period).all();
 
-  // Period before the previous one: needed for the review-velocity delta on
-  // the stats cards (velocity this period vs last period).
-  const { results: prev2Rows } = await env.DB.prepare(`
-    SELECT lrh.reviews_count
-    FROM local_rank_history lrh
-    JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
-    WHERE tk.project_id = ? AND tk.is_active = 1
-      AND lrh.checked_at >= datetime('now', '-' || ? || ' days')
-      AND lrh.checked_at < datetime('now', '-' || ? || ' days')
-      AND lrh.reviews_count IS NOT NULL
-  `).bind(projectId, period * 3, period * 2).all();
-
   const countRow = await env.DB.prepare(
     'SELECT COUNT(*) as cnt FROM tracked_keywords WHERE project_id = ? AND is_active = 1'
   ).bind(projectId).first() as any;
@@ -323,7 +344,18 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     };
   }
 
-  const current = computeSnapshot(historyRows as any[], totalKeywords);
+  // "Now" cards use each keyword's latest check of any age, matching the
+  // keyword table; a keyword last checked before the window used to count as
+  // not in the pack while the table showed its position.
+  const { results: latestRows } = await env.DB.prepare(`
+    SELECT lrh.keyword_id, lrh.pack_position, lrh.rating, lrh.reviews_count, lrh.checked_at
+    FROM local_rank_history lrh
+    JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
+    WHERE tk.project_id = ? AND tk.is_active = 1
+      AND lrh.checked_at = (SELECT MAX(checked_at) FROM local_rank_history WHERE keyword_id = tk.id)
+  `).bind(projectId).all();
+
+  const current = computeSnapshot(latestRows as any[], totalKeywords);
   const previous = computeSnapshot(prevRows as any[], totalKeywords);
 
   // Compute improved/declined/stable
@@ -370,14 +402,8 @@ export async function handleLocalProjectReport(request: Request, env: Env, userI
     return { date, avg_pack_position: avgP, top3: t3, top10: t10, top20: t20, avg_rating: avgR };
   }).sort((a, b) => a.date < b.date ? -1 : 1);
 
-  const prev2Counts = (prev2Rows as any[]).map(r => r.reviews_count as number);
-  const prev2TotalReviews = prev2Counts.length ? Math.max(...prev2Counts) : null;
-  const velocity = {
-    current: current.total_reviews != null && previous.total_reviews != null
-      ? current.total_reviews - previous.total_reviews : null,
-    previous: previous.total_reviews != null && prev2TotalReviews != null
-      ? previous.total_reviews - prev2TotalReviews : null,
-  };
+  const reviewSamples = await loadReviewCountSamples(env, projectId, period);
+  const velocity = reviewVelocityFromSamples(reviewSamples, latestSampleCount(reviewSamples) ?? current.total_reviews, period);
 
   return json({ current, previous, velocity, trend });
 }
@@ -639,29 +665,11 @@ export async function handleReviews(request: Request, env: Env, userId?: string)
     };
   };
 
-  // Review-count baselines for velocity: prefer snapshots, fall back to
-  // local_rank_history.reviews_count captured on every rank check.
-  const loadVelocity = async (currentCount: number | null, snaps: { period_start: any; previous_period_start: any }) => {
+  // Review velocity: same rule as the dashboard card and period report.
+  const loadVelocity = async (currentCount: number | null, _snaps?: unknown) => {
     if (!projectId) return { current: null, previous: null };
-    let startOfPeriod: number | null = snaps.period_start?.reviews_count ?? null;
-    let startOfPrevious: number | null = snaps.previous_period_start?.reviews_count ?? null;
-    if (startOfPeriod == null) {
-      const row = await env.DB.prepare(
-        `SELECT MAX(lrh.reviews_count) as cnt FROM local_rank_history lrh
-         JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
-         WHERE tk.project_id = ? AND lrh.checked_at < datetime('now', '-30 days') AND lrh.checked_at >= datetime('now', '-60 days')`
-      ).bind(projectId).first() as any;
-      startOfPeriod = row?.cnt ?? null;
-    }
-    if (startOfPrevious == null) {
-      const row = await env.DB.prepare(
-        `SELECT MAX(lrh.reviews_count) as cnt FROM local_rank_history lrh
-         JOIN tracked_keywords tk ON tk.id = lrh.keyword_id
-         WHERE tk.project_id = ? AND lrh.checked_at < datetime('now', '-60 days') AND lrh.checked_at >= datetime('now', '-90 days')`
-      ).bind(projectId).first() as any;
-      startOfPrevious = row?.cnt ?? null;
-    }
-    return computeVelocity({ currentCount, startOfPeriodCount: startOfPeriod, startOfPreviousPeriodCount: startOfPrevious });
+    const samples = await loadReviewCountSamples(env, projectId, 30);
+    return reviewVelocityFromSamples(samples, currentCount ?? latestSampleCount(samples), 30);
   };
 
   const identifier = place_id || cid || business_name;
@@ -880,7 +888,16 @@ export async function handleReviewThemes(request: Request, env: Env, userId: str
     return `[${i}] ${r.rating ?? '?'} stars | ${r.date ? String(r.date).slice(0, 10) : 'no date'} | ${r.owner_response ? 'responded' : 'no response'} | ${text}`;
   }).join('\n');
 
+  // The model only sees the most recent fetched reviews (100 by default), so it
+  // must not present that sample size as the profile's total ("across all 100
+  // reviews" when the profile had 141, report d0c90bb4).
+  const totalFacts = await loadLatestReviewFacts(env, projectId);
+  const sampleNote = totalFacts.reviews != null && totalFacts.reviews > reviews.length
+    ? `These are the ${reviews.length} most recent of ${totalFacts.reviews} reviews on the profile.`
+    : `These are the ${reviews.length} most recent reviews on the profile.`;
+
   const prompt = `You are a local SEO consultant summarizing Google reviews for ${project.business_name || project.name}.
+${sampleNote}
 
 ## Reviews (numbered)
 ${numbered}
@@ -905,6 +922,7 @@ Rules:
 - review_indexes must only contain index numbers shown in brackets above
 - Quotes must be verbatim substrings of review text, 15 words or fewer
 - Plain English, written for a business owner
+- Do not state how many reviews there are in total or say "all reviews"; describe what customers say
 - Never use em dashes in any output text`;
 
   const messages: ChatMessage[] = [{ role: 'user', content: prompt }];
@@ -1487,13 +1505,17 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     top_competitors: Array<{ title: string; rating: number | null; reviews: number | null; position: number }>;
   }> = [];
 
+  // The user's own rating/reviews, read off any point where the scan found them
+  // (top_competitors excludes the user, so the "you" row had none).
+  const ownStats: { rating: number | null; reviews: number | null } = { rating: null, reviews: null };
+
   const CONCURRENCY = 10;
   for (let i = 0; i < gridPoints.length; i += CONCURRENCY) {
     const chunk = gridPoints.slice(i, i + CONCURRENCY);
     const promises = chunk.map(async (point) => {
       const data = await dataforseoRequest(env, '/serp/google/maps/live/advanced', [{
         keyword: keyword.trim(),
-        location_coordinate: `${point.lat},${point.lng},${zoomForRadius(radius)}`,
+        location_coordinate: `${point.lat},${point.lng},${zoomForRadius(radius, centerLat)}`,
         language_code: 'en',
         device: 'desktop',
         os: 'windows',
@@ -1517,6 +1539,11 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
           reviews: it.rating?.votes_count ?? null,
           position: it.rank_absolute ?? it.rank_group ?? 0,
         }));
+
+      if (match && ownStats.rating == null && match.rating?.value != null) {
+        ownStats.rating = match.rating.value;
+        ownStats.reviews = match.rating?.votes_count ?? null;
+      }
 
       return {
         row: point.row,
@@ -1553,7 +1580,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
   ).run();
 
   // Aggregate "Who owns your map" competitor share and persist top 10.
-  const competitors = aggregateGeogridCompetitors(results, project.business_name);
+  const competitors = aggregateGeogridCompetitors(results, project.business_name, ownStats);
   if (competitors.length > 0) {
     // Bookkeeping only: a failed write must never fail the scan response
     // (the table or column may not exist yet if the migration is pending).
@@ -1604,7 +1631,7 @@ export async function handleGeoGridHistory(env: Env, userId: string, projectId: 
 // GET /api/local-seo/geogrid-scans/:scanId
 export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: string): Promise<Response> {
   const scan = await env.DB.prepare(`
-    SELECT gs.*, sp.business_name FROM geogrid_scans gs
+    SELECT gs.*, sp.business_name, sp.id AS project_id FROM geogrid_scans gs
     JOIN seo_projects sp ON sp.id = gs.project_id
     WHERE gs.id = ? AND sp.user_id = ?
   `).bind(scanId, userId).first() as any;
@@ -1621,9 +1648,11 @@ export async function handleGeoGridScanDetail(env: Env, userId: string, scanId: 
   // Scans from before this feature have no stored rows: aggregate on the fly
   // from the stored JSON blob (no backfill writes). The stored is_user flag is
   // authoritative; the name match covers rows written before the column.
-  const competitors: AggregatedCompetitor[] = compRows.length > 0
+  const storedCompetitors: AggregatedCompetitor[] = compRows.length > 0
     ? compRows.map(r => ({ ...r, is_user: !!r.is_user || (!!scan.business_name && r.name === scan.business_name) }))
     : aggregateGeogridCompetitors(points, scan.business_name);
+  const reviewFacts = await loadLatestReviewFacts(env, scan.project_id);
+  const competitors = withUserRowFacts(storedCompetitors, { avgPosition: scan.avg_position ?? null, ...reviewFacts });
 
   return json({
     id: scan.id,
@@ -1986,9 +2015,11 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
     const { results: compRows } = await env.DB.prepare(
       'SELECT name, appearances, total_points, avg_position, best_position, rating, reviews, is_user FROM geogrid_competitors WHERE scan_id = ? ORDER BY appearances DESC'
     ).bind(latestScan.id).all() as { results: any[] };
-    const competitors: AggregatedCompetitor[] = compRows.length > 0
+    const storedCompetitors: AggregatedCompetitor[] = compRows.length > 0
       ? compRows.map(r => ({ ...r, is_user: !!r.is_user || (!!project.business_name && r.name === project.business_name) }))
       : aggregateGeogridCompetitors(latestPoints as any, project.business_name);
+    const reviewFacts = await loadLatestReviewFacts(env, projectId);
+    const competitors = withUserRowFacts(storedCompetitors, { avgPosition: latestScan.avg_position ?? null, ...reviewFacts });
 
     geogrid = {
       latest: {
@@ -2019,15 +2050,16 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
   let reviews: any = null;
   if (snapRows.length > 0) {
     const latest = snapRows[0];
-    const cutoffStart = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-    const cutoffPrev = new Date(Date.now() - days * 2 * 86400000).toISOString().slice(0, 10);
-    const atPeriodStart = snapRows.find(r => r.created_at.slice(0, 10) <= cutoffStart) || null;
-    const atPrevStart = snapRows.find(r => r.created_at.slice(0, 10) <= cutoffPrev) || null;
-    const velocity = computeVelocity({
-      currentCount: latest.reviews_count,
-      startOfPeriodCount: atPeriodStart?.reviews_count ?? null,
-      startOfPreviousPeriodCount: atPrevStart?.reviews_count ?? null,
-    });
+    // Period-start snapshot for rating/response deltas: nearest to the start
+    // within tolerance, never an arbitrarily old row.
+    const startMs = Date.now() - days * 86400000;
+    const tol = baselineToleranceMs(days);
+    const snapMs = (at: string) => Date.parse(`${at.replace(' ', 'T')}Z`);
+    const atPeriodStart = snapRows
+      .filter(r => Math.abs(snapMs(r.created_at) - startMs) <= tol)
+      .sort((a, b) => Math.abs(snapMs(a.created_at) - startMs) - Math.abs(snapMs(b.created_at) - startMs))[0] || null;
+    const reviewSamples = await loadReviewCountSamples(env, projectId, days);
+    const velocity = reviewVelocityFromSamples(reviewSamples, latest.reviews_count, days);
 
     const themesRow = await env.DB.prepare(
       'SELECT summary, themes, created_at FROM local_review_themes WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
@@ -2104,7 +2136,7 @@ export async function handleLocalPeriodReport(request: Request, env: Env, userId
     if (weakEdges > 0) {
       next_steps.push({
         title: 'Improve visibility at the edges of your service area',
-        detail: `Your business is weak or invisible at ${weakEdges} outer grid point${weakEdges === 1 ? '' : 's'} for "${latestScan.keyword}". Location pages, citations, and reviews mentioning those neighborhoods extend your reach.`,
+        detail: `Your business is weak or invisible at ${weakEdges} outer grid point${weakEdges === 1 ? '' : 's'} for "${latestScan.keyword}". Location pages, citations, and reviews that mention those areas extend your reach.`,
       });
     }
   }

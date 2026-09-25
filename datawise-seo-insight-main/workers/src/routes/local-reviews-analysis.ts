@@ -18,13 +18,24 @@ export interface ReviewSnapshot {
   rating_distribution: string; // JSON {"5":n,...}
 }
 
-// Radius-derived Maps zoom. Replaces the hardcoded 17z that made every grid
-// point search hyper-local regardless of scan radius.
-export function zoomForRadius(radiusKm: number): string {
-  if (radiusKm <= 1) return '15z';
-  if (radiusKm <= 2.5) return '14z';
-  if (radiusKm <= 5) return '13z';
-  return '12z';
+// Maps zoom for a geo-grid point. Desktop Google Maps only returns businesses
+// visible in the viewport, and the left results panel hides anything more than
+// ~400px west of the centre. So the grid's east edge column (business to the
+// west) silently dropped out when the zoom was picked from radius alone: at
+// 53N the cut-off was 4.5-5km at 13z and 9-10km at 12z, doubling per zoom
+// (measured live 2026-09-25, report d0c90bb4). Pick the tightest zoom whose
+// visible half-width at this latitude clears the radius with margin. At US
+// latitudes this reproduces the old 15/14/13/12z buckets.
+const VISIBLE_WEST_PX = 380; // measured cut-off 391-434px, keep a safety margin
+const EDGE_MARGIN = 1.1;
+export function zoomForRadius(radiusKm: number, latitude: number): string {
+  const lat = Number.isFinite(latitude) ? Math.min(Math.abs(latitude), 85) : 0;
+  const cosLat = Math.cos((lat * Math.PI) / 180);
+  for (let z = 15; z > 10; z--) {
+    const metersPerPx = (156543.03392 * cosLat) / 2 ** z;
+    if ((VISIBLE_WEST_PX * metersPerPx) / 1000 >= radiusKm * EDGE_MARGIN) return `${z}z`;
+  }
+  return '10z';
 }
 
 export function ratingDistributionFallback(reviews: ReviewLike[]): Record<string, number> {
@@ -81,6 +92,52 @@ export function computeVelocity(args: {
   return { current, previous };
 }
 
+// Review-count baselines. Every velocity number (dashboard card, Reviews tab,
+// period report) must use the same rule: current count minus the count
+// observed closest to the period start. A sample is only accepted within a
+// tolerance of the target date; the old "newest row at or before the start,
+// however old" fallback turned a 7-day report into a 34-day delta.
+export interface ReviewCountSample { count: number | null; at: string }
+
+function sampleMs(at: string): number {
+  return Date.parse(at.includes('T') ? at : `${at.replace(' ', 'T')}Z`);
+}
+
+export function pickBaselineCount(samples: ReviewCountSample[], targetMs: number, toleranceMs: number): number | null {
+  let best: { count: number; dist: number } | null = null;
+  for (const s of samples) {
+    if (s.count == null) continue;
+    const t = sampleMs(s.at);
+    if (!Number.isFinite(t)) continue;
+    const dist = Math.abs(t - targetMs);
+    if (dist > toleranceMs) continue;
+    if (!best || dist < best.dist) best = { count: s.count, dist };
+  }
+  return best ? best.count : null;
+}
+
+export function baselineToleranceMs(periodDays: number): number {
+  return Math.max(2, periodDays * 0.25) * 86400000;
+}
+
+export function reviewVelocityFromSamples(
+  samples: ReviewCountSample[],
+  currentCount: number | null,
+  periodDays: number,
+  nowMs: number = Date.now(),
+): { current: number | null; previous: number | null } {
+  const day = 86400000;
+  const tol = baselineToleranceMs(periodDays);
+  const start = pickBaselineCount(samples, nowMs - periodDays * day, tol);
+  const prevStart = pickBaselineCount(samples, nowMs - 2 * periodDays * day, tol);
+  const v = computeVelocity({ currentCount, startOfPeriodCount: start, startOfPreviousPeriodCount: prevStart });
+  // Review counts can dip (Google removals, a stale sample); gains never go negative.
+  return {
+    current: v.current == null ? null : Math.max(0, v.current),
+    previous: v.previous == null ? null : Math.max(0, v.previous),
+  };
+}
+
 // --- Geo-grid competitor aggregation ---
 
 export interface GeoGridPointResult {
@@ -102,6 +159,7 @@ export interface AggregatedCompetitor {
 export function aggregateGeogridCompetitors(
   points: GeoGridPointResult[],
   userBusinessName?: string | null,
+  userStats?: { rating: number | null; reviews: number | null } | null,
 ): AggregatedCompetitor[] {
   const totalPoints = points.length;
   const map = new Map<string, { appearances: number; positions: number[]; rating: number | null; reviews: number | null }>();
@@ -135,19 +193,21 @@ export function aggregateGeogridCompetitors(
   }));
 
   // The scan excludes the target business from top_competitors (filtered by
-  // place_id/cid), so synthesize its own top 3 share from per-point positions.
+  // place_id/cid), so synthesize its row from per-point positions. Top 3 share
+  // counts top-3 points; avg_position covers every found point so it matches
+  // the scan summary (geogrid_scans.avg_position) shown next to the table.
   if (userBusinessName) {
-    const ownPoints = points.filter(p => p.position != null && p.position <= 3);
-    if (ownPoints.length > 0) {
-      const positions = ownPoints.map(p => p.position as number);
+    const found = points.filter(p => p.position != null).map(p => p.position as number);
+    const top3 = found.filter(p => p <= 3);
+    if (top3.length > 0) {
       competitors.push({
         name: userBusinessName,
-        appearances: ownPoints.length,
+        appearances: top3.length,
         total_points: totalPoints,
-        avg_position: Math.round((positions.reduce((s, p) => s + p, 0) / positions.length) * 10) / 10,
-        best_position: Math.min(...positions),
-        rating: null,
-        reviews: null,
+        avg_position: Math.round((found.reduce((s, p) => s + p, 0) / found.length) * 10) / 10,
+        best_position: Math.min(...found),
+        rating: userStats?.rating ?? null,
+        reviews: userStats?.reviews ?? null,
         is_user: true,
       });
     }
@@ -156,6 +216,22 @@ export function aggregateGeogridCompetitors(
   competitors.sort((a, b) =>
     b.appearances - a.appearances || (a.avg_position ?? 99) - (b.avg_position ?? 99));
   return competitors.slice(0, 10);
+}
+
+// Rows stored before 2026-09-25 carry a top-3-only user average and no
+// rating/reviews. Normalise at read time (no history rewrite): the user row's
+// average follows the scan summary, and missing rating/reviews come from the
+// latest review snapshot.
+export function withUserRowFacts(
+  competitors: AggregatedCompetitor[],
+  facts: { avgPosition: number | null; rating: number | null; reviews: number | null },
+): AggregatedCompetitor[] {
+  return competitors.map(c => c.is_user ? {
+    ...c,
+    avg_position: facts.avgPosition ?? c.avg_position,
+    rating: c.rating ?? facts.rating,
+    reviews: c.reviews ?? facts.reviews,
+  } : c);
 }
 
 // --- Review themes (LLM output validation + cache key) ---

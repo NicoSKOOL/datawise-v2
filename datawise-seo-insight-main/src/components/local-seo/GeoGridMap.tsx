@@ -98,7 +98,12 @@ export default function GeoGridMap({ center, points, businessName }: GeoGridMapP
         .bindPopup(tooltip);
     }
 
-    // Fit bounds to include all points
+    // Fit bounds to include all points. The container is often not at its
+    // final size when this first runs (0 wide while the panel lays out, or
+    // wider before a scrollbar appears), and Leaflet never re-fits on its own:
+    // the grid came out tiny, or off-centre with the bottom row cut off in the
+    // PDF export (report d0c90bb4). Re-fit whenever the container resizes.
+    let resizeObserver: ResizeObserver | null = null;
     if (points.length > 0) {
       const allLats = [center.lat, ...points.map(p => p.lat)];
       const allLngs = [center.lng, ...points.map(p => p.lng)];
@@ -106,12 +111,21 @@ export default function GeoGridMap({ center, points, businessName }: GeoGridMapP
         [Math.min(...allLats), Math.min(...allLngs)],
         [Math.max(...allLats), Math.max(...allLngs)]
       );
-      map.fitBounds(bounds, { padding: [30, 30] });
+      const fit = () => {
+        map.invalidateSize({ pan: false });
+        map.fitBounds(bounds, { padding: [30, 30], animate: false });
+      };
+      fit();
+      if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(() => fit());
+        resizeObserver.observe(mapRef.current);
+      }
     }
 
     mapInstanceRef.current = map;
 
     return () => {
+      resizeObserver?.disconnect();
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
