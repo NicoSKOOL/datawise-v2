@@ -3,6 +3,8 @@
 // theme validation. No Env, no D1, fully unit-tested in
 // local-reviews-analysis.test.ts. See docs/specs/2026-06-10-local-pack-experience.md.
 
+import { stripDashes } from '../llm/strip-dashes';
+
 export interface ReviewLike {
   rating: number | null;
   owner_response: string | null;
@@ -313,7 +315,7 @@ export function validateReviewThemes(
       ? (t.quotes as unknown[]).filter((q): q is string => typeof q === 'string').slice(0, 2)
       : [];
     themes.push({
-      theme: t.theme.trim(),
+      theme: stripDashes(t.theme.trim()),
       sentiment: normalizeSentiment(t.sentiment),
       mention_count: typeof t.mention_count === 'number' ? t.mention_count : indexes.length,
       quotes,
@@ -321,6 +323,7 @@ export function validateReviewThemes(
     });
   }
   if (themes.length === 0) return null;
-  const summary = typeof obj.summary === 'string' ? obj.summary : '';
+  // Quotes stay verbatim (they are review text); the model's own words get the dash backstop.
+  const summary = typeof obj.summary === 'string' ? stripDashes(obj.summary) : '';
   return { summary, themes: themes.slice(0, 8) };
 }

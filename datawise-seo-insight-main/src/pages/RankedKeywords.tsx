@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useDefaults } from "@/hooks/use-defaults";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,8 +23,11 @@ import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
 
 export default function RankedKeywords() {
   const [domain, setDomain] = usePersistentState<string>("competitor:ranked-keywords:domain", "");
-  const [location, setLocation] = usePersistentState<string>("competitor:ranked-keywords:location", "2840");
-  const [language, setLanguage] = usePersistentState<string>("competitor:ranked-keywords:language", "en");
+  // Seed from the account default (Settings > Default Location & Language). The
+  // :v2 keys drop values saved before this, which were mostly the old hardcoded US.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const [location, setLocation] = usePersistentState<string>("competitor:ranked-keywords:location:v2", defaultLocation);
+  const [language, setLanguage] = usePersistentState<string>("competitor:ranked-keywords:language:v2", defaultLanguage);
   const [limit, setLimit] = usePersistentState<string>("competitor:ranked-keywords:limit", "100");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = usePersistentState<any[]>("competitor:ranked-keywords:results", []);

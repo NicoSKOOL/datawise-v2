@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useDefaults } from "@/hooks/use-defaults";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -370,8 +371,11 @@ function SingleDomainSummary({ result }: { result: DomainResult }) {
 // --- Main Page ---
 export default function DomainRankOverview() {
   const [domains, setDomains] = usePersistentState<string[]>("competitor:domain-rank:domains", [""]);
-  const [location, setLocation] = usePersistentState<string>("competitor:domain-rank:location", "2840");
-  const [language, setLanguage] = usePersistentState<string>("competitor:domain-rank:language", "en");
+  // Seed from the account default (Settings > Default Location & Language). The
+  // :v2 keys drop values saved before this, which were mostly the old hardcoded US.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const [location, setLocation] = usePersistentState<string>("competitor:domain-rank:location:v2", defaultLocation);
+  const [language, setLanguage] = usePersistentState<string>("competitor:domain-rank:language:v2", defaultLanguage);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = usePersistentState<DomainResult[]>("competitor:domain-rank:results", []);
   const { toast } = useToast();

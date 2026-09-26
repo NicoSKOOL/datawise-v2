@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { KanbanSquare, Sparkles } from 'lucide-react';
 import {
   listPlannerKeywords,
+  bulkAddPlannerKeywords,
   updatePlannerKeyword,
   deletePlannerKeyword,
   listClusters,
@@ -41,6 +42,7 @@ import { PlannerFilters, type PlannerFiltersState } from '@/components/planner/P
 import { ClusterView } from '@/components/planner/ClusterView';
 import { BulkActionBar } from '@/components/planner/BulkActionBar';
 import { AssignToPageDialog } from '@/components/planner/AssignToPageDialog';
+import { AddKeywordsManuallyDialog } from '@/components/planner/AddKeywordsManuallyDialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useProperty } from '@/contexts/PropertyContext';
 import { AddWebsiteDialog } from '@/components/AddWebsiteDialog';
@@ -182,8 +184,30 @@ export default function ContentPlanner() {
   const queryClient = useQueryClient();
   const { selectedPropertyId, selectedProperty, loading: propertyLoading } = useProperty();
   const [addWebsiteOpen, setAddWebsiteOpen] = useState(false);
+  const [addKeywordsOpen, setAddKeywordsOpen] = useState(false);
   const kwKey = ['planner-keywords', selectedPropertyId] as const;
   const clusterKey = ['planner-clusters', selectedPropertyId] as const;
+
+  const addManualKeywords = async (keywords: string[], intent: PlannerIntent) => {
+    try {
+      const { added, skipped } = await bulkAddPlannerKeywords(selectedPropertyId, {
+        items: keywords.map((keyword) => ({ keyword, intent })),
+        intent,
+        source: 'manual',
+      });
+      queryClient.invalidateQueries({ queryKey: kwKey });
+      setAddKeywordsOpen(false);
+      if (added > 0) {
+        toast.success(`Added ${added} ${added === 1 ? 'keyword' : 'keywords'} to Backlog`, {
+          description: skipped > 0 ? `${skipped} already in your planner.` : undefined,
+        });
+      } else {
+        toast.info('Those keywords are already in your planner');
+      }
+    } catch {
+      toast.error('Failed to add keywords');
+    }
+  };
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: kwKey,
@@ -523,6 +547,9 @@ export default function ContentPlanner() {
               {filtered.length} of {items.length} keywords
             </div>
           )}
+          <Button size="sm" onClick={() => setAddKeywordsOpen(true)}>
+            <Plus className="h-3.5 w-3.5 mr-1.5" /> Add keywords
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setAddWebsiteOpen(true)}>
             <Plus className="h-3.5 w-3.5 mr-1.5" /> Add a website
           </Button>
@@ -532,6 +559,11 @@ export default function ContentPlanner() {
         </div>
       </div>
       <AddWebsiteDialog open={addWebsiteOpen} onOpenChange={setAddWebsiteOpen} />
+      <AddKeywordsManuallyDialog
+        open={addKeywordsOpen}
+        onOpenChange={setAddKeywordsOpen}
+        onSubmit={addManualKeywords}
+      />
 
       <div className="flex items-center justify-between gap-3">
         <Tabs value={view} onValueChange={(v) => setViewPersisted(v as 'kanban' | 'clusters')}>
@@ -580,11 +612,16 @@ export default function ContentPlanner() {
           <KanbanSquare className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
           <p className="text-sm font-medium">Your planner is empty</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Head to Keyword Research or Competitor Analysis and click the bookmark icon on any keyword.
+            Add your own keywords and ideas, or click the bookmark icon on any keyword in Keyword Research or Competitor Analysis.
           </p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={loadDemoData}>
-            <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Load demo data to preview
-          </Button>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <Button size="sm" onClick={() => setAddKeywordsOpen(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1.5" /> Add keywords
+            </Button>
+            <Button variant="outline" size="sm" onClick={loadDemoData}>
+              <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Load demo data to preview
+            </Button>
+          </div>
         </div>
       ) : view === 'kanban' ? (
         <PlannerKanban

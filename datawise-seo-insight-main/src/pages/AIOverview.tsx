@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Brain, Loader2 } from 'lucide-react';
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { usePersistentState } from '@/hooks/use-persistent-state';
+import { useDefaults } from '@/hooks/use-defaults';
 import { AI_ENGINE_LABELS, AI_ENGINE_ORDER, type AIEngine } from '@/lib/ai-tracking';
 import { fetchEngineCheck, type EngineCheckResponse } from '@/lib/ai-engines';
 import EngineResultPanel from '@/components/ai-visibility/EngineResultPanel';
@@ -25,8 +26,11 @@ export default function AIOverview() {
   const [activeTab, setActiveTab] = usePersistentState<AIEngine>('ai-overview:engine', 'google_ai_mode');
   const [keyword, setKeyword] = usePersistentState<string>('ai-overview:keyword', '');
   const [brandDomain, setBrandDomain] = usePersistentState<string>('ai-overview:brand', '');
-  const [location, setLocation] = usePersistentState<string>('ai-overview:location', '2840');
-  const [language, setLanguage] = usePersistentState<string>('ai-overview:language', 'en');
+  // Seed from the account default (Settings > Default Location & Language). The
+  // :v2 keys drop values saved before this, which were mostly the old hardcoded US.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const [location, setLocation] = usePersistentState<string>('ai-overview:location:v2', defaultLocation);
+  const [language, setLanguage] = usePersistentState<string>('ai-overview:language:v2', defaultLanguage);
   const [results, setResults] = usePersistentState<Results>('ai-overview:results', {});
   const [loading, setLoading] = useState<AIEngine | null>(null);
   const { toast } = useToast();

@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Lightbulb } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
+import { intentLabel } from "@/lib/keyword-intent";
+import { toPlannerIntent } from "@/lib/planner-keyword-selection";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchKeywordSuggestions } from "@/lib/dataforseo";
 import { resolveKeywordLocale } from "@/lib/keyword-script";
@@ -61,6 +63,7 @@ export default function KeywordSuggestions() {
         const cleanedResults = data.tasks[0].result[0].items.map((item: any) => ({
           se_type: item.se_type,
           keyword: item.keyword,
+          intent: intentLabel(item.search_intent_info),
           cpc: item.keyword_info?.cpc || 0,
           search_volume: item.keyword_info?.search_volume || 0,
           competition: item.keyword_info?.competition || 0
@@ -187,6 +190,7 @@ export default function KeywordSuggestions() {
         loading={loading}
         metricMode="keyword-research"
         source="keyword-suggestions"
+        getRowIntent={(row) => toPlannerIntent(row.intent)}
         sourceContext={{
           seed_keyword: keyword.trim(),
           location_code: parseInt(location),
