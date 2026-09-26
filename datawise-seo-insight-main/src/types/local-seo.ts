@@ -165,6 +165,18 @@ export interface GeoGridPoint {
   lng: number;
   position: number | null;
   total_results: number;
+  /** Top 3 competitors (the user excluded). Present on all scans. */
+  top_competitors?: GeoGridRankedBusiness[];
+  /** Full local top 20 at this point, the user flagged. Scans from 2026-09-26 on. */
+  top20?: GeoGridRankedBusiness[];
+}
+
+export interface GeoGridRankedBusiness {
+  title: string;
+  rating: number | null;
+  reviews: number | null;
+  position: number;
+  is_you?: boolean;
 }
 
 export interface GeoGridSummary {

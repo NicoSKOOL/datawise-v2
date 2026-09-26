@@ -71,6 +71,8 @@ import {
   type ReferringDomainItem,
 } from '@/lib/backlinks';
 import { useDefaults } from '@/hooks/use-defaults';
+import { CsvExportButton } from '@/components/export/CsvExportButton';
+import { rowsToCsv, csvFilename, BACKLINK_CSV_COLUMNS, REFERRING_DOMAIN_CSV_COLUMNS } from '@/lib/table-csv';
 import { Link as RouterLink } from 'react-router-dom';
 
 function fmt(n: number | undefined | null): string {
@@ -569,6 +571,27 @@ function BacklinksListTab({ target }: { target: string }) {
                 <SelectItem value="nofollow">Nofollow only</SelectItem>
               </SelectContent>
             </Select>
+            <CsvExportButton
+              disabled={isLoading || rawItems.length === 0}
+              build={async () => {
+                // The table shows the top 100; the file gets up to 1,000 with the same filters.
+                const res = await fetchBacklinksList({
+                  target,
+                  limit: 1000,
+                  mode,
+                  filters,
+                  order_by: ['domain_from_rank,desc'],
+                  backlinks_status_type: 'live',
+                  include_subdomains: true,
+                });
+                const rows = res.items || [];
+                return {
+                  filename: csvFilename(target, 'backlinks', mode === 'one_per_domain' ? 'one-per-domain' : null, dofollow !== 'all' ? dofollow : null),
+                  csv: rowsToCsv(BACKLINK_CSV_COLUMNS, rows),
+                  rows: rows.length,
+                };
+              }}
+            />
           </div>
         </div>
       </CardHeader>
@@ -797,12 +820,34 @@ function ReferringDomainsTab({ target }: { target: string }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Referring domains</CardTitle>
-        <CardDescription>
-          {data?.total_count
-            ? `${fmt(items.length)} of ${fmt(data.total_count)} unique domains linking to you. Click any column header to sort.`
-            : 'Unique domains linking to you.'}
-        </CardDescription>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <CardTitle className="text-base">Referring domains</CardTitle>
+            <CardDescription>
+              {data?.total_count
+                ? `${fmt(items.length)} of ${fmt(data.total_count)} unique domains linking to you. Click any column header to sort.`
+                : 'Unique domains linking to you.'}
+            </CardDescription>
+          </div>
+          <CsvExportButton
+            disabled={isLoading || rawItems.length === 0}
+            build={async () => {
+              // The table shows the top 100; the file gets up to 1,000.
+              const res = await fetchReferringDomains({
+                target,
+                limit: 1000,
+                order_by: ['rank,desc'],
+                include_subdomains: true,
+              });
+              const rows = res.items || [];
+              return {
+                filename: csvFilename(target, 'referring-domains'),
+                csv: rowsToCsv(REFERRING_DOMAIN_CSV_COLUMNS, rows),
+                rows: rows.length,
+              };
+            }}
+          />
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (

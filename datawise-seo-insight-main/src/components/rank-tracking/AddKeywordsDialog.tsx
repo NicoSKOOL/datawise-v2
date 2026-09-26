@@ -8,10 +8,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import { locationOptions, languageOptions } from '@/lib/dataForSeoLocations';
 import { useDefaults } from '@/hooks/use-defaults';
 
+export type TrackDevice = 'desktop' | 'mobile';
+
+// 'both' adds every keyword twice, once per device (feature requests 7c9f7911, 786e0e26).
+type DeviceChoice = TrackDevice | 'both';
+
+export function devicesFor(choice: DeviceChoice): TrackDevice[] {
+  return choice === 'both' ? ['desktop', 'mobile'] : [choice];
+}
+
 interface AddKeywordsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdd: (keywords: string[], locationCode: number, languageCode: string, device: 'desktop' | 'mobile') => Promise<void>;
+  onAdd: (keywords: string[], locationCode: number, languageCode: string, devices: TrackDevice[]) => Promise<void>;
   /** The project these keywords are added to. Its locale wins over the account default. */
   projectLocationCode?: number | null;
   projectLanguageCode?: string | null;
@@ -30,7 +39,7 @@ export default function AddKeywordsDialog({
   const [keywordInput, setKeywordInput] = useState('');
   const [location, setLocation] = useState(initialLocation);
   const [language, setLanguage] = useState(initialLanguage);
-  const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
+  const [device, setDevice] = useState<DeviceChoice>('desktop');
   const [adding, setAdding] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -72,7 +81,7 @@ export default function AddKeywordsDialog({
     if (keywordList.length === 0) return;
     setAdding(true);
     try {
-      await onAdd(keywordList, parseInt(location, 10), language, device);
+      await onAdd(keywordList, parseInt(location, 10), language, devicesFor(device));
       setKeywordInput('');
     } finally {
       setAdding(false);
@@ -140,15 +149,18 @@ export default function AddKeywordsDialog({
           </div>
           <div>
             <Label>Device</Label>
-            <Select value={device} onValueChange={(value) => setDevice(value === 'mobile' ? 'mobile' : 'desktop')}>
+            <Select value={device} onValueChange={(value) => setDevice(value as DeviceChoice)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent className="bg-popover border z-50">
                 <SelectItem value="desktop">Desktop</SelectItem>
                 <SelectItem value="mobile">Mobile</SelectItem>
+                <SelectItem value="both">Desktop + Mobile</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground mt-1">
-              Positions are checked on this device's Google results. Add the same keyword twice to track both.
+              {device === 'both'
+                ? 'Each keyword is tracked twice, once on desktop and once on mobile. Each counts as a tracked keyword.'
+                : "Positions are checked on this device's Google results."}
             </p>
           </div>
         </div>
