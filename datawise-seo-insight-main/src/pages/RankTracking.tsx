@@ -18,6 +18,8 @@ import {
   getGSCData, syncGSCProperty, getGSCQueries, getGSCPageQueries,
   type GSCOverviewData, type GSCQueryFilter, type GSCQuerySort, type GSCResultRow,
 } from '@/lib/gsc';
+import { CsvExportButton } from '@/components/export/CsvExportButton';
+import { rowsToCsv, csvFilename, gscRowColumns, type GscCsvRow } from '@/lib/table-csv';
 import {
   fetchLocalProjects, createLocalProject, deleteLocalProject,
   fetchLocalKeywords, addLocalKeywords, checkLocalRankings, fetchLocalReport,
@@ -31,7 +33,7 @@ import type { Project, TrackedKeyword, HistoryEntry, ProjectReport } from '@/typ
 import type { LocalProject, LocalTrackedKeyword, LocalProjectReport, GBPProfile } from '@/types/local-seo';
 import ProjectDetailHeader from '@/components/rank-tracking/ProjectDetailHeader';
 import ProjectLocaleDialog from '@/components/rank-tracking/ProjectLocaleDialog';
-import AddKeywordsDialog from '@/components/rank-tracking/AddKeywordsDialog';
+import AddKeywordsDialog, { type TrackDevice } from '@/components/rank-tracking/AddKeywordsDialog';
 import ProjectStatsCards from '@/components/rank-tracking/ProjectStatsCards';
 import KeywordTable from '@/components/rank-tracking/KeywordTable';
 import KeywordHistoryDialog from '@/components/rank-tracking/KeywordHistoryDialog';
@@ -313,17 +315,27 @@ export default function RankTracking() {
     }
   };
 
-  const handleAddKeywords = async (keywordList: string[], locationCode: number, languageCode: string, device: 'desktop' | 'mobile') => {
+  const handleAddKeywords = async (keywordList: string[], locationCode: number, languageCode: string, devices: TrackDevice[]) => {
     if (!selectedProject) return;
     try {
-      const result = await addProjectKeywords(selectedProject.id, {
-        keywords: keywordList,
-        location_code: locationCode,
-        language_code: languageCode,
-        device,
-      }) as { added: number; skipped: number };
+      let added = 0;
+      let skipped = 0;
+      // One request per device; the Worker dedupes per keyword + device.
+      for (const device of devices) {
+        const result = await addProjectKeywords(selectedProject.id, {
+          keywords: keywordList,
+          location_code: locationCode,
+          language_code: languageCode,
+          device,
+        }) as { added: number; skipped: number };
+        added += result.added;
+        skipped += result.skipped;
+      }
 
-      toast({ title: 'Keywords added', description: `Added ${result.added}, skipped ${result.skipped} duplicates` });
+      toast({
+        title: 'Keywords added',
+        description: `Added ${added}${devices.length > 1 ? ' (desktop + mobile)' : ''}, skipped ${skipped} duplicates`,
+      });
       setAddKeywordsOpen(false);
       loadKeywords(selectedProject.id);
       loadProjects();
@@ -1081,6 +1093,31 @@ export default function RankTracking() {
                               }}
                             />
                           </div>
+                        )}
+                        {selectedCard && selectedPropertyId && (
+                          <CsvExportButton
+                            disabled={loadingFiltered || filteredRows.length === 0}
+                            build={async () => {
+                              // Page through the whole filtered list (Page 2 export,
+                              // feature request 545e93e7), capped at 2,000 rows.
+                              const rows: GscCsvRow[] = [];
+                              let mode: 'queries' | 'pages' = filteredMode === 'pages' ? 'pages' : 'queries';
+                              for (let offset = 0; offset < 2000; offset += 500) {
+                                const page = await getGSCQueries(
+                                  selectedPropertyId, selectedCard, debouncedSearch,
+                                  querySort.column, querySort.order, 500, offset,
+                                );
+                                mode = page.mode;
+                                rows.push(...page.rows);
+                                if (page.rows.length < 500 || rows.length >= page.total) break;
+                              }
+                              return {
+                                filename: csvFilename(primaryDomain, 'gsc', selectedCard === 'page2' ? 'page-2-opportunities' : selectedCard),
+                                csv: rowsToCsv(gscRowColumns(mode), rows),
+                                rows: rows.length,
+                              };
+                            }}
+                          />
                         )}
                       </div>
                     </div>

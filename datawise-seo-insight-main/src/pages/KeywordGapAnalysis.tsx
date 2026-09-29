@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useDefaults } from "@/hooks/use-defaults";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -42,8 +43,11 @@ interface ProcessedKeywordData extends KeywordData {
 const KeywordGapAnalysis = () => {
   const [myDomain, setMyDomain] = usePersistentState<string>("competitor:gap:myDomain", "");
   const [competitorDomain, setCompetitorDomain] = usePersistentState<string>("competitor:gap:competitorDomain", "");
-  const [location, setLocation] = usePersistentState<string>("competitor:gap:location", "2840");
-  const [language, setLanguage] = usePersistentState<string>("competitor:gap:language", "en");
+  // Seed from the account default (Settings > Default Location & Language). The
+  // :v2 keys drop values saved before this, which were mostly the old hardcoded US.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const [location, setLocation] = usePersistentState<string>("competitor:gap:location:v2", defaultLocation);
+  const [language, setLanguage] = usePersistentState<string>("competitor:gap:language:v2", defaultLanguage);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = usePersistentState<any>("competitor:gap:results", null);
   const [activeTab, setActiveTab] = useState("gaps");

@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Search } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { KeywordPlannerDataTable } from "@/components/planner/KeywordPlannerDataTable";
+import { intentLabel } from "@/lib/keyword-intent";
+import { toPlannerIntent } from "@/lib/planner-keyword-selection";
 import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { fetchRelatedKeywords } from "@/lib/dataforseo";
 import { resolveKeywordLocale } from "@/lib/keyword-script";
@@ -66,6 +68,7 @@ export default function RelatedKeywords() {
 
           return {
             keyword: keywordData.keyword || '-',
+            intent: intentLabel(keywordData.search_intent_info),
             search_volume: keywordInfo.search_volume || 0,
             competition: keywordInfo.competition || 0,
             cpc: keywordInfo.cpc || 0,
@@ -197,6 +200,7 @@ export default function RelatedKeywords() {
         loading={loading}
         metricMode="keyword-research"
         source="related-keywords"
+        getRowIntent={(row) => toPlannerIntent(row.intent)}
         sourceContext={{
           seed_keyword: keyword.trim(),
           location_code: parseInt(location),

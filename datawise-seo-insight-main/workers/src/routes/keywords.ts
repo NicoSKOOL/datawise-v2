@@ -53,6 +53,7 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
     competition: item.keyword_data?.keyword_info?.competition || 0,
     cpc: item.keyword_data?.keyword_info?.cpc || 0,
     competition_level: item.keyword_data?.keyword_info?.competition_level || 'UNKNOWN',
+    search_intent_info: item.keyword_data?.search_intent_info ?? null,
   }));
 
   addKeywords(ideasData?.tasks?.[0]?.result?.[0]?.items, (item) => ({
@@ -61,6 +62,7 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
     competition: item.keyword_info?.competition || 0,
     cpc: item.keyword_info?.cpc || 0,
     competition_level: item.keyword_info?.competition_level || 'UNKNOWN',
+    search_intent_info: item.search_intent_info ?? null,
   }));
 
   allKeywords.sort((a, b) => b.search_volume - a.search_volume);
@@ -79,6 +81,7 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
               cpc: kw.cpc,
               competition_level: kw.competition_level,
             },
+            search_intent_info: kw.search_intent_info,
           },
         })),
         total_count: finalKeywords.length,

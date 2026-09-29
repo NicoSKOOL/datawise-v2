@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import type { GeoGridPoint } from '@/types/local-seo';
+import { geogridPointPopupHtml } from '@/lib/geogrid-popup';
 
 function getColor(position: number | null): string {
   if (position == null) return '#6b7280';
@@ -85,17 +86,11 @@ export default function GeoGridMap({ center, points, businessName }: GeoGridMapP
       // A grid point returning fewer than the requested 20 results means
       // Google's complete local list for that spot came back and the business
       // is not in it (proximity cutoff), so say that outright instead of
-      // hedging with "below #20" (bug 0ae96199: a #1-everywhere business
-      // cliffs straight to grey and it reads as broken).
-      const tooltip = point.position != null
-        ? `Position: #${point.position}<br>Results at this point: ${point.total_results}`
-        : point.total_results < 20
-          ? `Not shown by Google at this point<br>Google's local results here don't include this business (too far from it)<br>Results at this point: ${point.total_results}`
-          : `Not in the top 20 here<br>Ranked below #20, or not shown by Google at this point<br>Results at this point: ${point.total_results}`;
-
+      // hedging with "below #20" (bug 0ae96199). The popup also lists who
+      // ranks at that point (feature request fa53b468).
       L.marker([point.lat, point.lng], { icon })
         .addTo(map)
-        .bindPopup(tooltip);
+        .bindPopup(geogridPointPopupHtml(point), { maxWidth: 340 });
     }
 
     // Fit bounds to include all points. The container is often not at its

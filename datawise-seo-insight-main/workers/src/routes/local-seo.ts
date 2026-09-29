@@ -9,6 +9,7 @@ const LOCAL_KEYWORDS_TTL_SECONDS = 86400;
 const LOCAL_GBP_TTL_SECONDS = 3600;
 import { getLLMProvider, type ChatMessage, type UserLLMConfig } from '../llm/provider';
 import { chatCompleteEscalating } from '../llm/length-escalation';
+import { stripDashes } from '../llm/strip-dashes';
 import {
   zoomForRadius, aggregateGeogridCompetitors, buildSnapshot, shouldWriteSnapshot,
   ratingDistributionFallback, computeReviewsHash, validateReviewThemes,
@@ -67,6 +68,14 @@ async function loadLatestReviewFacts(env: Env, projectId: string): Promise<{ rat
     'SELECT rating, reviews_count FROM local_review_snapshots WHERE project_id = ? ORDER BY created_at DESC LIMIT 1'
   ).bind(projectId).first() as any;
   return { rating: row?.rating ?? null, reviews: row?.reviews_count ?? null };
+}
+
+export interface GeoGridRankedBusiness {
+  title: string;
+  rating: number | null;
+  reviews: number | null;
+  position: number;
+  is_you?: boolean;
 }
 
 function findLocalPackPosition(items: any[], project: LocalProject) {
@@ -883,7 +892,7 @@ export async function handleReviewThemes(request: Request, env: Env, userId: str
       try { cachedThemes = JSON.parse(cachedRow.themes); } catch { /* corrupt cache row: regenerate */ }
       if (cachedThemes) {
         return json({
-          summary: cachedRow.summary,
+          summary: stripDashes(cachedRow.summary || ''),
           themes: cachedThemes,
           generated_at: cachedRow.created_at,
           cached: true,
@@ -1514,6 +1523,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
     position: number | null;
     total_results: number;
     top_competitors: Array<{ title: string; rating: number | null; reviews: number | null; position: number }>;
+    top20: GeoGridRankedBusiness[];
   }> = [];
 
   // The user's own rating/reviews, read off any point where the scan found them
@@ -1551,6 +1561,17 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
           position: it.rank_absolute ?? it.rank_group ?? 0,
         }));
 
+      // Everyone ranking at this point, the user included, so a click on a
+      // grid point can show the full local top 20 (feature request fa53b468).
+      // top_competitors stays at 3 because the competitor table aggregates it.
+      const top20: GeoGridRankedBusiness[] = mapsItems.slice(0, 20).map((it: any) => ({
+        title: it.title || '',
+        rating: it.rating?.value ?? null,
+        reviews: it.rating?.votes_count ?? null,
+        position: it.rank_absolute ?? it.rank_group ?? 0,
+        ...(it === match ? { is_you: true } : {}),
+      }));
+
       if (match && ownStats.rating == null && match.rating?.value != null) {
         ownStats.rating = match.rating.value;
         ownStats.reviews = match.rating?.votes_count ?? null;
@@ -1564,6 +1585,7 @@ export async function handleGeoGridScan(request: Request, env: Env, userId: stri
         position: match ? (match.rank_absolute ?? match.rank_group ?? null) : null,
         total_results: mapsItems.length,
         top_competitors,
+        top20,
       };
     });
 

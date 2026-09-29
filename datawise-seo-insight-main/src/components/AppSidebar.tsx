@@ -22,12 +22,16 @@ import {
   Plus,
   Trash2,
   Loader2,
+  Check,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProperty } from '@/contexts/PropertyContext';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import {
   Sidebar,
   SidebarContent,
@@ -237,6 +241,7 @@ export function AppSidebar() {
   const { user, signOut, isAdmin } = useAuth();
   const { properties, selectedPropertyId, setSelectedPropertyId, removeProperty, selectedProperty } = useProperty();
   const [addWebsiteOpen, setAddWebsiteOpen] = useState(false);
+  const [siteMenuOpen, setSiteMenuOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<GSCProperty | null>(null);
   const [deleting, setDeleting] = useState(false);
   const { toast } = useToast();
@@ -279,102 +284,110 @@ export function AppSidebar() {
         {/* Property Selector */}
         <div className="px-4 pb-3 space-y-2">
           {properties.filter((p) => p.is_enabled !== 0).length > 0 && (
-            <Select value={selectedPropertyId} onValueChange={setSelectedPropertyId}>
-              <SelectTrigger className="h-9 text-sm">
-                {/* Custom trigger content — bypasses SelectValue so the dropdown's
-                    inline trash icon doesn't leak into the closed-state display. */}
-                <span className="flex items-center gap-2 min-w-0">
-                  {selectedProperty ? (
-                    <>
-                      <span
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: selectedProperty.color || '#9ca3af' }}
-                      />
-                      <span className="truncate">{cleanDomain(selectedProperty.site_url)}</span>
-                      {selectedProperty.kind === 'manual' && (
+            // Popover + Command instead of Select so the list can be searched;
+            // users with many sites asked for it (feature request abf9b69f).
+            <Popover open={siteMenuOpen} onOpenChange={setSiteMenuOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  role="combobox"
+                  aria-expanded={siteMenuOpen}
+                  aria-label="Select website"
+                  className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    {selectedProperty ? (
+                      <>
                         <span
-                          title="Manually added (not connected to GSC)"
-                          className="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded bg-muted text-muted-foreground border flex-shrink-0"
-                        >
-                          M
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-muted-foreground">Select website</span>
-                  )}
-                </span>
-              </SelectTrigger>
-              <SelectContent>
-                {properties
-                  .filter((prop) => prop.is_enabled !== 0)
-                  .sort((a, b) => cleanDomain(a.site_url).localeCompare(cleanDomain(b.site_url)))
-                  .map((prop) => (
-                  <SelectItem key={prop.id} value={prop.id}>
-                    <span className="flex items-center gap-2 w-full">
-                      <span
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: prop.color || '#9ca3af' }}
-                      />
-                      <span className="truncate">{cleanDomain(prop.site_url)}</span>
-                      {prop.kind === 'manual' && (
-                        <>
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: selectedProperty.color || '#9ca3af' }}
+                        />
+                        <span className="truncate">{cleanDomain(selectedProperty.site_url)}</span>
+                        {selectedProperty.kind === 'manual' && (
                           <span
                             title="Manually added (not connected to GSC)"
-                            className="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded bg-muted text-muted-foreground border flex-shrink-0 ml-auto"
+                            className="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded bg-muted text-muted-foreground border flex-shrink-0"
                           >
                             M
                           </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">Select website</span>
+                    )}
+                  </span>
+                  <ChevronsUpDown className="h-4 w-4 opacity-50 flex-shrink-0" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[220px] p-0" align="start">
+                <Command
+                  filter={(_value, search, keywords) =>
+                    (keywords ?? []).join(' ').toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0
+                  }
+                >
+                  <CommandInput placeholder="Search sites..." className="h-9" />
+                  <CommandList className="max-h-[320px]">
+                    <CommandEmpty>No site matches.</CommandEmpty>
+                    {properties
+                      .filter((prop) => prop.is_enabled !== 0)
+                      .sort((a, b) => cleanDomain(a.site_url).localeCompare(cleanDomain(b.site_url)))
+                      .map((prop) => (
+                      <CommandItem
+                        key={prop.id}
+                        value={prop.id}
+                        keywords={[cleanDomain(prop.site_url)]}
+                        onSelect={() => {
+                          setSelectedPropertyId(prop.id);
+                          setSiteMenuOpen(false);
+                        }}
+                      >
+                        <span className="flex items-center gap-2 w-full min-w-0">
+                          <Check
+                            className={cn('h-3.5 w-3.5 flex-shrink-0', prop.id === selectedPropertyId ? 'opacity-100' : 'opacity-0')}
+                          />
                           <span
-                            role="button"
-                            aria-label={`Remove ${cleanDomain(prop.site_url)}`}
-                            tabIndex={0}
-                            className="inline-flex items-center justify-center h-5 w-5 rounded text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors flex-shrink-0"
-                            // Radix Select.Item activates on pointerUp; we have to suppress
-                            // every event it listens on or the click also selects the property.
-                            onPointerDown={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              e.nativeEvent.stopImmediatePropagation();
-                            }}
-                            onPointerUp={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                              e.nativeEvent.stopImmediatePropagation();
-                              setConfirmDelete(prop);
-                            }}
-                            onMouseDown={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              e.preventDefault();
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.stopPropagation();
-                                e.preventDefault();
-                                setConfirmDelete(prop);
-                              }
-                            }}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </span>
-                        </>
-                      )}
-                    </span>
-                  </SelectItem>
-                ))}
-                {/* The M badge's hover tooltip is undiscoverable; new users
-                    asked what "the green dot and M" mean (bug ad5f9478). */}
-                {properties.some((p) => p.is_enabled !== 0 && p.kind === 'manual') && (
-                  <div className="border-t mt-1 px-2 py-1.5 text-[10px] leading-snug text-muted-foreground">
-                    M = site added manually (no Search Console data). Dot = the site's color in charts.
-                  </div>
-                )}
-              </SelectContent>
-            </Select>
+                            className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: prop.color || '#9ca3af' }}
+                          />
+                          <span className="truncate">{cleanDomain(prop.site_url)}</span>
+                          {prop.kind === 'manual' && (
+                            <>
+                              <span
+                                title="Manually added (not connected to GSC)"
+                                className="inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold rounded bg-muted text-muted-foreground border flex-shrink-0 ml-auto"
+                              >
+                                M
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Remove ${cleanDomain(prop.site_url)}`}
+                                className="inline-flex items-center justify-center h-5 w-5 rounded text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors flex-shrink-0"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  setSiteMenuOpen(false);
+                                  setConfirmDelete(prop);
+                                }}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </>
+                          )}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandList>
+                  {/* The M badge's hover tooltip is undiscoverable; new users
+                      asked what "the green dot and M" mean (bug ad5f9478). */}
+                  {properties.some((p) => p.is_enabled !== 0 && p.kind === 'manual') && (
+                    <div className="border-t px-2 py-1.5 text-[10px] leading-snug text-muted-foreground">
+                      M = site added manually (no Search Console data). Dot = the site's color in charts.
+                    </div>
+                  )}
+                </Command>
+              </PopoverContent>
+            </Popover>
           )}
           <Button
             type="button"

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useDefaults } from "@/hooks/use-defaults";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,8 +14,11 @@ import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 
 export default function CompetitorsDomain() {
   const [domain, setDomain] = usePersistentState<string>("competitor:competitors:domain", "");
-  const [location, setLocation] = usePersistentState<string>("competitor:competitors:location", "2840");
-  const [language, setLanguage] = usePersistentState<string>("competitor:competitors:language", "en");
+  // Seed from the account default (Settings > Default Location & Language). The
+  // :v2 keys drop values saved before this, which were mostly the old hardcoded US.
+  const { defaultLocation, defaultLanguage } = useDefaults();
+  const [location, setLocation] = usePersistentState<string>("competitor:competitors:location:v2", defaultLocation);
+  const [language, setLanguage] = usePersistentState<string>("competitor:competitors:language:v2", defaultLanguage);
   const [loading, setLoading] = useState(false);
   const [results, setResults] = usePersistentState<any[]>("competitor:competitors:results", []);
   const [metrics, setMetrics] = usePersistentState<any>("competitor:competitors:metrics", null);

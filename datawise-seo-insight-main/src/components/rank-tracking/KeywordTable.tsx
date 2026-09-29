@@ -34,6 +34,8 @@ interface KeywordTableProps {
 
 export default function KeywordTable({ keywords, loading, onViewHistory, onDelete, onAddKeywords }: KeywordTableProps) {
   const [page, setPage] = useState(0);
+  // Desktop / Mobile tabs, shown only when the project tracks both (feature request 786e0e26).
+  const [deviceFilter, setDeviceFilter] = useState<'all' | 'desktop' | 'mobile'>('all');
 
   if (loading) {
     return (
@@ -66,13 +68,43 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
     );
   }
 
-  const totalPages = Math.ceil(keywords.length / PAGE_SIZE);
+  const mobileCount = keywords.filter((k) => k.device === 'mobile').length;
+  const desktopCount = keywords.length - mobileCount;
+  const hasBothDevices = mobileCount > 0 && desktopCount > 0;
+  const activeFilter = hasBothDevices ? deviceFilter : 'all';
+  const visible = activeFilter === 'all'
+    ? keywords
+    : keywords.filter((k) => (k.device === 'mobile' ? 'mobile' : 'desktop') === activeFilter);
+
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
-  const pageRows = keywords.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const pageRows = visible.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   return (
     <Card>
       <CardContent className="p-0">
+        {hasBothDevices && (
+          <div className="flex items-center gap-1 border-b px-4 py-2" role="tablist" aria-label="Filter by device">
+            {([
+              { key: 'all', label: `All (${keywords.length})`, icon: null },
+              { key: 'desktop', label: `Desktop (${desktopCount})`, icon: Monitor },
+              { key: 'mobile', label: `Mobile (${mobileCount})`, icon: Smartphone },
+            ] as const).map(({ key, label, icon: Icon }) => (
+              <Button
+                key={key}
+                role="tab"
+                aria-selected={activeFilter === key}
+                variant={activeFilter === key ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                onClick={() => { setDeviceFilter(key); setPage(0); }}
+              >
+                {Icon && <Icon className="h-3.5 w-3.5" />}
+                {label}
+              </Button>
+            ))}
+          </div>
+        )}
         <Table>
           <TableHeader>
             <TableRow>
@@ -151,7 +183,7 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t text-sm text-muted-foreground">
             <span>
-              {safePage * PAGE_SIZE + 1}-{Math.min((safePage + 1) * PAGE_SIZE, keywords.length)} of {keywords.length} keywords
+              {safePage * PAGE_SIZE + 1}-{Math.min((safePage + 1) * PAGE_SIZE, visible.length)} of {visible.length} keywords
             </span>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>

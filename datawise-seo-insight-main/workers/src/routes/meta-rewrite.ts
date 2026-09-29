@@ -19,6 +19,7 @@ import {
   TITLE_MIN, TITLE_MAX, META_MIN, META_MAX,
   type IssueType, type PageContext,
 } from '../llm/prompts/meta-rewrite';
+import { stripDashes } from '../llm/strip-dashes';
 import { fetchPageContext } from './meta-checker';
 
 const json = (data: unknown, status = 200) =>
@@ -298,12 +299,12 @@ export async function handleMetaRewrite(request: Request, env: Env): Promise<Res
       continue;
     }
 
-    title = (parsed.title as string).trim();
-    description = (parsed.description as string).trim();
+    title = stripDashes((parsed.title as string).trim(), 'separator');
+    description = stripDashes((parsed.description as string).trim());
     echoedKeyword = typeof parsed.target_keyword === 'string' && parsed.target_keyword.trim()
       ? (parsed.target_keyword as string).trim()
       : targetKeyword;
-    reasoning = typeof parsed.reasoning === 'string' ? (parsed.reasoning as string).trim() : '';
+    reasoning = typeof parsed.reasoning === 'string' ? stripDashes((parsed.reasoning as string).trim()) : '';
 
     // Post-output language check (#2). Meta tags are usually too short for
     // the detector to call with confidence — returns 'unknown' below 30
