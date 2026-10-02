@@ -201,6 +201,9 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
     queryKey: ['internal-link-run', id],
     queryFn: () => getRun(id),
     refetchInterval: (query) => (query.state.data?.run.status === 'running' ? 3000 : false),
+    // Keep polling in a background tab: polls are what advance the run, and
+    // the staging preview Worker has no cron to pick up the slack.
+    refetchIntervalInBackground: true,
   });
   const refresh = (run: InternalLinkRun) => {
     qc.setQueryData(['internal-link-run', id], { run });
