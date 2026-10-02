@@ -29,6 +29,7 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Fan-out Queries surface', 'Fan-out Queries'],
   ['Content Planner surface', 'Content Planner'],
   ['Content Tools surface', 'Content Tools'],
+  ['Internal Links route', '/internal-links'],
   ['AI Visibility Brand Tracker tab', 'Brand Tracker'],
   ['AI Visibility Brand Tracker answer table', 'LLM answers mentioning you'],
   ['Production Worker API URL', EXPECTED_API_URL],
@@ -42,6 +43,7 @@ const REQUIRED_BUNDLE_MARKERS = [
   ['Production MCP worker URL', EXPECTED_MCP_URL],
 ];
 const REQUIRED_SOURCE_MARKERS = [
+  ['App routes Internal Links page', 'src/App.tsx', "import('./pages/InternalLinks')"],
   ['Keyword Research imports People Also Ask', 'src/pages/KeywordResearch.tsx', "import PeopleAlsoAsk from './PeopleAlsoAsk';"],
   ['Keyword Research imports Fan-out Queries', 'src/pages/KeywordResearch.tsx', "import FanOutQueries from './FanOutQueries';"],
   ['Keyword Research tabs stay inline sized', 'src/pages/KeywordResearch.tsx', 'inline-flex h-auto max-w-full flex-wrap justify-start'],

@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { InternalLinksRunner } from './components/internal-links/InternalLinksRunner';
 import { PropertyProvider } from './contexts/PropertyContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from '@/components/Layout';
@@ -36,6 +37,7 @@ const CompetitorAnalysis = lazy(() => import('./pages/CompetitorAnalysis'));
 const AIVisibility = lazy(() => import('./pages/AIVisibility'));
 const RankTracking = lazy(() => import('./pages/RankTracking'));
 const ContentTools = lazy(() => import('./pages/ContentTools'));
+const InternalLinks = lazy(() => import('./pages/InternalLinks'));
 const ContentPlanner = lazy(() => import('./pages/ContentPlanner'));
 const ContentWriter = lazy(() => import('./pages/ContentWriter'));
 const SiteAudit = lazy(() => import('./pages/SiteAudit'));
@@ -156,6 +158,7 @@ const App = () => (
         <DeployRefreshGuard />
         <BrowserRouter>
           <AnalyticsTracker />
+          <InternalLinksRunner />
           <Routes>
             {/* Public routes */}
             <Route path="/auth" element={<Auth />} />
@@ -172,6 +175,7 @@ const App = () => (
             <Route path="/ai-visibility" element={<ProtectedPage><AIVisibility /></ProtectedPage>} />
             <Route path="/rank-tracking" element={<ProtectedPage><RankTracking /></ProtectedPage>} />
             <Route path="/content-tools" element={<ProtectedPage><ContentTools /></ProtectedPage>} />
+            <Route path="/internal-links" element={<ProtectedPage><InternalLinks /></ProtectedPage>} />
             <Route path="/content-planner" element={<ProtectedPage><ContentPlanner /></ProtectedPage>} />
             <Route path="/content-writer" element={<ProtectedPage><ContentWriter /></ProtectedPage>} />
             <Route path="/site-audit" element={<ProtectedPage><SiteAudit /></ProtectedPage>} />
