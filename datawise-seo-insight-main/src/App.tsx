@@ -36,6 +36,7 @@ const CompetitorAnalysis = lazy(() => import('./pages/CompetitorAnalysis'));
 const AIVisibility = lazy(() => import('./pages/AIVisibility'));
 const RankTracking = lazy(() => import('./pages/RankTracking'));
 const ContentTools = lazy(() => import('./pages/ContentTools'));
+const InternalLinks = lazy(() => import('./pages/InternalLinks'));
 const ContentPlanner = lazy(() => import('./pages/ContentPlanner'));
 const ContentWriter = lazy(() => import('./pages/ContentWriter'));
 const SiteAudit = lazy(() => import('./pages/SiteAudit'));
@@ -172,6 +173,7 @@ const App = () => (
             <Route path="/ai-visibility" element={<ProtectedPage><AIVisibility /></ProtectedPage>} />
             <Route path="/rank-tracking" element={<ProtectedPage><RankTracking /></ProtectedPage>} />
             <Route path="/content-tools" element={<ProtectedPage><ContentTools /></ProtectedPage>} />
+            <Route path="/internal-links" element={<ProtectedPage><InternalLinks /></ProtectedPage>} />
             <Route path="/content-planner" element={<ProtectedPage><ContentPlanner /></ProtectedPage>} />
             <Route path="/content-writer" element={<ProtectedPage><ContentWriter /></ProtectedPage>} />
             <Route path="/site-audit" element={<ProtectedPage><SiteAudit /></ProtectedPage>} />

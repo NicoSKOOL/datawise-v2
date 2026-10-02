@@ -53,6 +53,8 @@ import { handleGSCConnect, handleGSCCallback, handleGSCProperties, handleGSCDisc
 import { handleBWTConnect, handleBWTCallback, handleBWTProperties, handleBWTPropertiesRefresh, handleBWTDisconnect } from './bwt/oauth';
 import { handleGSCSync, handleGSCData, handleGSCQueries, handleGSCSitemaps, purgeDormantGSCData, resyncPurgedProperties, purgeLongTailGSCData, handleAdminLongTailPurge } from './gsc/sync';
 import { runGSCSyncSlice } from './gsc/sync-runner';
+import { processInternalLinkRuns } from './internal-links/runner';
+import { handleInternalLinksRequest } from './routes/internal-links';
 import { handleChat, handleListConversations, handleGetConversation, handleDeleteConversation, handleRenameConversation } from './chat/handler';
 import {
   handleRelatedKeywords, handleKeywordSuggestions, handleKeywordIdeas,
@@ -227,6 +229,16 @@ export default {
         }
       } catch (err) {
         console.error('runGSCSyncSlice failed:', err);
+      }
+      // Internal Links backstop: advance runs whose page is closed. Runs
+      // after the GSC slice with a small subrequest budget so it can never
+      // starve the sync (the per-invocation cap is shared). KV key
+      // `internal-links-paused` is the kill switch.
+      try {
+        const n = await processInternalLinkRuns(env, Math.min(tickStart + 4 * 60 * 1000, Date.now() + 60_000));
+        if (n) console.log(`Internal links runs advanced: ${n}`);
+      } catch (err) {
+        console.error('processInternalLinkRuns failed:', err);
       }
       return;
     }
@@ -882,6 +894,12 @@ export default {
           context_length: context?.length || 0,
           context_preview: context?.substring(0, 500) || null,
         }));
+      }
+
+      // --- Internal Links (Jev). BYOK: billed to the member's own OpenRouter
+      // key, so not credit-gated, same as Content Tools. ---
+      if (path === '/api/internal-links/runs' || path.startsWith('/api/internal-links/runs/')) {
+        return addCors(await handleInternalLinksRequest(request, env, ctx, user.id, path, method));
       }
 
       // --- Content Tools ---

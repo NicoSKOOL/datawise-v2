@@ -10,6 +10,7 @@ import {
   FileText,
   ClipboardCheck,
   Link2,
+  Network,
   Map,
   Settings,
   LogOut,
@@ -140,6 +141,11 @@ const mainNavItems: NavItem[] = [
     title: 'Backlinks',
     url: '/backlinks',
     icon: Link2,
+  },
+  {
+    title: 'Internal Links',
+    url: '/internal-links',
+    icon: Network,
   },
   // Content suite: planner → writer → tools mirrors the workflow (plan
   // keywords, write posts, refresh existing pages). Clicking the parent

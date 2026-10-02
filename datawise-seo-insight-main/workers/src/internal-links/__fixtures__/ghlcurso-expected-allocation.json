@@ -1,0 +1,482 @@
+[
+{
+"source_canon": "ghlcurso.com/academia/glosario/",
+"p_i": 12,
+"target_canon": "ghlcurso.com/blog/wait-step-gohighlevel/",
+"action": "apply",
+"final_score": 3.6261,
+"score": 3.6261
+},
+{
+"source_canon": "ghlcurso.com/academia/glosario/",
+"p_i": 18,
+"target_canon": "ghlcurso.com/whatsapp/plantillas/",
+"action": "apply",
+"final_score": 3.6103,
+"score": 3.6103
+},
+{
+"source_canon": "ghlcurso.com/academia/glosario/",
+"p_i": 4,
+"target_canon": "ghlcurso.com/blog/add-remove-tag-gohighlevel/",
+"action": "apply",
+"final_score": 3.4488,
+"score": 3.4488
+},
+{
+"source_canon": "ghlcurso.com/blog/acceso-automatico-grupo-gohighlevel/",
+"p_i": 18,
+"target_canon": "ghlcurso.com/blog/enviar-correos-gohighlevel/",
+"action": "apply",
+"final_score": 3.4357,
+"score": 3.4357
+},
+{
+"source_canon": "ghlcurso.com/academia/como-usar/",
+"p_i": 22,
+"target_canon": "ghlcurso.com/whatsapp/cual-elegir/",
+"action": "review",
+"final_score": 3.4141,
+"score": 3.4141
+},
+{
+"source_canon": "ghlcurso.com/alternativa/kommo/",
+"p_i": 22,
+"target_canon": "ghlcurso.com/whatsapp/coexistence/",
+"action": "apply",
+"final_score": 3.4133,
+"score": 3.4133
+},
+{
+"source_canon": "ghlcurso.com/academia/blog/",
+"p_i": 36,
+"target_canon": "ghlcurso.com/soluciones/sms-marketing/",
+"action": "apply",
+"final_score": 3.4061,
+"score": 3.4061
+},
+{
+"source_canon": "ghlcurso.com/academia/blog/",
+"p_i": 29,
+"target_canon": "ghlcurso.com/integraciones/zapier/",
+"action": "apply",
+"final_score": 3.3789,
+"score": 3.3789
+},
+{
+"source_canon": "ghlcurso.com/blog/10-workflows-mas-usados-gohighlevel/",
+"p_i": 10,
+"target_canon": "ghlcurso.com/integraciones/webhooks/",
+"action": "apply",
+"final_score": 3.3759,
+"score": 3.3759
+},
+{
+"source_canon": "ghlcurso.com/academia/blog/",
+"p_i": 18,
+"target_canon": "ghlcurso.com/soluciones/website-builder/",
+"action": "apply",
+"final_score": 3.3592,
+"score": 3.3592
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/cirujano-plastico/",
+"p_i": 2,
+"target_canon": "ghlcurso.com/whatsapp/qr/",
+"action": "apply",
+"final_score": 3.354,
+"score": 3.354
+},
+{
+"source_canon": "ghlcurso.com/academia/como-funciona/",
+"p_i": 0,
+"target_canon": "ghlcurso.com/soluciones/",
+"action": "apply",
+"final_score": 3.3417,
+"score": 3.3417
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/cliente-medico/",
+"p_i": 6,
+"target_canon": "ghlcurso.com/industrias/agencias/social-media/",
+"action": "apply",
+"final_score": 3.322,
+"score": 3.322
+},
+{
+"source_canon": "ghlcurso.com/blog/acceso-automatico-grupo-gohighlevel/",
+"p_i": 6,
+"target_canon": "ghlcurso.com/blog/crear-productos-cursos-gohighlevel/",
+"action": "review",
+"final_score": 3.2721,
+"score": 3.2721
+},
+{
+"source_canon": "ghlcurso.com/alternativa/kommo/",
+"p_i": 12,
+"target_canon": "ghlcurso.com/alternativa/manychat/",
+"action": "apply",
+"final_score": 3.2686,
+"score": 3.2686
+},
+{
+"source_canon": "ghlcurso.com/academia/como-usar/",
+"p_i": 17,
+"target_canon": "ghlcurso.com/blog/pipeline-opportunities-gohighlevel/",
+"action": "review",
+"final_score": 3.2595,
+"score": 3.2595
+},
+{
+"source_canon": "ghlcurso.com/alternativa/kommo/",
+"p_i": 20,
+"target_canon": "ghlcurso.com/soluciones/pipeline-ventas/",
+"action": "apply",
+"final_score": 3.2577,
+"score": 3.2577
+},
+{
+"source_canon": "ghlcurso.com/blog/acceso-automatico-grupo-gohighlevel/",
+"p_i": 16,
+"target_canon": "ghlcurso.com/blog/allow-re-entry-gohighlevel/",
+"action": "review",
+"final_score": 3.2572,
+"score": 3.2572
+},
+{
+"source_canon": "ghlcurso.com/blog/10-workflows-mas-usados-gohighlevel/",
+"p_i": 8,
+"target_canon": "ghlcurso.com/blog/como-configurar-saas-mode-gohighlevel/",
+"action": "apply",
+"final_score": 3.2427,
+"score": 3.2427
+},
+{
+"source_canon": "ghlcurso.com/alternativa/mailchimp/",
+"p_i": 18,
+"target_canon": "ghlcurso.com/blog/email-builder-gohighlevel/",
+"action": "apply",
+"final_score": 3.2104,
+"score": 3.2104
+},
+{
+"source_canon": "ghlcurso.com/blog/add-remove-tag-gohighlevel/",
+"p_i": 10,
+"target_canon": "ghlcurso.com/blog/10-workflows-mas-usados-gohighlevel/",
+"action": "apply",
+"final_score": 3.2096,
+"score": 3.2096
+},
+{
+"source_canon": "ghlcurso.com/alternativa/kajabi/",
+"p_i": 9,
+"target_canon": "ghlcurso.com/mejor/mejor-plataforma-cursos/",
+"action": "apply",
+"final_score": 3.1999,
+"score": 3.1999
+},
+{
+"source_canon": "ghlcurso.com/academia/que-es-saas/",
+"p_i": 4,
+"target_canon": "ghlcurso.com/industrias/agencias/",
+"action": "apply",
+"final_score": 3.1881,
+"score": 3.1881
+},
+{
+"source_canon": "ghlcurso.com/academia/que-es-saas/",
+"p_i": 10,
+"target_canon": "ghlcurso.com/soluciones/white-label-saas/",
+"action": "review",
+"final_score": 3.18,
+"score": 3.18
+},
+{
+"source_canon": "ghlcurso.com/academia/como-usar/",
+"p_i": 20,
+"target_canon": "ghlcurso.com/soluciones/workflows/",
+"action": "apply",
+"final_score": 3.1315,
+"score": 3.1315
+},
+{
+"source_canon": "ghlcurso.com/alternativa/clickfunnels/",
+"p_i": 20,
+"target_canon": "ghlcurso.com/vs/",
+"action": "apply",
+"final_score": 3.128,
+"score": 3.128
+},
+{
+"source_canon": "ghlcurso.com/alternativa/manychat/",
+"p_i": 21,
+"target_canon": "ghlcurso.com/whatsapp/chatbot/",
+"action": "apply",
+"final_score": 3.1257,
+"score": 3.1257
+},
+{
+"source_canon": "ghlcurso.com/alternativa/hubspot/",
+"p_i": 23,
+"target_canon": "ghlcurso.com/whatsapp/workflows/",
+"action": "apply",
+"final_score": 3.1175,
+"score": 3.1175
+},
+{
+"source_canon": "ghlcurso.com/academia/que-es-saas/",
+"p_i": 8,
+"target_canon": "ghlcurso.com/industrias/agencias/seo/",
+"action": "apply",
+"final_score": 3.114,
+"score": 3.114
+},
+{
+"source_canon": "ghlcurso.com/academia/que-es-gohighlevel/",
+"p_i": 14,
+"target_canon": "ghlcurso.com/academia/curso-gratis/",
+"action": "apply",
+"final_score": 3.1104,
+"score": 3.1104
+},
+{
+"source_canon": "ghlcurso.com/alternativa/mailchimp/",
+"p_i": 5,
+"target_canon": "ghlcurso.com/mejor/mejor-email-marketing/",
+"action": "apply",
+"final_score": 3.0903,
+"score": 3.0903
+},
+{
+"source_canon": "ghlcurso.com/alternativa/clickfunnels/",
+"p_i": 17,
+"target_canon": "ghlcurso.com/vs/kajabi/",
+"action": "apply",
+"final_score": 3.0791,
+"score": 3.0791
+},
+{
+"source_canon": "ghlcurso.com/academia/tutorial-paso-a-paso/",
+"p_i": 13,
+"target_canon": "ghlcurso.com/blog/crear-snapshot-gohighlevel/",
+"action": "review",
+"final_score": 3.0673,
+"score": 3.0673
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/cirujano-plastico/",
+"p_i": 10,
+"target_canon": "ghlcurso.com/integraciones/google-calendar/",
+"action": "review",
+"final_score": 3.0633,
+"score": 3.0633
+},
+{
+"source_canon": "ghlcurso.com/academia/",
+"p_i": 0,
+"target_canon": "ghlcurso.com/gohighlevel-en-espanol/",
+"action": "review",
+"final_score": 3.0404,
+"score": 3.0404
+},
+{
+"source_canon": "ghlcurso.com/alternativa/kajabi/",
+"p_i": 13,
+"target_canon": "ghlcurso.com/soluciones/membership/",
+"action": "apply",
+"final_score": 3.0313,
+"score": 3.0313
+},
+{
+"source_canon": "ghlcurso.com/alternativa/clickfunnels/",
+"p_i": 7,
+"target_canon": "ghlcurso.com/soluciones/funnels/",
+"action": "apply",
+"final_score": 3.0191,
+"score": 3.0191
+},
+{
+"source_canon": "ghlcurso.com/academia/que-es-gohighlevel/",
+"p_i": 16,
+"target_canon": "ghlcurso.com/mejor/",
+"action": "review",
+"final_score": 3.0173,
+"score": 3.0173
+},
+{
+"source_canon": "ghlcurso.com/alternativa/funnel-io/",
+"p_i": 15,
+"target_canon": "ghlcurso.com/alternativa/",
+"action": "apply",
+"final_score": 3.0138,
+"score": 3.0138
+},
+{
+"source_canon": "ghlcurso.com/academia/que-es-gohighlevel/",
+"p_i": 12,
+"target_canon": "ghlcurso.com/comprar-gohighlevel/",
+"action": "apply",
+"final_score": 3.0137,
+"score": 3.0137
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/strongman/",
+"p_i": 3,
+"target_canon": "ghlcurso.com/integraciones/twilio/",
+"action": "review",
+"final_score": 3.0026,
+"score": 3.0026
+},
+{
+"source_canon": "ghlcurso.com/academia/",
+"p_i": 5,
+"target_canon": "ghlcurso.com/afiliados/",
+"action": "apply",
+"final_score": 3.0004,
+"score": 3.0004
+},
+{
+"source_canon": "ghlcurso.com/alternativa/hubspot/",
+"p_i": 9,
+"target_canon": "ghlcurso.com/soluciones/crm/",
+"action": "review",
+"final_score": 2.9865,
+"score": 2.9865
+},
+{
+"source_canon": "ghlcurso.com/academia/curso-gratis/",
+"p_i": 13,
+"target_canon": "ghlcurso.com/instructores/",
+"action": "apply",
+"final_score": 2.9787,
+"score": 2.9787
+},
+{
+"source_canon": "ghlcurso.com/blog/allow-re-entry-gohighlevel/",
+"p_i": 2,
+"target_canon": "ghlcurso.com/blog/go-to-gohighlevel/",
+"action": "review",
+"final_score": 2.9414,
+"score": 2.9414
+},
+{
+"source_canon": "ghlcurso.com/alternativa/wati/",
+"p_i": 10,
+"target_canon": "ghlcurso.com/whatsapp/multi-agente/",
+"action": "apply",
+"final_score": 2.8999,
+"score": 2.8999
+},
+{
+"source_canon": "ghlcurso.com/alternativa/manychat/",
+"p_i": 9,
+"target_canon": "ghlcurso.com/soluciones/conversation-ai/",
+"action": "apply",
+"final_score": 2.8459,
+"score": 2.8459
+},
+{
+"source_canon": "ghlcurso.com/academia/casos-de-exito/",
+"p_i": 4,
+"target_canon": "ghlcurso.com/blog/acceso-automatico-grupo-gohighlevel/",
+"action": "review",
+"final_score": 2.7824,
+"score": 2.7824
+},
+{
+"source_canon": "ghlcurso.com/alternativa/kajabi/",
+"p_i": 4,
+"target_canon": "ghlcurso.com/whatsapp/",
+"action": "review",
+"final_score": 2.7632,
+"score": 2.7632
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/strongman/",
+"p_i": 9,
+"target_canon": "ghlcurso.com/integraciones/webhooks/",
+"action": "apply",
+"final_score": 2.4968,
+"score": 3.3291
+},
+{
+"source_canon": "ghlcurso.com/academia/tutorial-paso-a-paso/",
+"p_i": 17,
+"target_canon": "ghlcurso.com/blog/wait-step-gohighlevel/",
+"action": "apply",
+"final_score": 2.4585,
+"score": 3.278
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/cirujano-plastico/",
+"p_i": 4,
+"target_canon": "ghlcurso.com/blog/10-workflows-mas-usados-gohighlevel/",
+"action": "review",
+"final_score": 2.3554,
+"score": 3.1405
+},
+{
+"source_canon": "ghlcurso.com/academia/tutorial-paso-a-paso/",
+"p_i": 10,
+"target_canon": "ghlcurso.com/soluciones/workflows/",
+"action": "apply",
+"final_score": 2.3447,
+"score": 3.1263
+},
+{
+"source_canon": "ghlcurso.com/blog/add-remove-tag-gohighlevel/",
+"p_i": 2,
+"target_canon": "ghlcurso.com/blog/allow-re-entry-gohighlevel/",
+"action": "review",
+"final_score": 2.3008,
+"score": 3.0677
+},
+{
+"source_canon": "ghlcurso.com/alternativa/hubspot/",
+"p_i": 11,
+"target_canon": "ghlcurso.com/mejor/",
+"action": "review",
+"final_score": 2.2439,
+"score": 2.9918
+},
+{
+"source_canon": "ghlcurso.com/academia/como-funciona/",
+"p_i": 16,
+"target_canon": "ghlcurso.com/soluciones/white-label-saas/",
+"action": "review",
+"final_score": 2.1845,
+"score": 2.9127
+},
+{
+"source_canon": "ghlcurso.com/alternativa/wati/",
+"p_i": 17,
+"target_canon": "ghlcurso.com/blog/add-remove-tag-gohighlevel/",
+"action": "review",
+"final_score": 2.1594,
+"score": 2.8792
+},
+{
+"source_canon": "ghlcurso.com/alternativa/funnel-io/",
+"p_i": 17,
+"target_canon": "ghlcurso.com/industrias/agencias/social-media/",
+"action": "review",
+"final_score": 2.1532,
+"score": 2.8709
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/strongman/",
+"p_i": 7,
+"target_canon": "ghlcurso.com/blog/10-workflows-mas-usados-gohighlevel/",
+"action": "apply",
+"final_score": 1.7494,
+"score": 3.11
+},
+{
+"source_canon": "ghlcurso.com/academia/casos/cliente-medico/",
+"p_i": 4,
+"target_canon": "ghlcurso.com/soluciones/workflows/",
+"action": "review",
+"final_score": 1.4982,
+"score": 2.6635
+}
+]
