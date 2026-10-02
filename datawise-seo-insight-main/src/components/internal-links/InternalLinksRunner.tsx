@@ -41,6 +41,8 @@ export function InternalLinksRunner() {
       const onIt = where.current.pathname === '/internal-links' && where.current.search.includes(run.id);
       if (run.status === 'completed' && !onIt) {
         toast({
+          // The member is busy elsewhere; give them time to notice it.
+          duration: 60_000,
           title: `Internal links ready for ${site}`,
           description: `${run.summary?.links ?? 0} links to review.`,
           action: (
@@ -51,6 +53,7 @@ export function InternalLinksRunner() {
         });
       } else if (run.status === 'failed' && !onIt) {
         toast({
+          duration: 60_000,
           variant: 'destructive',
           title: `Internal links run stopped for ${site}`,
           description: run.error ?? 'Open the run to resume it.',
