@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -12,7 +12,7 @@ import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { getLLMConfig } from '@/lib/chat';
 import {
-  advanceRun, confirmRun, deleteRun, getRun, listRuns, resumeRun, startRun,
+  confirmRun, deleteRun, getRun, listRuns, resumeRun, startRun,
   type InternalLinkRun, type RunStage,
 } from '@/lib/internal-links';
 import { InternalLinksReport } from '@/components/internal-links/InternalLinksReport';
@@ -196,42 +196,15 @@ function Stat({ label, value, strong }: { label: string; value: number; strong?:
 function RunView({ id, onBack }: { id: string; onBack: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  // Cheap status poll for the live progress display.
+  // Cheap status poll for the live progress display. The run itself is
+  // advanced by InternalLinksRunner in the app shell, on any page.
   const q = useQuery({
     queryKey: ['internal-link-run', id],
     queryFn: () => getRun(id),
     refetchInterval: (query) => (query.state.data?.run.status === 'running' ? 3000 : false),
     refetchIntervalInBackground: true,
   });
-  const status = q.data?.run.status;
 
-  // While this page is open it drives the run: each advance call does ~45s of
-  // work on the server. The cron finishes runs whose page was closed.
-  useEffect(() => {
-    if (status !== 'running') return;
-    let stopped = false;
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    (async () => {
-      while (!stopped) {
-        try {
-          const res = await advanceRun(id);
-          if (stopped) return;
-          if (res.run) qc.setQueryData(['internal-link-run', id], { run: res.run });
-          if (!res.run || res.run.status !== 'running') {
-            qc.invalidateQueries({ queryKey: ['internal-link-runs'] });
-            return;
-          }
-          // Another tab or the cron holds the run right now.
-          if (!res.advanced) await sleep(3000);
-        } catch {
-          await sleep(5000);
-        }
-      }
-    })();
-    return () => {
-      stopped = true;
-    };
-  }, [id, status, qc]);
   const refresh = (run: InternalLinkRun) => {
     qc.setQueryData(['internal-link-run', id], { run });
     qc.invalidateQueries({ queryKey: ['internal-link-runs'] });
@@ -305,8 +278,8 @@ function RunView({ id, onBack }: { id: string; onBack: () => void }) {
             <Stages run={run} />
             {run.status === 'running' && (
               <p className="text-xs text-muted-foreground">
-                Spent so far: {usd(run.cost_usd)}. You can leave this page; the run keeps going in the background and
-                finishes faster while this page is open.
+                Spent so far: {usd(run.cost_usd)}. You can keep working anywhere in DataWise while this runs. We'll
+                let you know when the report is ready.
               </p>
             )}
           </CardContent>

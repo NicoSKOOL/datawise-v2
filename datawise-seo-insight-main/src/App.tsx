@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { InternalLinksRunner } from './components/internal-links/InternalLinksRunner';
 import { PropertyProvider } from './contexts/PropertyContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from '@/components/Layout';
@@ -157,6 +158,7 @@ const App = () => (
         <DeployRefreshGuard />
         <BrowserRouter>
           <AnalyticsTracker />
+          <InternalLinksRunner />
           <Routes>
             {/* Public routes */}
             <Route path="/auth" element={<Auth />} />
