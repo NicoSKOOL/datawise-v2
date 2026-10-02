@@ -24,6 +24,7 @@ import { buildReport } from './report';
 import {
   EMBED_BATCH,
   embed,
+  embedBatchSize,
   shortlistBatch,
   sourcePassages,
   targetText,
@@ -225,7 +226,7 @@ async function stepShortlist(env: Env, run: RunRow, progress: RunProgress, b: Bu
   const topSims = (await getRunJson<number[]>(env, run.id, 'top_sims')) ?? [];
   let cursor = run.cursor;
   while (cursor < sources.length && hasTime(b)) {
-    const batch = sources.slice(cursor, cursor + EMBED_BATCH);
+    const batch = sources.slice(cursor, cursor + embedBatchSize(sources.map((x) => x.text), cursor));
     b.subrequests--;
     const vecs = await embed(env.AI, batch.map((s) => s.text));
     const out = shortlistBatch(batch, vecs, pages, targetVecs, cfg);

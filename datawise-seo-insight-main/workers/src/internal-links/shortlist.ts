@@ -8,6 +8,25 @@ import type { Candidate } from './types';
 
 export const EMBED_MODEL = '@cf/baai/bge-m3';
 export const EMBED_BATCH = 50;
+// bge-m3 on Workers AI rejects a request over 60,000 tokens in total
+// (error 3030). A batch is capped by characters too (~3 chars per token
+// worst case), and each text is truncated: the first ~2,000 characters
+// carry the topic, and the similarity is only a shortlist for Jev.
+const EMBED_MAX_CHARS = 90_000;
+const EMBED_TEXT_CHARS = 2_000;
+
+/** How many items from `start` fit in one embedding call. */
+export function embedBatchSize(texts: string[], start: number): number {
+  let chars = 0;
+  let n = 0;
+  while (start + n < texts.length && n < EMBED_BATCH) {
+    const len = Math.min(texts[start + n].length, EMBED_TEXT_CHARS);
+    if (n > 0 && chars + len > EMBED_MAX_CHARS) break;
+    chars += len;
+    n++;
+  }
+  return Math.max(1, n);
+}
 
 export interface CrawledPage extends ParsedPage {
   inbound_links: number;
@@ -62,7 +81,18 @@ function dot(a: number[], b: number[]): number {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function embed(ai: any, texts: string[]): Promise<number[][]> {
-  const res = (await ai.run(EMBED_MODEL, { text: texts })) as { data?: number[][] };
+  const input = texts.map((t) => t.slice(0, EMBED_TEXT_CHARS));
+  let res: { data?: number[][] };
+  try {
+    res = (await ai.run(EMBED_MODEL, { text: input })) as { data?: number[][] };
+  } catch (err) {
+    // Still over the model's context: split the batch and try each half.
+    if (texts.length > 1 && /3030|context/i.test(err instanceof Error ? err.message : String(err))) {
+      const mid = Math.ceil(texts.length / 2);
+      return [...(await embed(ai, texts.slice(0, mid))), ...(await embed(ai, texts.slice(mid)))];
+    }
+    throw err;
+  }
   if (!Array.isArray(res?.data) || res.data.length !== texts.length) {
     throw new Error('Embedding model returned an unexpected response');
   }

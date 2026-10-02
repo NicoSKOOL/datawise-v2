@@ -6,7 +6,10 @@ import { BROWSER_UA, safeFetch } from '../lib/safe-fetch';
 import { detectBotChallenge } from '../routes/content-tools';
 
 const MAX_CHILD_SITEMAPS = 40;
-const MAX_URLS = 5000;
+// A run uses at most a few hundred pages, so stop reading child sitemaps
+// once this many URLs are in hand: big WordPress sites list 20+ child
+// sitemaps and reading them all took over a minute (yoast.com, 2026-10-02).
+const MAX_URLS = 1500;
 // Sitemap entries that are files, not pages.
 const NON_PAGE = /\.(jpe?g|png|gif|webp|avif|svg|pdf|zip|mp4|mp3|xml|txt|css|js|ico|docx?|xlsx?|pptx?)$/i;
 
@@ -38,8 +41,9 @@ async function fetchText(url: string): Promise<string | null> {
   }
 }
 
-function locs(xml: string): string[] {
-  return [...xml.matchAll(/<(?:\w+:)?loc>\s*(?:<!\[CDATA\[)?([^<\]]+?)(?:\]\]>)?\s*<\/(?:\w+:)?loc>/g)].map((m) =>
+export function locs(xml: string): string[] {
+  // Page <loc> only: WordPress sitemaps also list <image:loc> / <video:loc>.
+  return [...xml.matchAll(/<(?!image:|video:)(?:\w+:)?loc>\s*(?:<!\[CDATA\[)?([^<\]]+?)(?:\]\]>)?\s*<\/(?:\w+:)?loc>/g)].map((m) =>
     m[1].trim().replace(/&amp;/g, '&')
   );
 }
