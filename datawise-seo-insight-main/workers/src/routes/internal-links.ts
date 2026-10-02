@@ -189,10 +189,11 @@ export async function handleInternalLinksRequest(
   }
 
   if (action === 'approvals' && method === 'PATCH') {
-    const body = (await request.json().catch(() => ({}))) as { id?: number; value?: 'approved' | 'rejected' | null };
+    const body = (await request.json().catch(() => ({}))) as { id?: number; value?: 'added' | 'approved' | 'rejected' | null };
     if (typeof body.id !== 'number') return json({ error: 'id is required' }, 400);
     const approvals: Record<string, string> = run.approvals_json ? JSON.parse(run.approvals_json) : {};
-    if (body.value === 'approved' || body.value === 'rejected') approvals[body.id] = body.value;
+    // 'added' = the member put this link live on their site.
+    if (body.value === 'added' || body.value === 'approved' || body.value === 'rejected') approvals[body.id] = body.value;
     else delete approvals[body.id];
     await env.DB.prepare('UPDATE internal_link_runs SET approvals_json = ? WHERE id = ?')
       .bind(JSON.stringify(approvals), runId)

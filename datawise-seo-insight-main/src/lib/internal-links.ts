@@ -104,7 +104,8 @@ export interface InternalLinksReport {
   pages: ReportPage[];
 }
 
-export type Approval = 'approved' | 'rejected';
+// 'added' = the member put this link live on their site.
+export type Approval = 'added' | 'approved' | 'rejected';
 
 export const OUTCOME_LABELS: Record<Outcome, string> = {
   linked_apply: 'Linked, high confidence',
