@@ -13,10 +13,12 @@ export interface RunProgress {
   pages_failed?: number;
   sitemap_pages?: number;
   passages?: number;
+  shortlisted?: number;
   candidates?: number;
   judged?: number;
   api_errors?: number;
   allocated?: number;
+  anchors_done?: number;
   anchored?: number;
   tokens?: number;
   jev_model?: string;
@@ -132,6 +134,9 @@ export async function startRun(siteUrl: string): Promise<{ run: InternalLinkRun;
 
 export const listRuns = () => api<{ runs: InternalLinkRun[] }>('/api/internal-links/runs');
 export const getRun = (id: string) => api<{ run: InternalLinkRun }>(`/api/internal-links/runs/${id}`);
+// Does up to ~45s of work on the server, then returns fresh status.
+export const advanceRun = (id: string) =>
+  api<{ run: InternalLinkRun | null; advanced: boolean }>(`/api/internal-links/runs/${id}/advance`, { method: 'POST' });
 export const deleteRun = (id: string) => api(`/api/internal-links/runs/${id}`, { method: 'DELETE' });
 export const confirmRun = (id: string) => api<{ run: InternalLinkRun }>(`/api/internal-links/runs/${id}/confirm`, { method: 'POST' });
 export const resumeRun = (id: string) => api<{ run: InternalLinkRun }>(`/api/internal-links/runs/${id}/resume`, { method: 'POST' });

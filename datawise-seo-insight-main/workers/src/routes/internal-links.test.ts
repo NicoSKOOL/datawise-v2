@@ -140,7 +140,7 @@ describe('Internal Links run, end to end', () => {
     let run = created.body.run;
     for (let i = 0; i < 30 && run.status === 'running'; i++) {
       await drain();
-      run = (await call('GET', `/api/internal-links/runs/${id}`)).body.run;
+      run = (await call('POST', `/api/internal-links/runs/${id}/advance`)).body.run;
     }
     await drain();
     run = (await call('GET', `/api/internal-links/runs/${id}`)).body.run;
@@ -177,7 +177,7 @@ describe('Internal Links run, end to end', () => {
     let run = created.body.run;
     for (let i = 0; i < 10 && run.status === 'running'; i++) {
       await drain();
-      run = (await call('GET', `/api/internal-links/runs/${id}`)).body.run;
+      run = (await call('POST', `/api/internal-links/runs/${id}/advance`)).body.run;
     }
     expect(run.status).toBe('awaiting_confirmation');
     expect(calls.jev).toBe(0);

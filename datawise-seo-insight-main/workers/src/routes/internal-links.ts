@@ -13,9 +13,12 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-// A poll-triggered slice runs after the response, inside the 30s waitUntil window.
+// A kick runs after the response, inside the 30s waitUntil window.
 const POLL_SLICE_MS = 22_000;
 const POLL_SLICE_SUBREQUESTS = 300;
+// An advance request works inline (no waitUntil cap) and returns fresh status.
+const ADVANCE_SLICE_MS = 45_000;
+const ADVANCE_SLICE_SUBREQUESTS = 600;
 const DEFAULT_MAX_COST = 3;
 
 function formatRun(r: RunRow) {
@@ -132,8 +135,16 @@ export async function handleInternalLinksRequest(
   if (!run) return json({ error: 'Run not found' }, 404);
 
   if (!action && method === 'GET') {
-    kick(env, ctx, run);
     return json({ run: formatRun(run) });
+  }
+
+  // The open report page calls this in a loop: one inline slice per call.
+  if (action === 'advance' && method === 'POST') {
+    const advanced =
+      run.status === 'running' &&
+      (await processRun(env, runId, { deadline: Date.now() + ADVANCE_SLICE_MS, subrequests: ADVANCE_SLICE_SUBREQUESTS }));
+    const fresh = await getRun(env, userId, runId);
+    return json({ run: fresh ? formatRun(fresh) : null, advanced });
   }
 
   if (!action && method === 'DELETE') {

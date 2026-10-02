@@ -4,9 +4,12 @@
 // wall-clock deadline plus a subrequest budget, since the per-invocation
 // subrequest cap is the binding Worker limit), saves progress to R2 and
 // releases the lock. Slices run from the status poll (ctx.waitUntil) while
-// the member has the page open, and from the */5 cron so a closed tab still
-// finishes. The staging preview Worker runs no crons, so there a run only
-// advances while the page is open.
+// the member has the page open (it calls POST .../advance in a loop, each
+// doing ~45s of work inline), and from the */5 cron so a closed tab still
+// finishes. Inline beats ctx.waitUntil here: waitUntil work is cut off 30s
+// after the response, which left only a few seconds per slice for Jev
+// batches and could kill a slice before it saved. The staging preview
+// Worker runs no crons, so there a run only advances while the page is open.
 
 import type { Env } from '../index';
 import { allocate } from './allocate';
@@ -63,10 +66,12 @@ export interface RunProgress {
   pages_done?: number;
   pages_failed?: number;
   passages?: number;
+  shortlisted?: number;
   candidates?: number;
   judged?: number;
   api_errors?: number;
   allocated?: number;
+  anchors_done?: number;
   anchored?: number;
   tokens?: number;
   jev_model?: string;
@@ -81,7 +86,7 @@ export const MAX_PAGES = 300;
 const CRAWL_CONCURRENCY = 8;
 // One round of parallel calls per batch, so a batch never outlasts one
 // per-call timeout and a slice can always save before it is cut off.
-const JEV_CONCURRENCY = 16;
+const JEV_CONCURRENCY = 20;
 const ANCHOR_CONCURRENCY = 8;
 // Longer than the longest slice (cron slices run up to 100s).
 const LOCK_SECONDS = 150;
@@ -89,6 +94,9 @@ const LOCK_SECONDS = 150;
 interface Budget {
   deadline: number;
   subrequests: number;
+  // Writes progress_json for the live display after each batch. Display
+  // only: the resume cursor is saved with the stage data at slice end.
+  onProgress?: () => Promise<void>;
 }
 
 function hasTime(b: Budget, reserveMs = 3000): boolean {
@@ -167,6 +175,8 @@ async function stepCrawl(env: Env, run: RunRow, progress: RunProgress, b: Budget
       if (r.blocked) state.blocked++;
     });
     cursor += batch.length;
+    progress.pages_done = cursor;
+    await b.onProgress?.();
   }
   await putRunJson(env, run.id, 'crawl', state);
   progress.pages_total = urls.length;
@@ -222,6 +232,8 @@ async function stepShortlist(env: Env, run: RunRow, progress: RunProgress, b: Bu
     candidates.push(...out.candidates);
     topSims.push(...out.topSims);
     cursor += batch.length;
+    progress.shortlisted = cursor;
+    await b.onProgress?.();
   }
   await putRunJson(env, run.id, 'candidates', candidates);
   await putRunJson(env, run.id, 'top_sims', topSims);
@@ -250,10 +262,10 @@ async function stepScore(env: Env, run: RunRow, progress: RunProgress, b: Budget
   let cursor = run.cursor;
   let cost = 0;
   try {
-    while (cursor < candidates.length && hasTime(b, 17_000)) {
+    while (cursor < candidates.length && hasTime(b, 14_000)) {
       const batch = candidates.slice(cursor, cursor + Math.min(JEV_CONCURRENCY, b.subrequests));
       b.subrequests -= batch.length;
-      const results = await mapLimit(batch, JEV_CONCURRENCY, (c) => callJev(c, apiKey, { timeoutMs: 15_000, deadline: b.deadline - 2000 }));
+      const results = await mapLimit(batch, JEV_CONCURRENCY, (c) => callJev(c, apiKey, { timeoutMs: 12_000, deadline: b.deadline - 2000 }));
       results.forEach((r, i) => {
         judgements[cursor + i] = r.answers ? { answers: r.answers, model: r.model, usage: r.usage } : {};
         cost += r.usage?.cost ?? 0;
@@ -262,6 +274,8 @@ async function stepScore(env: Env, run: RunRow, progress: RunProgress, b: Budget
         if (!r.answers) progress.api_errors = (progress.api_errors ?? 0) + 1;
       });
       cursor += batch.length;
+      progress.judged = cursor;
+      await b.onProgress?.();
     }
   } finally {
     await putRunJson(env, run.id, 'judgements', judgements);
@@ -290,13 +304,13 @@ async function stepAnchors(env: Env, run: RunRow, progress: RunProgress, b: Budg
   let cursor = run.cursor;
   let cost = 0;
   try {
-    while (cursor < chosen.length && hasTime(b, 17_000)) {
+    while (cursor < chosen.length && hasTime(b, 14_000)) {
       const batch = chosen.slice(cursor, cursor + Math.min(ANCHOR_CONCURRENCY, b.subrequests));
       b.subrequests -= batch.length;
       const results = await mapLimit(batch, ANCHOR_CONCURRENCY, (link) => {
         const t = byCanon.get(link.target_canon);
         return writeAnchor(link, t?.description || t?.h1 || link.target_title, apiKey, {
-          timeoutMs: 15_000,
+          timeoutMs: 12_000,
           deadline: b.deadline - 2000,
         });
       });
@@ -305,6 +319,8 @@ async function stepAnchors(env: Env, run: RunRow, progress: RunProgress, b: Budg
         cost += r.cost;
       });
       cursor += batch.length;
+      progress.anchors_done = cursor;
+      await b.onProgress?.();
     }
   } finally {
     await putRunJson(env, run.id, 'anchors', anchors);
@@ -370,10 +386,13 @@ async function claim(env: Env, runId: string): Promise<RunRow | null> {
     .first<RunRow>();
 }
 
-/** Advance one run as far as the budget allows. Never throws. */
-export async function processRun(env: Env, runId: string, budget: Budget): Promise<void> {
+/**
+ * Advance one run as far as the budget allows. Never throws. Returns false
+ * when another slice already holds the run (or it is not running).
+ */
+export async function processRun(env: Env, runId: string, budget: Budget): Promise<boolean> {
   let run = await claim(env, runId);
-  if (!run) return;
+  if (!run) return false;
   const progress: RunProgress = run.progress_json ? JSON.parse(run.progress_json) : {};
   const cfg = await getConfig(env);
 
@@ -384,6 +403,12 @@ export async function processRun(env: Env, runId: string, budget: Budget): Promi
          progress_json = ?, updated_at = datetime('now') WHERE id = ?`
     )
       .bind(...cols.map((c) => fields[c] as string | number | null), JSON.stringify(progress), runId)
+      .run();
+  };
+
+  budget.onProgress = async () => {
+    await env.DB.prepare(`UPDATE internal_link_runs SET progress_json = ?, updated_at = datetime('now') WHERE id = ?`)
+      .bind(JSON.stringify(progress), runId)
       .run();
   };
 
@@ -433,6 +458,7 @@ export async function processRun(env: Env, runId: string, budget: Budget): Promi
   } finally {
     await env.DB.prepare('UPDATE internal_link_runs SET processing_locked_until = NULL WHERE id = ?').bind(runId).run();
   }
+  return true;
 }
 
 /**

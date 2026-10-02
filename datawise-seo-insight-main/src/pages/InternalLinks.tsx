@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -12,7 +12,7 @@ import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { getLLMConfig } from '@/lib/chat';
 import {
-  confirmRun, deleteRun, getRun, listRuns, resumeRun, startRun,
+  advanceRun, confirmRun, deleteRun, getRun, listRuns, resumeRun, startRun,
   type InternalLinkRun, type RunStage,
 } from '@/lib/internal-links';
 import { InternalLinksReport } from '@/components/internal-links/InternalLinksReport';
@@ -196,15 +196,42 @@ function Stat({ label, value, strong }: { label: string; value: number; strong?:
 function RunView({ id, onBack }: { id: string; onBack: () => void }) {
   const { toast } = useToast();
   const qc = useQueryClient();
-  // Each poll also advances the run on the server, so keep it frequent.
+  // Cheap status poll for the live progress display.
   const q = useQuery({
     queryKey: ['internal-link-run', id],
     queryFn: () => getRun(id),
     refetchInterval: (query) => (query.state.data?.run.status === 'running' ? 3000 : false),
-    // Keep polling in a background tab: polls are what advance the run, and
-    // the staging preview Worker has no cron to pick up the slack.
     refetchIntervalInBackground: true,
   });
+  const status = q.data?.run.status;
+
+  // While this page is open it drives the run: each advance call does ~45s of
+  // work on the server. The cron finishes runs whose page was closed.
+  useEffect(() => {
+    if (status !== 'running') return;
+    let stopped = false;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      while (!stopped) {
+        try {
+          const res = await advanceRun(id);
+          if (stopped) return;
+          if (res.run) qc.setQueryData(['internal-link-run', id], { run: res.run });
+          if (!res.run || res.run.status !== 'running') {
+            qc.invalidateQueries({ queryKey: ['internal-link-runs'] });
+            return;
+          }
+          // Another tab or the cron holds the run right now.
+          if (!res.advanced) await sleep(3000);
+        } catch {
+          await sleep(5000);
+        }
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [id, status, qc]);
   const refresh = (run: InternalLinkRun) => {
     qc.setQueryData(['internal-link-run', id], { run });
     qc.invalidateQueries({ queryKey: ['internal-link-runs'] });
@@ -303,7 +330,8 @@ function Stages({ run }: { run: InternalLinkRun }) {
   const p = run.progress;
   const detail = (key: RunStage): [number, number] | null => {
     if (key === 'crawl') return [p.pages_done ?? 0, p.pages_total ?? run.total];
-    if (key === run.stage && run.total > 0) return [run.cursor, run.total];
+    const live = key === 'shortlist' ? p.shortlisted : key === 'score' ? p.judged : key === 'anchors' ? p.anchors_done : undefined;
+    if (key === run.stage && run.total > 0) return [Math.min(Math.max(live ?? 0, run.cursor), run.total), run.total];
     return null;
   };
   const note = (key: RunStage, i: number): string | null => {
