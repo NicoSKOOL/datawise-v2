@@ -7,16 +7,35 @@ import type { Env } from '../index';
 
 const prefix = (runId: string) => `internal-links/${runId}/`;
 
+// R2 occasionally answers with a transient "internal error (10001)"; one of
+// those failed a 300-page run mid-scoring (yoast.com, 2026-10-02). Retry a
+// few times before letting the error fail the run.
+async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= attempts) throw err;
+      await new Promise((r) => setTimeout(r, 500 * i));
+    }
+  }
+}
+
 export async function putRunJson(env: Env, runId: string, name: string, value: unknown): Promise<void> {
-  await env.TASK_ATTACHMENTS.put(`${prefix(runId)}${name}.json`, JSON.stringify(value), {
-    httpMetadata: { contentType: 'application/json' },
-  });
+  const body = JSON.stringify(value);
+  await withRetry(() =>
+    env.TASK_ATTACHMENTS.put(`${prefix(runId)}${name}.json`, body, {
+      httpMetadata: { contentType: 'application/json' },
+    })
+  );
 }
 
 export async function getRunJson<T>(env: Env, runId: string, name: string): Promise<T | null> {
-  const obj = await env.TASK_ATTACHMENTS.get(`${prefix(runId)}${name}.json`);
-  if (!obj) return null;
-  return (await obj.json()) as T;
+  return withRetry(async () => {
+    const obj = await env.TASK_ATTACHMENTS.get(`${prefix(runId)}${name}.json`);
+    if (!obj) return null;
+    return (await obj.json()) as T;
+  });
 }
 
 export async function deleteRunJson(env: Env, runId: string, names: string[]): Promise<void> {
