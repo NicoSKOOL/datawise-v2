@@ -80,9 +80,9 @@ export const JEV_MODEL = '~typesafe/jev-latest';
 export const JEV_DECISIONS_URL = 'https://openrouter.ai/api/alpha/decisions';
 // Measured in the Python tool: ~900 input tokens at $0.042/M per call.
 export const JEV_COST_PER_CALL = 0.00004;
-// Anchor writing cost per allocated link, and the share of calls that end up
-// allocated, both from the Python tool's estimate.
-export const ANCHOR_COST_PER_LINK = 0.0017;
+// Anchor writing cost per allocated link (Sonnet 5 with reasoning off:
+// ~560 prompt tokens + ~20 out), and the share of calls that end up allocated.
+export const ANCHOR_COST_PER_LINK = 0.0013;
 export const ALLOCATED_SHARE = 0.12;
 
 export function estimateRunCost(jevCalls: number): number {

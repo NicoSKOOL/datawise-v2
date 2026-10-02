@@ -27,8 +27,13 @@ export async function writeAnchor(
   const body = JSON.stringify({
     model: ANCHOR_MODEL,
     messages: [{ role: 'user', content: anchorPrompt(link.text, link.target_title, targetDesc || link.target_title) }],
-    max_tokens: 120,
+    max_tokens: 200,
     temperature: 0,
+    // Sonnet 5 reasons adaptively by default and spent the Python tool's
+    // whole 120-token budget on hidden reasoning (finish_reason=length,
+    // empty content): two thirds of anchors came back empty and each call
+    // cost ~5x more. Picking a span needs no reasoning.
+    reasoning: { enabled: false },
   });
   for (let attempt = 0; ; attempt++) {
     let res: Response;
