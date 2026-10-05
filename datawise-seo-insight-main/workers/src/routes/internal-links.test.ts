@@ -171,6 +171,13 @@ describe('Internal Links run, end to end', () => {
     expect(res.body.error).toBe('no_llm_key');
   });
 
+  it('says the site refused us when every request gets a firewall 403', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html><title>403 - Forbidden</title></html>', { status: 403 })));
+    const res = await call('POST', '/api/internal-links/runs', { site_url: 'example.com' });
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain('example.com refused our crawler (HTTP 403)');
+  });
+
   it('pauses for confirmation when the estimate exceeds the cost limit', async () => {
     const created = await call('POST', '/api/internal-links/runs', { site_url: 'example.com', max_cost_usd: 0.0001 });
     const id = created.body.run.id;

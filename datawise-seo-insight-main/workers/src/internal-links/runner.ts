@@ -34,6 +34,7 @@ import {
 } from './shortlist';
 import { deleteRunJson, getRunJson, putRunJson } from './storage';
 import { BROWSER_UA, safeFetch } from '../lib/safe-fetch';
+import { isBlockStatus } from './discover';
 import { detectBotChallenge } from '../routes/content-tools';
 import type { Allocation, Candidate, CapReason, JevResponse, Judgement } from './types';
 
@@ -150,7 +151,7 @@ async function fetchPage(url: string): Promise<{ page?: ParsedPage; error?: stri
       timeoutMs: 12_000,
       maxBytes: 4 * 1024 * 1024,
     });
-    if (res.status !== 200) return { error: `HTTP ${res.status}` };
+    if (res.status !== 200) return { error: `HTTP ${res.status}`, blocked: isBlockStatus(res.status) };
     const type = res.headers.get('content-type') || '';
     if (type && !type.includes('html')) return { error: `Not HTML (${type.split(';')[0]})` };
     const html = await res.text();
@@ -196,7 +197,7 @@ async function stepCrawl(env: Env, run: RunRow, progress: RunProgress, b: Budget
   if (crawled.length < 2 || sources.length === 0) {
     const reason =
       state.blocked > state.pages.length
-        ? 'The site blocked our crawler with an anti-bot challenge, so no page content could be read.'
+        ? 'The site blocked our crawler (a firewall refusal or anti-bot challenge), so no page content could be read.'
         : crawled.length < 2
           ? 'Fewer than 2 pages could be fetched, so there is nothing to link between.'
           : 'No paragraphs long enough to hold a link were found. The site may render its content with JavaScript, which this tool cannot read yet.';

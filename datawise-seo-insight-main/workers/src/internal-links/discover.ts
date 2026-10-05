@@ -18,6 +18,16 @@ export interface SitemapDiscovery {
   sitemapUrl: string | null;
   urls: string[];
   blocked: boolean;
+  // HTTP status the site refused us with (401/403/429), when that was the block.
+  blockedStatus: number | null;
+}
+
+// Statuses a firewall answers with when it refuses the crawler outright.
+// Some hosts block every request from cloud IPs, Cloudflare Workers included,
+// with a plain 403 page that no challenge signal matches
+// (ethicaldogtraining.com.au, 2026-10-05).
+export function isBlockStatus(status: number): boolean {
+  return status === 401 || status === 403 || status === 429;
 }
 
 export function normalizeSiteUrl(raw: string): string {
@@ -27,17 +37,17 @@ export function normalizeSiteUrl(raw: string): string {
   return `${u.protocol}//${u.host}`;
 }
 
-async function fetchText(url: string): Promise<string | null> {
+async function fetchText(url: string): Promise<{ status: number; text: string | null }> {
   try {
     const res = await safeFetch(url, {
       headers: { 'User-Agent': BROWSER_UA, Accept: 'application/xml,text/xml,text/plain,*/*' },
       timeoutMs: 20_000,
       maxBytes: 20 * 1024 * 1024,
     });
-    if (!res.ok) return null;
-    return await res.text();
+    if (!res.ok) return { status: res.status, text: null };
+    return { status: res.status, text: await res.text() };
   } catch {
-    return null;
+    return { status: 0, text: null };
   }
 }
 
@@ -51,9 +61,18 @@ export function locs(xml: string): string[] {
 export async function discoverSitemap(rawSite: string): Promise<SitemapDiscovery> {
   const siteUrl = normalizeSiteUrl(rawSite);
   let blocked = false;
+  let blockedStatus: number | null = null;
   const candidates: string[] = [];
+  const get = async (url: string): Promise<string | null> => {
+    const { status, text } = await fetchText(url);
+    if (isBlockStatus(status)) {
+      blocked = true;
+      blockedStatus ??= status;
+    }
+    return text;
+  };
 
-  const robots = await fetchText(`${siteUrl}/robots.txt`);
+  const robots = await get(`${siteUrl}/robots.txt`);
   if (robots) {
     if (detectBotChallenge(robots)) blocked = true;
     for (const line of robots.split('\n')) {
@@ -64,7 +83,7 @@ export async function discoverSitemap(rawSite: string): Promise<SitemapDiscovery
   candidates.push(`${siteUrl}/sitemap.xml`, `${siteUrl}/sitemap-index.xml`, `${siteUrl}/sitemap_index.xml`, `${siteUrl}/wp-sitemap.xml`);
 
   for (const sitemapUrl of [...new Set(candidates)]) {
-    const xml = await fetchText(sitemapUrl);
+    const xml = await get(sitemapUrl);
     if (!xml) continue;
     if (detectBotChallenge(xml)) {
       blocked = true;
@@ -80,7 +99,7 @@ export async function discoverSitemap(rawSite: string): Promise<SitemapDiscovery
         if (depth >= 3) return;
         for (const child of found) {
           if (childBudget-- <= 0 || urls.length >= MAX_URLS) return;
-          const childXml = await fetchText(child);
+          const childXml = await get(child);
           if (childXml) await walk(childXml, depth + 1);
         }
         return;
@@ -98,7 +117,7 @@ export async function discoverSitemap(rawSite: string): Promise<SitemapDiscovery
         return false;
       }
     });
-    if (pages.length) return { siteUrl, sitemapUrl, urls: pages.slice(0, MAX_URLS), blocked };
+    if (pages.length) return { siteUrl, sitemapUrl, urls: pages.slice(0, MAX_URLS), blocked, blockedStatus };
   }
-  return { siteUrl, sitemapUrl: null, urls: [], blocked };
+  return { siteUrl, sitemapUrl: null, urls: [], blocked, blockedStatus };
 }
