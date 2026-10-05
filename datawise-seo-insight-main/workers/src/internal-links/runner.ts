@@ -13,7 +13,7 @@
 
 import type { Env } from '../index';
 import { allocate } from './allocate';
-import { ANCHOR_MODEL, writeAnchor } from './anchor-writer';
+import { ANCHOR_MODEL, getAnchorModel, writeAnchor } from './anchor-writer';
 import { withAnchor, type LinkWithAnchor } from './anchors';
 import { buildDecisionRows } from './classify';
 import { DEFAULT_CONFIG, JEV_MODEL, estimateRunCost, type InternalLinksConfig } from './config';
@@ -77,6 +77,7 @@ export interface RunProgress {
   anchored?: number;
   tokens?: number;
   jev_model?: string;
+  anchor_model?: string;
   // Distribution of each paragraph's best similarity, for tuning the
   // shortlist threshold to bge-m3.
   top_sim_p10?: number;
@@ -303,6 +304,9 @@ async function stepAnchors(env: Env, run: RunRow, progress: RunProgress, b: Budg
   const pages = (await getRunJson<CrawledPage[]>(env, run.id, 'pages'))!;
   const byCanon = new Map(pages.map((p) => [p.canon, p]));
   const anchors = (await getRunJson<Array<string | null>>(env, run.id, 'anchors')) ?? [];
+  // Fixed for the whole run, so a KV change mid-run cannot mix writers.
+  progress.anchor_model ??= await getAnchorModel(env);
+  const model = progress.anchor_model;
   let cursor = run.cursor;
   let cost = 0;
   try {
@@ -312,6 +316,7 @@ async function stepAnchors(env: Env, run: RunRow, progress: RunProgress, b: Budg
       const results = await mapLimit(batch, ANCHOR_CONCURRENCY, (link) => {
         const t = byCanon.get(link.target_canon);
         return writeAnchor(link, t?.description || t?.h1 || link.target_title, apiKey, {
+          model,
           timeoutMs: 12_000,
           deadline: b.deadline - 2000,
         });
@@ -357,7 +362,7 @@ async function stepReport(env: Env, run: RunRow, progress: RunProgress, cfg: Int
     rows,
     cfg,
     jevModel: progress.jev_model ?? JEV_MODEL,
-    anchorModel: ANCHOR_MODEL,
+    anchorModel: progress.anchor_model ?? ANCHOR_MODEL,
     costUsd: run.cost_usd,
     tokens: progress.tokens ?? 0,
   });

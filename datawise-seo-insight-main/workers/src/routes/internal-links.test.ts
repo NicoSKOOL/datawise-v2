@@ -55,7 +55,7 @@ class FakeR2 {
   }
 }
 
-function fakeFetch(calls: { jev: number; anchor: number }) {
+function fakeFetch(calls: { jev: number; anchor: number; anchorModels: Set<string> }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url === `${SITE}/robots.txt`) return new Response(`User-agent: *\nSitemap: ${SITE}/sitemap.xml`);
@@ -86,7 +86,10 @@ function fakeFetch(calls: { jev: number; anchor: number }) {
     }
     if (url.endsWith('/api/v1/chat/completions')) {
       calls.anchor++;
-      const prompt: string = JSON.parse(String(init?.body)).messages[0].content;
+      const req = JSON.parse(String(init?.body));
+      calls.anchorModels.add(req.model);
+      expect(req.reasoning).toEqual({ enabled: false });
+      const prompt: string = req.messages[0].content;
       const title = prompt.match(/Title: (.+) guide/)![1];
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ anchor: `compare ${title}`.split(' ').slice(1).join(' ') + ' with' }) } }] }));
     }
@@ -97,8 +100,9 @@ function fakeFetch(calls: { jev: number; anchor: number }) {
 describe('Internal Links run, end to end', () => {
   let env: Env;
   let waits: Promise<unknown>[];
+  let kv: Map<string, string>;
   const ctx = { waitUntil: (p: Promise<unknown>) => waits.push(p), passThroughOnException() {} } as unknown as ExecutionContext;
-  const calls = { jev: 0, anchor: 0 };
+  const calls = { jev: 0, anchor: 0, anchorModels: new Set<string>() };
 
   beforeEach(async () => {
     const { d1, raw } = createTestDb();
@@ -108,7 +112,7 @@ describe('Internal Links run, end to end', () => {
       'u1',
       await encryptToken(JSON.stringify({ provider: 'openrouter', api_key: 'sk-or-test' }), key)
     );
-    const kv = new Map<string, string>([['internal-links-min-sim', '0.05']]);
+    kv = new Map<string, string>([['internal-links-min-sim', '0.05']]);
     env = {
       DB: d1,
       KV: { get: async (k: string) => kv.get(k) ?? null },
@@ -119,6 +123,7 @@ describe('Internal Links run, end to end', () => {
     waits = [];
     calls.jev = 0;
     calls.anchor = 0;
+    calls.anchorModels = new Set();
     vi.stubGlobal('fetch', fakeFetch(calls));
   });
   afterEach(() => vi.unstubAllGlobals());
@@ -150,6 +155,7 @@ describe('Internal Links run, end to end', () => {
     expect(calls.jev).toBe(run.progress.judged);
     expect(run.summary.links).toBeGreaterThan(0);
     expect(run.cost_usd).toBeGreaterThan(0);
+    expect([...calls.anchorModels]).toEqual(['deepseek/deepseek-v4-pro']);
 
     const { body } = await call('GET', `/api/internal-links/runs/${id}/report`);
     const linked = body.report.rows.filter((r: any) => r.o === 'linked_apply' || r.o === 'linked_review');
@@ -162,6 +168,21 @@ describe('Internal Links run, end to end', () => {
 
     const appr = await call('PATCH', `/api/internal-links/runs/${id}/approvals`, { id: linked[0].i, value: 'approved' });
     expect(appr.body.approvals[linked[0].i]).toBe('approved');
+  });
+
+  it('writes anchors with the model set in KV', async () => {
+    kv.set('internal-links-anchor-model', 'google/gemini-3.1-flash-lite');
+    const created = await call('POST', '/api/internal-links/runs', { site_url: 'example.com' });
+    const id = created.body.run.id;
+    let run = created.body.run;
+    for (let i = 0; i < 30 && run.status === 'running'; i++) {
+      await drain();
+      run = (await call('POST', `/api/internal-links/runs/${id}/advance`)).body.run;
+    }
+    expect(run.status).toBe('completed');
+    expect([...calls.anchorModels]).toEqual(['google/gemini-3.1-flash-lite']);
+    const { body } = await call('GET', `/api/internal-links/runs/${id}/report`);
+    expect(JSON.stringify(body.report)).toContain('google/gemini-3.1-flash-lite');
   });
 
   it('refuses to start without a saved OpenRouter key', async () => {
