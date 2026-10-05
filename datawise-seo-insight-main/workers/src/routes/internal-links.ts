@@ -84,9 +84,11 @@ async function handleCreate(request: Request, env: Env, ctx: ExecutionContext, u
   if (!discovery.urls.length) {
     return json(
       {
-        error: discovery.blocked
-          ? 'The site blocked our crawler with an anti-bot challenge, so its sitemap could not be read.'
-          : 'No sitemap was found. We checked robots.txt, /sitemap.xml, /sitemap_index.xml, /sitemap-index.xml and /wp-sitemap.xml.',
+        error: discovery.blockedStatus
+          ? `${new URL(discovery.siteUrl).host} refused our crawler (HTTP ${discovery.blockedStatus}). Its hosting firewall blocks requests from cloud servers, so we could not read its sitemap or pages. Ask the site owner or host to allow our crawler, then try again.`
+          : discovery.blocked
+            ? 'The site blocked our crawler with an anti-bot challenge, so its sitemap could not be read.'
+            : 'No sitemap was found. We checked robots.txt, /sitemap.xml, /sitemap_index.xml, /sitemap-index.xml and /wp-sitemap.xml.',
       },
       422
     );
