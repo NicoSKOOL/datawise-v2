@@ -1,0 +1,128 @@
+# SEO KEYWORD RESEARCH NOTES
+# Primary keyword: "query fan-out"
+#   - Emerging GEO term, rising volume after Google's AI Mode launch.
+#   - Low competition vs. saturated "ai seo" / "seo ai tool" terms.
+# Runner-up keywords:
+#   - "google ai mode optimization"
+#   - "ai search query expansion"
+#   - "fan-out queries seo"
+# LSI and supporting terms woven into copy:
+#   - generative engine optimization (GEO), answer engine optimization (AEO)
+#   - sub-queries, follow-up questions, intent surface, intent expansion
+#   - chatgpt deep research, perplexity deep research
+#   - llm citations, llms.txt, ai overviews
+#   - topical authority, content cluster, semantic coverage
+# Differentiation from sibling pages:
+#   - AI Visibility tracks whether AI already cites you.
+#   - Fan-out Queries tells you which sub-queries to cover so AI starts citing you.
+#   - Outcome-first: every fan-out becomes a heading or FAQ you can ship.
+
+title: Fan-out Queries
+description: Reveal the cluster of sub-queries Google AI Mode and ChatGPT expand a single keyword into, so you can structure pages that answer the whole intent surface and earn more AI citations.
+metaDescription: "DataWise's Fan-out Queries tool surfaces the sub-questions Google AI Mode and ChatGPT fan a keyword into. Use the cluster to brief content, build FAQ blocks, and earn citations across generative search."
+icon: "🔍"
+heroTagline: "See every question AI asks behind a single query"
+
+benefits:
+  - title: Map the full intent surface, not the headline keyword
+    description: "AI engines do not answer the keyword you type. They silently fan it out into a cluster of sub-questions and assemble the answer from sources that cover each one. Fan-out Queries shows you that cluster so you can brief content against the real intent, not just the seed term."
+  - title: Brief content that actually gets cited
+    description: "Each fan-out query is a heading, FAQ, or paragraph waiting to be written. Pages that cover the whole expansion get pulled into AI Overviews, Perplexity citations, and ChatGPT answers because they match how the engine reasons, not just how the user typed."
+  - title: Built for Google AI Mode and deep-research workflows
+    description: "Google AI Mode, ChatGPT Deep Research, and Perplexity all rely on query expansion under the hood. Fan-out Queries surfaces the same expansion logic, so the content you brief is structured for the engines that already drive AI traffic."
+
+subTools:
+  - name: Seed Query Expansion
+    description: "Enter any keyword or question and see the cluster of sub-queries Google AI Mode and ChatGPT fan it out into, ranked by how central each one is to the parent intent."
+  - name: Intent Cluster Grouping
+    description: "Sub-queries are grouped into informational, comparison, transactional, and follow-up buckets so you can structure a single page around the right intent mix."
+  - name: Content Brief Export
+    description: "Push the fan-out into the Content Writer or Content Planner as a heading outline, with each sub-query becoming a section or FAQ row ready to write against."
+  - name: Citation Gap Overlay
+    description: "Cross-reference fan-out queries against your existing AI Visibility data to spot sub-questions you do not currently cover, ranked by how often AI engines reach for them."
+  - name: Competitor Fan-out Compare
+    description: "Pull the fan-out for a money keyword and see which sub-queries competitors already answer on their pages, so you know exactly where to out-cover them."
+  - name: Question Library
+    description: "Every fan-out query is saved per workspace so you can build a long-term library of sub-questions for each topic cluster, refreshed as AI engines update their reasoning."
+
+stats:
+  - value: 30
+    suffix: "%+"
+    label: "Google queries triggering AI Overviews as of 2026"
+  - value: 10
+    suffix: "+"
+    label: "Sub-queries typically fanned out from a single seed keyword"
+  - value: 3
+    suffix: ""
+    label: "Major AI engines whose expansion logic is modelled (Google AI Mode, ChatGPT, Perplexity)"
+  - value: 0
+    suffix: "$"
+    label: "Cost per fan-out inside your AI Ranking membership"
+
+story:
+  - caption: "Drop in a seed keyword or full question"
+    highlight: "Type the keyword or question you want to rank for in AI search. Fan-out Queries treats it the way an AI engine would, as a starting point for expansion rather than a literal lookup."
+  - caption: "Read the fan-out cluster"
+    highlight: "See the full cluster of sub-queries the engine would expand into, grouped by intent type and ranked by centrality, so you know which questions a citation-worthy page must answer."
+  - caption: "Send the cluster into a brief and ship the page"
+    highlight: "Export the fan-out as a heading outline straight into Content Writer or Content Planner. Each sub-query becomes a section or FAQ row, so the brief writes itself and the page covers the entire intent surface."
+
+opportunities:
+  - title: "Win Google AI Mode answers"
+    description: "AI Mode assembles answers from pages that cover the full sub-query cluster, not just the head term. Fan-out gives you the cluster so you can ship pages that AI Mode pulls from."
+    icon: "zap"
+  - title: "Earn ChatGPT and Perplexity citations"
+    description: "Both engines lean on query expansion before they synthesise. Pages that explicitly answer the fan-out sub-questions get cited because they match the reasoning trace, not just the prompt."
+    icon: "message-circle"
+  - title: "Brief FAQ blocks that actually earn snippets"
+    description: "Most FAQ sections guess at user questions. Fan-out Queries gives you the real expansion, so the FAQ block matches what AI and traditional search engines already cluster around the topic."
+    icon: "list"
+  - title: "Reformat existing pages for citation coverage"
+    description: "Run the fan-out for a page's target keyword, compare against the headings you already have, and add the missing sub-queries. Often the page already ranks; it just needs one or two new sections to start getting cited."
+    icon: "edit"
+  - title: "Build topical authority cluster by cluster"
+    description: "Each fan-out is a ready-made content cluster. Plan a pillar page on the seed and a supporting article for each major sub-query so the whole cluster compounds in semantic authority."
+    icon: "trending-up"
+  - title: "Out-cover competitors on the same head term"
+    description: "Pull the fan-out for any keyword a competitor ranks for and audit which sub-queries their page misses. Cover the gaps on your version and you out-rank them on intent depth, not just on links."
+    icon: "target"
+
+useCases:
+  - icon: "pen-tool"
+    audience: "Content teams"
+    scenario: "A content strategist briefs a pillar page on a category-defining keyword. They run the fan-out, drop the cluster into Content Writer as a heading outline, and ship a page that answers the seed query plus the eight sub-questions AI engines actually expand into. Within weeks the page earns its first Perplexity citation and starts surfacing in AI Overviews."
+  - icon: "trending-up"
+    audience: "SEO leads"
+    scenario: "An SEO director auditing why a top-ranking page no longer earns AI citations runs the fan-out and finds the page covers only the head term, missing four sub-queries the engine now expands into. They commission a refresh that adds the missing sections and recover citation share inside a quarter."
+  - icon: "users"
+    audience: "Agency SEOs and freelancers"
+    scenario: "A freelance SEO building a content roadmap for a new client uses fan-out clusters as the spine of the editorial plan. Each pillar topic becomes a fan-out, each sub-query becomes a supporting article, and the cluster compounds into measurable topical authority over the engagement."
+  - icon: "star"
+    audience: "Founders and indie hackers"
+    scenario: "A founder writing their own marketing pages uses Fan-out Queries to brief every page on a high-intent keyword. Instead of guessing at FAQ sections, they ship pages that cover the real intent surface from day one, and pick up early AI citations without a content team."
+
+faqs:
+  - question: "What is a query fan-out, and why does it matter for AI search?"
+    answer: "A query fan-out is the cluster of sub-queries an AI engine silently expands a single user prompt into before it assembles an answer. When someone asks ChatGPT or Google AI Mode a question, the engine does not look up the literal string. It fans the query out into related sub-questions, gathers passages that answer each one, and synthesises the final response. Pages that cover the whole fan-out cluster get cited because they match the engine's reasoning trace, not just the headline term. Optimising for fan-out is one of the highest-leverage generative engine optimization (GEO) tactics available right now."
+  - question: "How is this different from keyword research or People Also Ask?"
+    answer: "Traditional keyword research surfaces what people type into the search bar. People Also Ask surfaces related questions Google has already clustered. Fan-out Queries goes one layer deeper: it shows the sub-questions an AI engine expands the seed query into internally, before it answers. Many of those sub-queries never appear in classic keyword tools because they are reasoning steps, not user inputs. That is exactly why pages built against the fan-out cluster get cited where pages built against the keyword alone do not."
+  - question: "Which AI engines does Fan-out Queries model?"
+    answer: "DataWise's fan-out logic mirrors how Google AI Mode, ChatGPT (including Deep Research), and Perplexity expand and reason about queries. These engines drive the bulk of AI search traffic and citations as of 2026, and their expansion logic is similar enough that a single fan-out cluster is a reliable brief for all three. As new engines and reasoning patterns emerge, the tool updates so the cluster stays representative of how AI actually searches."
+  - question: "How do I use a fan-out to brief a page?"
+    answer: "Run the fan-out for the page's target keyword, then use each sub-query as a heading, FAQ row, or paragraph in the outline. Cover the head term in the introduction, then dedicate a clearly-labelled section to each major sub-query, and close with an FAQ block that hits the remaining ones. Push the cluster directly into Content Writer to skip the manual outlining step, or export it into Content Planner if the brief belongs to a wider editorial calendar."
+  - question: "Will my page rank in classic Google if I optimise for fan-out?"
+    answer: "Yes, and usually better. Pages that cover the full intent surface satisfy both classic ranking signals (topical depth, entity coverage, internal linking) and AI citation signals (clear answer formatting, sub-question coverage). The same content that earns Perplexity citations tends to earn featured snippets and Google AI Overviews coverage, because AI Overviews are pulled from pages that already rank well organically. Fan-out optimisation lifts both channels at once."
+  - question: "How does Fan-out Queries connect to AI Visibility and Content Writer?"
+    answer: "Fan-out Queries sits upstream of both. AI Visibility tells you whether AI already cites you for a given keyword. If it does not, Fan-out Queries shows you the sub-questions a citation-worthy page would need to cover. Content Writer then turns the cluster into a draft, with each sub-query mapped to a heading or FAQ row. The three tools form a closed loop: track citations, find the gaps, and ship the pages that close them."
+  - question: "How often should I rerun the fan-out for a given keyword?"
+    answer: "Fan-out clusters drift as AI engines update their reasoning, new sub-questions enter the public conversation, and competitor pages reshape what is considered comprehensive. For evergreen pillar topics, rerunning every quarter catches most of the drift. For fast-moving categories (AI itself, regulation-sensitive niches, breaking-news verticals), monthly is safer. The Question Library keeps prior runs so you can diff against the latest cluster and ship a focused refresh rather than a full rewrite."
+
+video:
+  youtubeId: "DBwWMufaxAQ"
+  title: "How To Find Fan-out Queries | DataWise"
+  description: "Walk through DataWise's Fan-out Queries tool: enter a target keyword and see the cluster of follow-up questions Google AI Mode and ChatGPT fan out into, so you can structure pages that answer the whole intent surface and earn more AI citations."
+  uploadDate: "2026-05-21"
+  duration: "PT3M31S"
+  thumbnail: "https://i.ytimg.com/vi/DBwWMufaxAQ/maxresdefault.jpg"
+  eyebrow: "Walkthrough"
+  heading: "See Fan-out Queries in action"

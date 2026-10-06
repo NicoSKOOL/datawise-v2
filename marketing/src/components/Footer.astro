@@ -17,7 +17,7 @@ const footerLinks = {
     { label: 'About', href: '/about' },
     { label: 'What is AI Ranking?', href: '/community' },
     { label: 'Join on Skool', href: 'https://www.skool.com/ai-ranking' },
-    { label: 'Log in', href: 'https://app.datawiseseo.com' },
+    { label: 'Log in', href: 'https://datawiseseo.com/' },
   ],
 };
 ---
@@ -27,10 +27,14 @@ const footerLinks = {
     <div class="grid grid-cols-2 gap-8 md:grid-cols-4">
       <!-- Brand -->
       <div class="col-span-2 md:col-span-1">
-        <a href="/" class="flex items-center gap-2.5">
-          <div class="h-8 w-8 rounded-lg bg-[var(--color-indigo)] flex items-center justify-center">
-            <span class="text-white font-bold text-sm">DW</span>
-          </div>
+        <a href="/" class="flex items-center gap-2.5" aria-label="DataWise SEO home">
+          <img
+            src="/images/logo/datawise-icon.webp"
+            alt=""
+            width="32"
+            height="32"
+            class="h-8 w-8"
+          />
           <span class="font-[var(--font-headline)] font-bold text-lg text-[var(--dw-text)]">DataWise</span>
         </a>
         <p class="mt-4 text-sm text-[var(--dw-text-secondary)] max-w-xs">

@@ -96,3 +96,13 @@ faqs:
     answer: "Keyword gap analysis compares raw keyword rankings between two domains and surfaces specific queries one site ranks for that the other does not. Content gap analysis is broader: it identifies entire topic areas, formats, or funnel stages a competitor addresses that you have not covered at all. DataWise's Keyword Gap Analysis tool handles the former. Use the results to infer content gaps by grouping missing keywords into topic clusters."
   - question: "How do I find my real SEO competitors (not just my business rivals)?"
     answer: "Your real SEO competitors are the domains that rank for the same queries you target, regardless of whether they sell the same product. DataWise's Competitor Discovery tool identifies these automatically by analyzing keyword overlap: it pulls your ranked keywords, finds domains appearing most frequently in the same SERPs, and ranks them by overlap score. A blog or publisher may turn out to be a bigger SERP rival than any direct business competitor."
+
+video:
+  youtubeId: "JWxeVTZQt1w"
+  title: "How To Run a Competitor Analysis | DataWise"
+  description: "Walk through a full competitor analysis in DataWise: Domain Rank side-by-side comparison for up to five sites, Ranked Keywords to reverse-engineer the winner's content strategy, Gap Analysis to find keywords a competitor ranks for and you don't, the Traffic tab for organic vs paid visit estimates, and the Competitors tab to uncover sites you didn't realize you were competing against."
+  uploadDate: "2026-05-20"
+  duration: "PT7M18S"
+  thumbnail: "https://i.ytimg.com/vi/JWxeVTZQt1w/maxresdefault.jpg"
+  eyebrow: "Walkthrough"
+  heading: "See Competitor Analysis in action"

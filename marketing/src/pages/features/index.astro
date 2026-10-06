@@ -19,8 +19,12 @@ const iconMap: Record<string, string> = {
 };
 
 // Preferred ordering for the index page
-const order = ['keyword-research', 'competitor-analysis', 'rank-tracking', 'ai-visibility', 'seo-assistant', 'content-tools'];
-const features = [...featuresRaw].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+const order = ['keyword-research', 'competitor-analysis', 'rank-tracking', 'ai-visibility', 'fan-out-queries', 'backlinks', 'site-audit', 'seo-assistant', 'content-writer', 'content-tools'];
+const features = [...featuresRaw].sort((a, b) => {
+  const aIdx = order.indexOf(a.id);
+  const bIdx = order.indexOf(b.id);
+  return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
+});
 
 // Real screenshot paths — JPG for every feature
 const realShots: Record<string, string> = {
@@ -28,8 +32,12 @@ const realShots: Record<string, string> = {
   'competitor-analysis': '/images/screenshots/competitor-analysis.jpg',
   'rank-tracking': '/images/screenshots/rank-tracking.jpg',
   'ai-visibility': '/images/screenshots/ai-visibility.jpg',
+  'fan-out-queries': '/images/screenshots/fan-out-queries.jpg',
   'seo-assistant': '/images/screenshots/seo-assistant.jpg',
   'content-tools': '/images/screenshots/content-tools.jpg',
+  'backlinks': '/images/screenshots/backlinks.jpg',
+  'site-audit': '/images/screenshots/site-audit.webp',
+  'content-writer': '/images/screenshots/content-writer.jpg',
 };
 const getShot = (id: string) => realShots[id] || `/images/screenshots/${id}.svg`;
 
@@ -98,7 +106,17 @@ const totalSubTools = features.reduce((acc, f) => acc + f.data.subTools.length, 
   <!-- ============================================= -->
   <nav class="tool-nav" id="tool-nav" aria-label="Feature quick navigation">
     <div class="tool-nav-container">
-      <div class="tool-nav-track">
+      <button
+        type="button"
+        class="tool-nav-arrow tool-nav-arrow--left"
+        id="tool-nav-prev"
+        aria-label="Scroll features left"
+        tabindex="-1"
+      >
+        <Icon name="arrow-right" size={16} />
+      </button>
+      <div class="tool-nav-fade tool-nav-fade--left" aria-hidden="true"></div>
+      <div class="tool-nav-track" id="tool-nav-track">
         {features.map((feature) => (
           <a
             href={`#feature-${feature.id}`}
@@ -113,6 +131,15 @@ const totalSubTools = features.reduce((acc, f) => acc + f.data.subTools.length, 
           </a>
         ))}
       </div>
+      <div class="tool-nav-fade tool-nav-fade--right" aria-hidden="true"></div>
+      <button
+        type="button"
+        class="tool-nav-arrow tool-nav-arrow--right"
+        id="tool-nav-next"
+        aria-label="Scroll features right"
+      >
+        <Icon name="arrow-right" size={16} />
+      </button>
     </div>
   </nav>
 
@@ -418,22 +445,89 @@ const totalSubTools = features.reduce((acc, f) => acc + f.data.subTools.length, 
   }
 
   .tool-nav-container {
+    position: relative;
     max-width: 80rem;
     margin: 0 auto;
     padding: 0 1rem;
+    display: flex;
+    align-items: center;
   }
 
   .tool-nav-track {
+    flex: 1;
     display: flex;
     gap: 0.5rem;
     overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
     padding-bottom: 0.25rem;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 1rem;
+    scroll-behavior: smooth;
   }
 
   .tool-nav-track::-webkit-scrollbar {
     display: none;
+  }
+
+  .tool-nav-fade {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3rem;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+
+  .tool-nav-fade--left {
+    left: 1rem;
+    background: linear-gradient(to right, var(--dw-bg), color-mix(in srgb, var(--dw-bg) 0%, transparent));
+  }
+
+  .tool-nav-fade--right {
+    right: 1rem;
+    background: linear-gradient(to left, var(--dw-bg), color-mix(in srgb, var(--dw-bg) 0%, transparent));
+  }
+
+  .tool-nav.can-scroll-left .tool-nav-fade--left { opacity: 1; }
+  .tool-nav.can-scroll-right .tool-nav-fade--right { opacity: 1; }
+
+  .tool-nav-arrow {
+    position: relative;
+    z-index: 3;
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    border: 1px solid var(--dw-border);
+    background: var(--dw-surface);
+    color: var(--dw-text-secondary);
+    cursor: pointer;
+    transition: opacity 0.25s ease, color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+    margin: 0 0.25rem;
+    padding: 0;
+  }
+
+  .tool-nav-arrow:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    background: var(--dw-surface);
+  }
+
+  .tool-nav-arrow--left :global(svg) { transform: rotate(180deg); }
+
+  .tool-nav-arrow[aria-disabled="true"] {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  @media (max-width: 640px) {
+    .tool-nav-arrow { display: none; }
   }
 
   .tool-nav-item {
@@ -886,6 +980,38 @@ const totalSubTools = features.reduce((acc, f) => acc + f.data.subTools.length, 
         },
       });
     });
+
+    /* ---------- Pills horizontal scroll: arrows + edge fades ---------- */
+    const track = document.getElementById('tool-nav-track') as HTMLElement | null;
+    const prevBtn = document.getElementById('tool-nav-prev') as HTMLButtonElement | null;
+    const nextBtn = document.getElementById('tool-nav-next') as HTMLButtonElement | null;
+
+    const updateScrollState = () => {
+      if (!track) return;
+      const max = track.scrollWidth - track.clientWidth;
+      const left = track.scrollLeft;
+      const canLeft = left > 4;
+      const canRight = left < max - 4;
+      toolNav.classList.toggle('can-scroll-left', canLeft);
+      toolNav.classList.toggle('can-scroll-right', canRight);
+      prevBtn?.setAttribute('aria-disabled', String(!canLeft));
+      nextBtn?.setAttribute('aria-disabled', String(!canRight));
+    };
+
+    const scrollByPage = (dir: 1 | -1) => {
+      if (!track) return;
+      const step = Math.max(track.clientWidth * 0.8, 200);
+      track.scrollBy({ left: dir * step, behavior: 'smooth' });
+    };
+
+    if (track) {
+      track.addEventListener('scroll', updateScrollState, { passive: true });
+      window.addEventListener('resize', updateScrollState);
+      prevBtn?.addEventListener('click', () => scrollByPage(-1));
+      nextBtn?.addEventListener('click', () => scrollByPage(1));
+      // Initial state (after layout)
+      requestAnimationFrame(updateScrollState);
+    }
   }
 
   /* ---------- Value band items + final CTA reveal ---------- */

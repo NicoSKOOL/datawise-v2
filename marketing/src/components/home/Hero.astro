@@ -31,13 +31,14 @@ import AppScreenshot from '../ui/AppScreenshot.astro';
           Keyword research, competitor analysis, rank tracking, AI visibility monitoring, and an AI SEO assistant. Every DataWise tool is included with your AI Ranking community membership. Try it free for 7 days.
         </p>
 
-        <div id="hero-cta" class="mt-8 flex flex-col sm:flex-row items-start gap-4">
+        <div id="hero-cta" class="mt-8 flex flex-col sm:flex-row items-start gap-4 relative">
           <Button href="https://www.skool.com/ai-ranking" variant="primary" size="lg" magnetic>
             Join AI Ranking
             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
           </Button>
-          <Button href="/features" variant="secondary" size="lg">
+          <Button href="/features" variant="secondary" size="lg" class="cta-explore-pulse">
             Explore the Tools
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-[var(--color-primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
           </Button>
         </div>
 
@@ -61,6 +62,59 @@ import AppScreenshot from '../ui/AppScreenshot.astro';
     </div>
   </div>
 </section>
+
+<style is:global>
+  /* Subtle glow + pulse on the secondary "Explore the Tools" CTA.
+     Marked `is:global` because the class is applied to a child Button
+     component whose root element does not share Hero.astro's scope id. */
+  .cta-explore-pulse {
+    position: relative;
+    isolation: isolate;
+    animation: cta-explore-pulse-glow 2.4s ease-in-out infinite;
+  }
+
+  .cta-explore-pulse::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: inherit;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--color-primary) 35%, transparent),
+      transparent 70%
+    );
+    opacity: 0.55;
+    filter: blur(10px);
+    z-index: -1;
+    pointer-events: none;
+    animation: cta-explore-pulse-aura 2.4s ease-in-out infinite;
+  }
+
+  @keyframes cta-explore-pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 55%, transparent); }
+    50%      { box-shadow: 0 0 0 10px color-mix(in srgb, var(--color-primary) 0%,  transparent); }
+  }
+
+  @keyframes cta-explore-pulse-aura {
+    0%, 100% { opacity: 0.4;  transform: scale(1); }
+    50%      { opacity: 0.85; transform: scale(1.08); }
+  }
+
+  .cta-explore-pulse:hover {
+    animation-play-state: paused;
+  }
+  .cta-explore-pulse:hover::before {
+    animation-play-state: paused;
+    opacity: 0.95;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cta-explore-pulse,
+    .cta-explore-pulse::before {
+      animation: none;
+    }
+  }
+</style>
 
 <script>
   import { gsap } from 'gsap';
