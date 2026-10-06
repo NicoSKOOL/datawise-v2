@@ -144,7 +144,7 @@ export async function handleListProjects(env: Env, userId: string): Promise<Resp
     FROM rank_history rh
     JOIN tracked_keywords tk ON tk.id = rh.keyword_id
     JOIN seo_projects p ON p.id = tk.project_id
-    WHERE p.user_id = ?
+    WHERE p.user_id = ? AND rh.source IS NULL
     GROUP BY tk.project_id
   `).bind(userId).all();
 
@@ -304,7 +304,7 @@ export async function handleListKeywords(env: Env, userId: string, projectId: st
   // degraded quadratically as check history accumulated).
   const { results } = await env.DB.prepare(`
     WITH ranked AS (
-      SELECT rh.keyword_id, rh.position, rh.rank_group, rh.estimated_traffic, rh.checked_at,
+      SELECT rh.keyword_id, rh.position, rh.rank_group, rh.estimated_traffic, rh.checked_at, rh.source,
         ROW_NUMBER() OVER (PARTITION BY rh.keyword_id ORDER BY rh.checked_at DESC, rh.id DESC) as rn
       FROM rank_history rh
       JOIN tracked_keywords tk ON tk.id = rh.keyword_id
@@ -312,7 +312,11 @@ export async function handleListKeywords(env: Env, userId: string, projectId: st
     )
     SELECT tk.*,
       cur.position, cur.rank_group, cur.estimated_traffic, cur.checked_at,
-      prev.position as prev_position
+      cur.source as position_source,
+      -- A GSC seed is not a SERP position, so the first live check must not
+      -- read as movement against it (seed 14 -> live 3 is not "+11").
+      CASE WHEN cur.source IS NOT NULL OR prev.source IS NOT NULL THEN NULL
+           ELSE prev.position END as prev_position
     FROM tracked_keywords tk
     LEFT JOIN ranked cur ON cur.keyword_id = tk.id AND cur.rn = 1
     LEFT JOIN ranked prev ON prev.keyword_id = tk.id AND prev.rn = 2
@@ -373,8 +377,10 @@ export async function handleAddKeywords(request: Request, env: Env, userId: stri
     // Seed history with the provided position so the first row of the
     // rank/local-pack table is populated immediately. For local projects
     // the position represents Local Pack rank (1-3) or Maps rank (4-20)
-    // and goes into local_rank_history; for organic projects it's an
-    // SERP position and goes into rank_history.
+    // and goes into local_rank_history; for organic projects it is the
+    // Site Rankings (GSC) position, stored as source 'gsc_seed' so the UI
+    // labels it an estimate and the scheduler still runs the first live
+    // SERP check (a seed is not a check).
     const pos = initial_positions?.[kw] ?? initial_positions?.[cleaned];
     if (pos != null) {
       if (isLocal) {
@@ -386,7 +392,7 @@ export async function handleAddKeywords(request: Request, env: Env, userId: stri
       } else {
         stmts.push(
           env.DB.prepare(
-            'INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at) VALUES (?, ?, ?, ?, ?)'
+            "INSERT INTO rank_history (keyword_id, position, rank_group, estimated_traffic, checked_at, source) VALUES (?, ?, ?, ?, ?, 'gsc_seed')"
           ).bind(keywordId, Math.round(pos), Math.round(pos), null, checkedAt)
         );
       }
@@ -549,7 +555,10 @@ export async function handleCheckRankings(env: Env, userId: string, projectId: s
 // Scope guards (same philosophy as runDailyGSCSync):
 //  - only organic projects with at least one active keyword
 //  - only owners with a currently valid session (inactive users cost nothing)
-//  - only projects with no check (manual or scheduled) in the last 6 days
+//  - only projects with no live check (manual or scheduled) in the last 6
+//    days; GSC seed rows written on add do not count as a check
+//  - projects never live-checked go first, so a new project gets real SERP
+//    positions on the next run instead of queueing behind the backlog
 //  - hard per-run keyword budget: one DFS request per keyword (live API is
 //    single-task) plus cache KV ops must stay under the Worker invocation's
 //    1,000-subrequest limit. The cron runs Tue/Thu/Sat to spread the backlog.
@@ -557,15 +566,9 @@ const RANK_CHECKS_PAUSE_KEY = 'rank-checks-paused';
 const RANK_CHECKS_MAX_KEYWORDS_PER_RUN = 200;
 const RANK_CHECKS_STALE_DAYS = 6;
 
-export async function runScheduledRankChecks(env: Env): Promise<void> {
-  const startedAt = Date.now();
-  const paused = await env.KV.get(RANK_CHECKS_PAUSE_KEY);
-  if (paused) {
-    console.log('Rank checks: paused via KV kill switch, skipping scheduled run');
-    return;
-  }
-
-  const { results: projects } = await env.DB.prepare(`
+// Projects due a scheduled SERP check, in run order (see scope guards above).
+export async function selectDueRankProjects(env: Env): Promise<any[]> {
+  const { results } = await env.DB.prepare(`
     SELECT p.id, p.user_id, p.domain, p.location_code
     FROM seo_projects p
     WHERE COALESCE(p.project_type, 'organic') != 'local'
@@ -576,10 +579,29 @@ export async function runScheduledRankChecks(env: Env): Promise<void> {
         SELECT 1 FROM rank_history rh
         JOIN tracked_keywords tk2 ON tk2.id = rh.keyword_id
         WHERE tk2.project_id = p.id
+          AND rh.source IS NULL
           AND rh.checked_at > datetime('now', '-' || ? || ' days')
       )
-    ORDER BY p.created_at ASC
+    ORDER BY
+      EXISTS (
+        SELECT 1 FROM rank_history rh3
+        JOIN tracked_keywords tk3 ON tk3.id = rh3.keyword_id
+        WHERE tk3.project_id = p.id AND rh3.source IS NULL
+      ) ASC,
+      p.created_at ASC
   `).bind(RANK_CHECKS_STALE_DAYS).all() as { results: any[] };
+  return results || [];
+}
+
+export async function runScheduledRankChecks(env: Env): Promise<void> {
+  const startedAt = Date.now();
+  const paused = await env.KV.get(RANK_CHECKS_PAUSE_KEY);
+  if (paused) {
+    console.log('Rank checks: paused via KV kill switch, skipping scheduled run');
+    return;
+  }
+
+  const projects = await selectDueRankProjects(env);
 
   if (!projects?.length) {
     console.log('Rank checks: no due projects');
@@ -624,7 +646,7 @@ export async function handleProjectReport(request: Request, env: Env, userId: st
 
   // Get all rank history for this project within the period
   const { results: historyRows } = await env.DB.prepare(`
-    SELECT rh.keyword_id, rh.position, rh.rank_group, rh.estimated_traffic, rh.checked_at
+    SELECT rh.keyword_id, rh.position, rh.rank_group, rh.estimated_traffic, rh.checked_at, rh.source
     FROM rank_history rh
     JOIN tracked_keywords tk ON tk.id = rh.keyword_id
     WHERE tk.project_id = ? AND tk.is_active = 1
@@ -697,6 +719,8 @@ export async function handleProjectReport(request: Request, env: Env, userId: st
   // Compute improved/declined/stable by comparing latest vs second-latest position per keyword
   const byKeyword = new Map<string, any[]>();
   for (const row of historyRows as any[]) {
+    // GSC seeds are placeholders, not checks: never count movement from them
+    if (row.source) continue;
     if (!byKeyword.has(row.keyword_id)) byKeyword.set(row.keyword_id, []);
     byKeyword.get(row.keyword_id)!.push(row);
   }
@@ -782,10 +806,12 @@ export async function handleDashboardSummary(env: Env, userId: string, domain?: 
     WHERE tk.project_id IN (${placeholders}) AND tk.is_active = 1
   `).bind(...projectIds).all();
 
-  // Get previous positions for movers
+  // Get previous positions for movers. A GSC seed on either side is not a
+  // SERP check, so it never produces a mover.
   const { results: prevRows } = await env.DB.prepare(`
     SELECT tk.id as keyword_id, tk.keyword, tk.project_id,
-      prev.position as prev_position
+      CASE WHEN rh.source IS NOT NULL OR prev.source IS NOT NULL THEN NULL
+           ELSE prev.position END as prev_position
     FROM tracked_keywords tk
     LEFT JOIN rank_history rh ON rh.keyword_id = tk.id
       AND rh.checked_at = (SELECT MAX(checked_at) FROM rank_history WHERE keyword_id = tk.id)
@@ -855,7 +881,7 @@ export async function handleKeywordHistory(env: Env, userId: string, keywordId: 
   if (!keyword) return json({ error: 'Keyword not found' }, 404);
 
   const { results } = await env.DB.prepare(
-    'SELECT position, rank_group, estimated_traffic, checked_at FROM rank_history WHERE keyword_id = ? ORDER BY checked_at DESC LIMIT 30'
+    'SELECT position, rank_group, estimated_traffic, checked_at, source FROM rank_history WHERE keyword_id = ? ORDER BY checked_at DESC LIMIT 30'
   ).bind(keywordId).all();
 
   return json({ keyword, history: results });

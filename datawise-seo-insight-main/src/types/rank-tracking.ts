@@ -21,6 +21,8 @@ export interface TrackedKeyword {
   rank_group: number | null;
   estimated_traffic: number | null;
   checked_at: string | null;
+  /** 'gsc_seed' = Site Rankings estimate copied on add, not yet live-checked */
+  position_source?: string | null;
   location_code: number;
   language_code: string;
   device?: 'desktop' | 'mobile';
@@ -29,6 +31,7 @@ export interface TrackedKeyword {
 export interface HistoryEntry {
   position: number | null;
   checked_at: string;
+  source?: string | null;
 }
 
 export interface DistributionBuckets {

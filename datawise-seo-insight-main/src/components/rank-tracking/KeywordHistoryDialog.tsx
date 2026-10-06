@@ -45,7 +45,9 @@ export default function KeywordHistoryDialog({ keyword, history, loading, onClos
                 <TableBody>
                   {history.map((entry, index) => {
                     const previousEntry = history[index + 1];
-                    const change = (entry.position != null && previousEntry?.position != null)
+                    // A GSC seed is a Site Rankings estimate, not a SERP check: no movement to or from it
+                    const isSeed = entry.source === 'gsc_seed';
+                    const change = (!isSeed && previousEntry?.source !== 'gsc_seed' && entry.position != null && previousEntry?.position != null)
                       ? previousEntry.position - entry.position
                       : null;
 
@@ -55,7 +57,9 @@ export default function KeywordHistoryDialog({ keyword, history, loading, onClos
                           {formatDate(entry.checked_at, { month: 'short', day: 'numeric', year: 'numeric' })}
                         </TableCell>
                         <TableCell className="text-center">
-                          {entry.position != null ? (
+                          {entry.position != null && isSeed ? (
+                            <span className="text-sm text-muted-foreground">~{entry.position} (GSC estimate)</span>
+                          ) : entry.position != null ? (
                             <Badge variant="secondary">{entry.position}</Badge>
                           ) : (
                             <span className="text-muted-foreground text-sm">N/A</span>
