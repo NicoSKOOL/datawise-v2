@@ -170,7 +170,10 @@ CREATE TABLE IF NOT EXISTS rank_history (
   position INTEGER,
   rank_group INTEGER,
   estimated_traffic REAL,
-  checked_at TEXT DEFAULT (datetime('now'))
+  checked_at TEXT DEFAULT (datetime('now')),
+  -- NULL = live SERP check; 'gsc_seed' = Site Rankings placeholder written on
+  -- add (see migrations/2026-10-06-rank-history-source.sql)
+  source TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_rank_history_keyword ON rank_history(keyword_id, checked_at);

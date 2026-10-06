@@ -1,7 +1,7 @@
 import type { Env } from '../index';
 import { ACTIVITY_ERROR_CODE_HEADER } from '../activity';
 import { refreshGSCToken } from './oauth';
-import { WEIGHTED_POSITION, WEIGHTED_CTR, weightedPositionSql, weightedCtrSql } from './metrics-sql';
+import { WEIGHTED_POSITION, WEIGHTED_CTR, queryRollupCte } from './metrics-sql';
 import { isAdmin } from '../routes/admin';
 import type { AuthUser } from '../auth/google';
 
@@ -491,7 +491,7 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
   // The ownership check above stays live (cheap, indexed) so cross-user reads
   // can never be served from cache.
   const GSC_DATA_CACHE_TTL = 6 * 60 * 60; // 6 hours
-  const cacheKey = `gsc_data:v2:${propertyId}:${url.searchParams.get('range') || 'none'}:${String(property.last_synced_at ?? 'never')}`;
+  const cacheKey = `gsc_data:v3:${propertyId}:${url.searchParams.get('range') || 'none'}:${String(property.last_synced_at ?? 'never')}`;
   const cachedBody = await env.KV.get(cacheKey);
   if (cachedBody) {
     return new Response(cachedBody, {
@@ -518,16 +518,12 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__'
   `).bind(propertyId).first();
 
+  // Query-level metrics use each query's top page position (queryRollupCte),
+  // so buckets, quick wins and striking distance match where searchers
+  // actually see the site, not a blend of every page that surfaced.
+  const allTimeScope = `property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'`;
   const querySummary = await env.DB.prepare(`
-    WITH query_rollup AS (
-      SELECT
-        query,
-        ROUND(${WEIGHTED_POSITION}, 1) as avg_position,
-        SUM(impressions) as impressions
-      FROM gsc_search_data
-      WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
-      GROUP BY query
-    )
+    WITH ${queryRollupCte(allTimeScope)}
     SELECT
       COUNT(*) as total_queries,
       ROUND(SUM(avg_position * impressions) * 1.0 / NULLIF(SUM(impressions), 0), 1) as avg_position,
@@ -541,10 +537,10 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
 
   // Top queries by clicks (from query+page batch data)
   const topQueries = await env.DB.prepare(`
-    SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(${WEIGHTED_POSITION}, 1) as avg_position, ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
-    FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
-    GROUP BY query ORDER BY clicks DESC LIMIT 50
+    WITH ${queryRollupCte(allTimeScope)}
+    SELECT query, clicks, impressions, avg_position, avg_ctr,
+           all_pages_position, top_page, ranking_pages
+    FROM query_rollup ORDER BY clicks DESC LIMIT 50
   `).bind(propertyId).all();
 
   // Top pages by clicks
@@ -557,11 +553,11 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
 
   // Opportunity keywords
   const opportunities = await env.DB.prepare(`
-    SELECT query, SUM(clicks) as clicks, SUM(impressions) as impressions,
-           ROUND(${WEIGHTED_POSITION}, 1) as avg_position, ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
-    FROM gsc_search_data WHERE property_id = ? AND (source = 'agg90' OR source = 'gsc') AND query != '__daily_total__' AND page != '__7d_query__'
-    GROUP BY query
-    HAVING ${WEIGHTED_POSITION} BETWEEN 5 AND 20 AND SUM(impressions) > 100
+    WITH ${queryRollupCte(allTimeScope)}
+    SELECT query, clicks, impressions, avg_position, avg_ctr,
+           all_pages_position, top_page, ranking_pages
+    FROM query_rollup
+    WHERE avg_position BETWEEN 5 AND 20 AND impressions > 100
     ORDER BY impressions DESC LIMIT 30
   `).bind(propertyId).all();
 
@@ -599,12 +595,6 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
     const qpScope = n <= 35
       ? `((source = 'pd') OR (source = 'gsc' AND ${legacyQP})) AND date >= date('now', '-${n} days')`
       : `((source = 'agg90' OR source = 'gsc') AND ${legacyQP})`;
-    const qpScopeG = n <= 35
-      ? `((g.source = 'pd') OR (g.source = 'gsc' AND g.query != '__daily_total__' AND g.page != '__7d_query__')) AND g.date >= date('now', '-${n} days')`
-      : `((g.source = 'agg90' OR g.source = 'gsc') AND g.query != '__daily_total__' AND g.page != '__7d_query__')`;
-    const qpScopeP = n <= 35
-      ? `((p.source = 'pd') OR (p.source = 'gsc' AND p.query != '__daily_total__' AND p.page != '__7d_query__')) AND p.date >= date('now', '-${n} days')`
-      : `((p.source = 'agg90' OR p.source = 'gsc') AND p.query != '__daily_total__' AND p.page != '__7d_query__')`;
     const cur = await env.DB.prepare(`
       SELECT SUM(clicks) as clicks, SUM(impressions) as impressions,
              ROUND(${WEIGHTED_POSITION}, 1) as avg_position
@@ -627,30 +617,24 @@ export async function handleGSCData(request: Request, env: Env, userId: string):
       ORDER BY date ASC
     `).bind(propertyId).all();
 
+    const rangeScope = `property_id = ? AND page IS NOT NULL AND ${qpScope}`;
     const rangeQuery = await env.DB.prepare(`
-      WITH rollup AS (
-        SELECT query, ROUND(${WEIGHTED_POSITION}, 1) as avg_position, SUM(impressions) as impressions
-        FROM gsc_search_data
-        WHERE property_id = ? AND ${qpScope}
-        GROUP BY query
-      )
+      WITH ${queryRollupCte(rangeScope)}
       SELECT
         SUM(CASE WHEN avg_position BETWEEN 11 AND 20 THEN 1 ELSE 0 END) as striking_distance,
         SUM(CASE WHEN avg_position <= 10 THEN 1 ELSE 0 END) as top_10
-      FROM rollup
+      FROM query_rollup
     `).bind(propertyId).first();
 
+    // Quick wins: queries whose top page sits at 5-20. The rollup already
+    // knows the top page, which replaces the old per-query correlated
+    // subquery (the single biggest D1 rows-read cost of this endpoint).
     const rangeOpps = await env.DB.prepare(`
-      SELECT g.query as query, SUM(g.clicks) as clicks, SUM(g.impressions) as impressions,
-             ROUND(${weightedPositionSql('g')}, 1) as avg_position, ROUND(${weightedCtrSql('g')}, 4) as avg_ctr,
-             (SELECT p.page FROM gsc_search_data p
-                WHERE p.property_id = g.property_id AND p.query = g.query
-                  AND p.page IS NOT NULL AND ${qpScopeP}
-                GROUP BY p.page ORDER BY SUM(p.impressions) DESC LIMIT 1) as page
-      FROM gsc_search_data g
-      WHERE g.property_id = ? AND ${qpScopeG}
-      GROUP BY g.query
-      HAVING ${weightedPositionSql('g')} BETWEEN 5 AND 20 AND SUM(g.impressions) > 10
+      WITH ${queryRollupCte(rangeScope)}
+      SELECT query, clicks, impressions, avg_position, avg_ctr,
+             top_page as page, all_pages_position, ranking_pages
+      FROM query_rollup
+      WHERE avg_position BETWEEN 5 AND 20 AND impressions > 10
       ORDER BY impressions DESC LIMIT 30
     `).bind(propertyId).all();
 
@@ -819,37 +803,29 @@ export async function handleGSCQueries(request: Request, env: Env, userId: strin
   const whereClause = `${baseWhere} ${searchClause}`;
   const params = searchParam ? [propertyId, searchParam] : [propertyId];
 
-  let havingClause = '';
+  let rollupFilter = '';
   // top10: no position filter, we just take the top 10 by traffic
-  // opportunities: position 5-20 with high impressions
+  // opportunities: top page at position 5-20 with high impressions
   if (filter === 'opportunities') {
-    havingClause = `HAVING ${WEIGHTED_POSITION} BETWEEN 5 AND 20 AND SUM(impressions) > 100`;
+    rollupFilter = 'WHERE avg_position BETWEEN 5 AND 20 AND impressions > 100';
   }
 
   const effectiveLimit = filter === 'top10' ? 10 : limit;
   const effectiveOffset = filter === 'top10' ? 0 : offset;
 
-  const countSql = `
-    SELECT COUNT(*) as total FROM (
-      SELECT query
-      FROM gsc_search_data WHERE ${whereClause}
-      GROUP BY query
-      ${havingClause}
-    )
-  `;
+  const countSql = filter === 'opportunities'
+    ? `WITH ${queryRollupCte(whereClause)} SELECT COUNT(*) as total FROM query_rollup ${rollupFilter}`
+    : `SELECT COUNT(DISTINCT query) as total FROM gsc_search_data WHERE ${whereClause}`;
   const countResult = await env.DB.prepare(countSql).bind(...params).first();
   const total = filter === 'top10' ? Math.min(Number(countResult?.total || 0), 10) : Number(countResult?.total || 0);
 
   const dataSql = `
-    SELECT query,
-           SUM(clicks) as clicks,
-           SUM(impressions) as impressions,
-           ROUND(${WEIGHTED_POSITION}, 1) as avg_position,
-           ROUND(${WEIGHTED_CTR}, 4) as avg_ctr
-    FROM gsc_search_data WHERE ${whereClause}
-    GROUP BY query
-    ${havingClause}
-    ORDER BY ${filter === 'top10' ? 'clicks DESC' : `${sortCol} ${sortOrder}`}
+    WITH ${queryRollupCte(whereClause)}
+    SELECT query, clicks, impressions, avg_position, avg_ctr,
+           all_pages_position, top_page, ranking_pages
+    FROM query_rollup
+    ${rollupFilter}
+    ORDER BY ${filter === 'top10' ? 'clicks DESC' : `${sortCol} ${sortOrder}`}, query
     LIMIT ? OFFSET ?
   `;
   const dataResult = await env.DB.prepare(dataSql).bind(...params, effectiveLimit, effectiveOffset).all();

@@ -9,7 +9,9 @@ interface PositionHistoryChartProps {
 
 export default function PositionHistoryChart({ history, keywordName }: PositionHistoryChartProps) {
   const chartData = useMemo(() => {
-    const reversed = [...history].reverse();
+    // Chart live SERP checks only: a GSC seed (Site Rankings estimate written
+    // when the keyword was added) would draw a fake jump into the first check.
+    const reversed = [...history].filter((entry) => entry.source !== 'gsc_seed').reverse();
     return reversed.map((entry) => ({
       date: new Date(`${entry.checked_at}Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       position: entry.position,
