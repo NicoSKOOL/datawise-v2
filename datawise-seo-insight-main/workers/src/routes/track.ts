@@ -74,7 +74,9 @@ export async function handlePageview(request: Request, env: Env): Promise<Respon
   }
 
   const sessionId = clamp(body.session_id, 64);
-  const path = clamp(body.path, 512);
+  // Drop any query string or fragment before storing. Old cached bundles sent
+  // pathname + search, which leaked session/reset tokens into this table.
+  const path = clamp(typeof body.path === 'string' ? body.path.split(/[?#]/)[0] : body.path, 512);
   if (!sessionId || !path) {
     return json({ error: 'session_id_and_path_required' }, 400);
   }
