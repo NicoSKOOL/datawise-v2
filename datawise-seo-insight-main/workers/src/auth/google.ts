@@ -61,8 +61,9 @@ export async function handleGoogleAuth(request: Request, env: Env): Promise<Resp
     redirect_uri: redirectUri,
     response_type: 'code',
     scope: 'openid email profile',
-    access_type: 'offline',
-    prompt: 'consent',
+    // Login only reads the profile once; no refresh token is needed, so no
+    // offline access. select_account keeps the Google account chooser.
+    prompt: 'select_account',
     state,
   });
 
