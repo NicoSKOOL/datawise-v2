@@ -10,7 +10,7 @@ import { handleGSCSync } from './sync';
 // Minimal recording fake of the D1 binding. Captures every prepared SQL string
 // and counts batch() calls so a test can assert whether a destructive rewrite
 // happened.
-function makeFakeDB(opts: { lastPdDate: string | null; agg90Stamp: string | null }) {
+function makeFakeDB(opts: { lastPdDate: string | null; agg90Stamp: string | null; lastDailyDate?: string | null }) {
   const prepared: string[] = [];
   const inserts: unknown[][] = [];
   let batchCalls = 0;
@@ -30,7 +30,7 @@ function makeFakeDB(opts: { lastPdDate: string | null; agg90Stamp: string | null
             return { id: 'p1', site_url: 'sc-domain:example.com' };
           }
           if (sql.includes('last_pd_date')) {
-            return { last_pd_date: opts.lastPdDate, agg90_stamp: opts.agg90Stamp };
+            return { last_pd_date: opts.lastPdDate, agg90_stamp: opts.agg90Stamp, last_daily_date: opts.lastDailyDate ?? null };
           }
           return null;
         },
@@ -253,5 +253,81 @@ describe('handleGSCSync long-tail write filter', () => {
     expect(queries).toContain('seven day q');
     expect(body.query_agg90_rows).toBe(1);
     expect(body.query_perday_rows).toBe(1);
+  });
+});
+
+describe('handleGSCSync write-volume cuts', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubFetch(dailyDates: string[], query7dCount: number) {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      const dims = (body.dimensions || []).join(',');
+      let rows: unknown[] = [];
+      if (dims === 'date') rows = dailyDates.map((d) => ({ keys: [d], clicks: 1, impressions: 10, ctr: 0.1, position: 5 }));
+      if (dims === 'query') {
+        // Ascending clicks, so the top-N must come from sorting, not input order.
+        rows = Array.from({ length: query7dCount }, (_, i) => ({ keys: [`q${i}`], clicks: i, impressions: 100, ctr: 0, position: 5 }));
+      }
+      return { ok: true, json: async () => ({ rows }), text: async () => '' };
+    }));
+  }
+
+  const dailyInserts = (fake: ReturnType<typeof makeFakeDB>) =>
+    fake.boundInserts().filter((args) => args[2] === '__daily_total__');
+  const sevenDayInserts = (fake: ReturnType<typeof makeFakeDB>) =>
+    fake.boundInserts().filter((args) => args[3] === '__7d_query__');
+
+  it('stores only the top 25 seven-day queries, by clicks', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-10-08', agg90Stamp: '2026-10-08', lastDailyDate: '2026-10-08' });
+    stubFetch(['2026-10-08'], 600);
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    const stored = sevenDayInserts(fake).map((args) => args[2]);
+    expect(stored).toHaveLength(25);
+    expect(stored[0]).toBe('q599');
+    expect(stored).not.toContain('q0');
+    expect(body.query_7d_rows).toBe(25);
+  });
+
+  it('incremental sync rewrites only daily totals from 2 days before the newest stored one', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-10-08', agg90Stamp: '2026-10-08', lastDailyDate: '2026-10-08' });
+    stubFetch(['2026-09-01', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'], 1);
+
+    const res = await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+    const body = (await res.json()) as any;
+
+    expect(dailyInserts(fake).map((args) => args[1])).toEqual(['2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09']);
+    expect(body.daily_rows).toBe(6);
+    expect(body.daily_rows_written).toBe(4);
+    // The wholesale delete is gone; the bounded one replaces it.
+    expect(fake.prepared.some((sql) => sql.includes("query = '__daily_total__' AND (date >= ? OR date < ?)"))).toBe(true);
+    expect(fake.prepared).not.toContain(`DELETE FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__'`);
+  });
+
+  it('writes every daily total when none are stored yet', async () => {
+    const fake = makeFakeDB({ lastPdDate: '2026-10-08', agg90Stamp: '2026-10-08', lastDailyDate: null });
+    const dates = ['2026-09-01', '2026-10-05', '2026-10-09'];
+    stubFetch(dates, 1);
+
+    await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+
+    // 2026-09-01 is only kept if it is inside the 90-day window, which it is
+    // for any run date before 2026-11-30; the point is nothing gets narrowed.
+    expect(dailyInserts(fake).map((args) => args[1])).toEqual(dates);
+  });
+
+  it('full-path sync writes every daily total even if some are stored', async () => {
+    const fake = makeFakeDB({ lastPdDate: null, agg90Stamp: null, lastDailyDate: '2026-10-08' });
+    const dates = ['2026-10-01', '2026-10-05', '2026-10-09'];
+    stubFetch(dates, 1);
+
+    await handleGSCSync(syncRequest(), { DB: fake.db } as any, 'user-1');
+
+    expect(dailyInserts(fake).map((args) => args[1])).toEqual(dates);
   });
 });
