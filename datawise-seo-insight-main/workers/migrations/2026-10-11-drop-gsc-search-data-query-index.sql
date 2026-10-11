@@ -1,0 +1,12 @@
+-- Drop the (property_id, query) index on gsc_search_data.
+--
+-- Every inserted gsc_search_data row is billed one extra D1 write per index.
+-- Query plans checked on prod 2026-10-11: almost every reader that picked this
+-- index only used its property_id prefix, which idx_gsc_search_data_property_date
+-- serves equally. The exceptions (all-time / weekly __daily_total__ sums) fall
+-- back to a per-property scan: ~40k rows on a typical property, ~525k on the
+-- largest, well inside the free rows-read allowance.
+--
+-- Rollback: re-run the CREATE below (billed ~1 write per table row).
+--   CREATE INDEX IF NOT EXISTS idx_gsc_search_data_query ON gsc_search_data(property_id, query);
+DROP INDEX IF EXISTS idx_gsc_search_data_query;

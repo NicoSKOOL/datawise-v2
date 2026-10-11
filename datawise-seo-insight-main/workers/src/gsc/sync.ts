@@ -24,6 +24,17 @@ const GSC_MAX_PAGES = 30;
 const GSC_SYNC_DELETE_CHUNK = 10000;
 const GSC_SYNC_MAX_DELETE_CHUNKS = 200;
 
+// Only the top of the 7-day query breakdown is ever read (dashboard
+// recent_queries LIMIT 25, SEO Assistant LIMIT 20), but every sync used to
+// store the whole list: ~570 rows on average, up to 25k, rewritten each time.
+// That was ~27% of all D1 rows written (measured 2026-10-11). Keep the top N.
+export const GSC_7D_QUERY_KEEP = 25;
+
+// Daily totals are dataState:'final', so a published day does not change.
+// Incremental syncs rewrite only this many days before the newest stored
+// total (late finalization at the edge) instead of all ~90 rows.
+const GSC_DAILY_OVERLAP_DAYS = 2;
+
 // Long-tail write filter. Zero-click rows with <=2 impressions were ~70% of
 // all stored gsc_search_data volume (measured 2026-08-12, DB at 9.06 GB of the
 // 10 GB cap) yet power no dashboard number: opportunities and page2 gate on
@@ -213,10 +224,12 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   // them, so the two formats still never coexist for a property.
   const syncState = await env.DB.prepare(
     `SELECT MAX(CASE WHEN source = 'pd' THEN date END) as last_pd_date,
-            MAX(CASE WHEN source = 'agg90' THEN date END) as agg90_stamp
+            MAX(CASE WHEN source = 'agg90' THEN date END) as agg90_stamp,
+            MAX(CASE WHEN query = '__daily_total__' THEN date END) as last_daily_date
        FROM gsc_search_data WHERE property_id = ?`
-  ).bind(property_id).first<{ last_pd_date: string | null; agg90_stamp: string | null }>();
+  ).bind(property_id).first<{ last_pd_date: string | null; agg90_stamp: string | null; last_daily_date: string | null }>();
   const lastPdDate = syncState?.last_pd_date || null;
+  const lastDailyDate = syncState?.last_daily_date || null;
   const incremental = lastPdDate !== null;
 
   // The 90-day aggregate cannot be built incrementally (it is one rolling
@@ -243,6 +256,17 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   } catch (err) {
     if (err instanceof GSCFetchError) return gscFailureResponse(err.failure, siteUrl);
     throw err;
+  }
+  // Totals and the empty-response guard below use the full 90-day fetch; only
+  // the rewrite is narrowed. Incremental syncs replace days from shortly
+  // before the newest stored total onward, plus trim days older than 90.
+  const ninetyDaysAgoStr = formatDate(ninetyDaysAgo);
+  let dailyWriteFrom = ninetyDaysAgoStr;
+  if (lastDailyDate) {
+    const overlap = new Date(`${lastDailyDate}T00:00:00Z`);
+    overlap.setUTCDate(overlap.getUTCDate() - GSC_DAILY_OVERLAP_DAYS);
+    const overlapStr = formatDate(overlap);
+    if (overlapStr > dailyWriteFrom) dailyWriteFrom = overlapStr;
   }
   const totalClicks = dailyRows.reduce((sum, row) => sum + Number(row.clicks || 0), 0);
   const totalImpressions = dailyRows.reduce((sum, row) => sum + Number(row.impressions || 0), 0);
@@ -334,7 +358,10 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
       rowLimit: 25000,
       dataState: 'final',
     });
-    query7dRows = data.rows || [];
+    query7dRows = (data.rows || [])
+      .slice()
+      .sort((a, b) => Number(b.clicks || 0) - Number(a.clicks || 0))
+      .slice(0, GSC_7D_QUERY_KEEP);
   } catch (err) {
     if (!(err instanceof GSCFetchError)) throw err;
     query7dFetched = false;
@@ -363,10 +390,11 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   } else {
     // Targeted deletes covering exactly the row sets rewritten below.
     const deletes = [
-      // Daily totals: ~90 rows, replaced wholesale (window slides daily).
+      // Daily totals inside the rewrite window, plus days that slid past 90.
+      // Range-bounded so the delete rides idx_gsc_search_data_property_date.
       env.DB.prepare(
-        `DELETE FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__'`
-      ).bind(property_id),
+        `DELETE FROM gsc_search_data WHERE property_id = ? AND query = '__daily_total__' AND (date >= ? OR date < ?)`
+      ).bind(property_id, dailyWriteFrom, ninetyDaysAgoStr),
       // Per-day rows inside the refetched overlap window.
       env.DB.prepare(
         `DELETE FROM gsc_search_data WHERE property_id = ? AND source = 'pd' AND date >= ?`
@@ -393,8 +421,12 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
   // 500/batch (D1 allows up to 1000 statements) keeps round-trips low so large
   // properties finish re-inserting well within the Worker time budget.
   const insertBatchSize = 500;
-  for (let i = 0; i < dailyRows.length; i += insertBatchSize) {
-    const batch = dailyRows.slice(i, i + insertBatchSize);
+  // Full path wiped everything above, so it writes the whole window.
+  const dailyWriteRows = incremental
+    ? dailyRows.filter(row => row.keys[0] >= dailyWriteFrom)
+    : dailyRows;
+  for (let i = 0; i < dailyWriteRows.length; i += insertBatchSize) {
+    const batch = dailyWriteRows.slice(i, i + insertBatchSize);
     const stmts = batch.map(row =>
       env.DB.prepare(
         'INSERT INTO gsc_search_data (property_id, date, query, page, clicks, impressions, ctr, position, device, country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -454,6 +486,7 @@ export async function handleGSCSync(request: Request, env: Env, userId: string):
     agg90_refreshed: refreshAgg90,
     rows_synced: totalRows,
     daily_rows: dailyRows.length,
+    daily_rows_written: incremental ? dailyWriteRows.length : dailyRows.length,
     query_7d_rows: query7dRows.length,
     query_agg90_rows: aggRows.length,
     query_perday_rows: perDayRows.length,

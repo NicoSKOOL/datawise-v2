@@ -101,7 +101,6 @@ CREATE TABLE IF NOT EXISTS gsc_search_data (
 );
 
 CREATE INDEX IF NOT EXISTS idx_gsc_search_data_property_date ON gsc_search_data(property_id, date);
-CREATE INDEX IF NOT EXISTS idx_gsc_search_data_query ON gsc_search_data(property_id, query);
 CREATE INDEX IF NOT EXISTS idx_search_data_source ON gsc_search_data(property_id, source, date);
 
 CREATE TABLE IF NOT EXISTS chat_conversations (
