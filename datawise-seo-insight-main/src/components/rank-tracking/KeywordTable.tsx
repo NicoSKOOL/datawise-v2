@@ -19,6 +19,8 @@ function formatLocale(locationCode: number, languageCode: string) {
   return `${location} / ${language}`;
 }
 
+const GSC_SEED_HINT = 'Estimate from Site Rankings (Search Console). Replaced by the live Google position at the next rank check, or click Check now.';
+
 function formatDate(value: string | null) {
   if (!value) return 'Never';
   return new Date(`${value}Z`).toLocaleDateString();
@@ -126,7 +128,12 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
                 <TableRow key={keyword.id} className="cursor-pointer hover:bg-muted/50" onClick={() => onViewHistory(keyword)}>
                   <TableCell className="font-medium">{keyword.keyword}</TableCell>
                   <TableCell className="text-center">
-                    {keyword.position != null ? (
+                    {keyword.position != null && keyword.position_source === 'gsc_seed' ? (
+                      <span className="inline-flex flex-col items-center leading-tight" title={GSC_SEED_HINT}>
+                        <Badge variant="outline" className="text-muted-foreground">~{keyword.position}</Badge>
+                        <span className="text-[10px] text-muted-foreground mt-0.5">GSC estimate</span>
+                      </span>
+                    ) : keyword.position != null ? (
                       <Badge
                         variant="secondary"
                         className={
@@ -163,7 +170,7 @@ export default function KeywordTable({ keywords, loading, onViewHistory, onDelet
                     </span>
                   </TableCell>
                   <TableCell className="text-center text-sm text-muted-foreground">
-                    {formatDate(keyword.checked_at)}
+                    {keyword.position_source === 'gsc_seed' ? 'Not yet' : formatDate(keyword.checked_at)}
                   </TableCell>
                   <TableCell>
                     <Button

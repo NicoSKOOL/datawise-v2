@@ -611,6 +611,9 @@ export default function RankTracking() {
       impressions: q.impressions,
       avg_position: q.avg_position,
       avg_ctr: q.avg_ctr,
+      all_pages_position: q.all_pages_position,
+      ranking_pages: q.ranking_pages,
+      top_page: q.top_page,
     }));
     const { column, order } = querySort;
     rows.sort((a, b) => {

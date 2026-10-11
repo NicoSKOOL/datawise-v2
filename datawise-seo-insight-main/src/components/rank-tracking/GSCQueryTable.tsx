@@ -124,7 +124,11 @@ export default function GSCQueryTable({
                 </button>
               </th>
               <th className="px-8 py-4 text-xs font-bold text-muted-foreground uppercase tracking-widest">
-                <button className="inline-flex items-center hover:text-foreground transition-colors" onClick={() => onSort('avg_position')}>
+                <button
+                  className="inline-flex items-center hover:text-foreground transition-colors"
+                  onClick={() => onSort('avg_position')}
+                  title={isPages ? undefined : 'Position of your best page for this keyword (the page with the most impressions)'}
+                >
                   Position <SortIcon column="avg_position" sort={sort} />
                 </button>
               </th>
@@ -156,6 +160,9 @@ export default function GSCQueryTable({
                           {isPages && (
                             <p className="text-xs text-muted-foreground truncate mt-0.5" title={label}>{label}</p>
                           )}
+                          {!isPages && row.top_page && (
+                            <p className="text-xs text-muted-foreground truncate mt-0.5" title={row.top_page}>{stripOrigin(row.top_page)}</p>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -169,6 +176,14 @@ export default function GSCQueryTable({
                     <td className="px-8 py-5 text-sm font-semibold text-muted-foreground tabular-nums">{formatPercent(row.avg_ctr, 100)}</td>
                     <td className="px-8 py-5">
                       <span className="font-headline font-extrabold text-lg tabular-nums">{row.avg_position}</span>
+                      {!isPages && row.ranking_pages != null && row.ranking_pages > 1 && row.all_pages_position != null && (
+                        <p
+                          className="text-xs text-muted-foreground whitespace-nowrap mt-0.5"
+                          title="Search Console's blended position across every page of your site that showed for this keyword"
+                        >
+                          {row.all_pages_position} across {row.ranking_pages} pages
+                        </p>
+                      )}
                     </td>
                     {!isPages && (
                       <td className="px-8 py-5 text-right">

@@ -52,7 +52,7 @@ export interface GSCOverviewData {
     impressions: number;
     avg_position: number;
     avg_ctr: number;
-  }>;
+  } & GSCTopPageFields>;
   top_pages: Array<{
     page: string;
     clicks: number;
@@ -65,11 +65,23 @@ export interface GSCOverviewData {
     impressions: number;
     avg_position: number;
     avg_ctr: number;
-  }>;
+  } & GSCTopPageFields>;
   range?: GSCRangeData;
 }
 
 export type GSCRangeDays = 7 | 14 | 30 | 90;
+
+/**
+ * Query rows report avg_position as the position of the query's TOP page (most
+ * impressions). These carry the context behind it: the blended Search Console
+ * number across every page that surfaced, how many pages competed, and which
+ * page is on top.
+ */
+export interface GSCTopPageFields {
+  all_pages_position?: number | null;
+  ranking_pages?: number | null;
+  top_page?: string | null;
+}
 
 export interface GSCRangeData {
   days: GSCRangeDays;
@@ -89,7 +101,7 @@ export interface GSCRangeData {
     avg_position: number;
     avg_ctr: number;
     page?: string | null;
-  }>;
+  } & GSCTopPageFields>;
   top_pages: Array<{
     page: string;
     clicks: number;
@@ -194,6 +206,9 @@ export interface GSCResultRow {
   avg_position: number;
   avg_ctr: number;
   query_count?: number;
+  all_pages_position?: number | null;
+  ranking_pages?: number | null;
+  top_page?: string | null;
 }
 
 export interface GSCQueriesResponse {
