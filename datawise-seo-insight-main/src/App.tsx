@@ -76,12 +76,15 @@ function ProtectedPage({ children, requireAdmin = false }: { children: React.Rea
 // Fires a pageview beacon to the worker on every route change. Lives inside
 // the Router so useLocation works, and inside AuthProvider so it can stamp the
 // authenticated user_id when known. Failures are swallowed by trackPageview.
+// Only the pathname is sent: query strings can carry credentials (the OAuth
+// callback's ?token= and the password reset link), and those must never reach
+// analytics storage. UTM/promo attribution is captured separately.
 function AnalyticsTracker() {
   const location = useLocation();
   const { user } = useAuth();
   useEffect(() => {
-    trackPageview(location.pathname + location.search, user?.id);
-  }, [location.pathname, location.search, user?.id]);
+    trackPageview(location.pathname, user?.id);
+  }, [location.pathname, user?.id]);
   return null;
 }
 
