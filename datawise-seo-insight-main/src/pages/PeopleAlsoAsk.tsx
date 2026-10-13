@@ -14,6 +14,7 @@ import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { AddToPlannerButton } from "@/components/planner/AddToPlannerButton";
 import { BulkSaveToPlannerButton } from "@/components/planner/BulkSaveToPlannerButton";
 import { normalizePlannerKeyword } from "@/lib/planner-keyword-selection";
+import { pickPaaExportRows } from "@/lib/paa-export";
 import type { PlannerItemInput } from "@/lib/planner";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useKeywordFilters } from "@/hooks/use-keyword-filters";
@@ -148,7 +149,8 @@ const PeopleAlsoAsk = () => {
       return;
     }
 
-    const csvData = data.map(item => ({
+    const exportRows = pickPaaExportRows(data, selectedQuestionKeys);
+    const csvData = exportRows.map(item => ({
       Position: item.position,
       Question: item.question,
       Answer: item.answer,
@@ -183,7 +185,7 @@ const PeopleAlsoAsk = () => {
     link.click();
     document.body.removeChild(link);
 
-    toast({ title: "CSV Downloaded", description: `${data.length} questions exported successfully` });
+    toast({ title: "CSV Downloaded", description: `${exportRows.length} questions exported successfully` });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -212,10 +214,17 @@ const PeopleAlsoAsk = () => {
       setIterationStats(result?.iteration_stats || {});
       setContentMap(result?.content_map || null);
 
-      toast({
-        title: "Success",
-        description: `Found ${result?.data?.length || 0} items across ${result?.api_calls_made || 1} searches at ${result?.clicks_simulated || 1} depth levels`,
-      });
+      if (!result?.data?.length) {
+        toast({
+          title: "No questions found",
+          description: "Google showed no People Also Ask questions for this keyword and location. Try a broader keyword. You were not charged for this search.",
+        });
+      } else {
+        toast({
+          title: "Success",
+          description: `Found ${result.data.length} items across ${result?.api_calls_made || 1} searches at ${result?.clicks_simulated || 1} depth levels`,
+        });
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to fetch People Also Ask data";
       console.error('Error fetching People Also Ask data:', error);
@@ -280,6 +289,10 @@ const PeopleAlsoAsk = () => {
       }];
     });
   }, [depth, extractionMethod, filteredData, keyword, language, location, selectedQuestionKeys]);
+
+  const csvButtonLabel = selectedQuestionKeys.size > 0
+    ? `Download ${selectedQuestionKeys.size} selected`
+    : "Download CSV";
 
   const toggleQuestionSelection = (keywordKey: string, checked: boolean) => {
     setSelectedQuestionKeys((current) => {
@@ -508,7 +521,7 @@ const PeopleAlsoAsk = () => {
                         </div>
                         <Button onClick={handleDownloadCSV} variant="outline" size="sm" className="flex items-center gap-2">
                           <Download className="h-4 w-4" />
-                          Export CSV
+                          {csvButtonLabel}
                         </Button>
                       </div>
                     </CardHeader>
@@ -560,7 +573,7 @@ const PeopleAlsoAsk = () => {
                       </div>
                       <Button onClick={handleDownloadCSV} variant="outline" size="sm" className="flex items-center gap-2">
                         <Download className="h-4 w-4" />
-                        Export CSV
+                        {csvButtonLabel}
                       </Button>
                     </div>
 
@@ -615,7 +628,7 @@ const PeopleAlsoAsk = () => {
                       </div>
                       <Button onClick={handleDownloadCSV} variant="outline" size="sm" className="flex items-center gap-2">
                         <Download className="h-4 w-4" />
-                        Download CSV
+                        {csvButtonLabel}
                       </Button>
                     </div>
                   </CardHeader>

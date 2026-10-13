@@ -245,27 +245,47 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
   // we must not batch tasks into one request. `people_also_ask_click_depth`
   // makes DFS expand the PAA accordion server-side, returning ~12 questions
   // per call instead of ~4, which is what gets coverage to 50+ across the BFS.
+  //
+  // A failed call (thrown error or non-20000 task) is retried once, then
+  // reported as failed rather than as an empty SERP. Swallowing failures as
+  // "no items" made a DFS outage look like "Success: found 0 items" and still
+  // cost the member a credit (bug 539b2e15).
+  const requestSerp = async (keywordToSearch: string): Promise<any[]> => {
+    const data = await dataforseoRequest(
+      env,
+      '/serp/google/organic/live/advanced',
+      [{
+        keyword: keywordToSearch,
+        location_code: parseInt(location),
+        language_code: language,
+        device: 'desktop',
+        os: 'windows',
+        people_also_ask_click_depth: 4,
+      }],
+      45_000,
+    );
+    const task = data?.tasks?.[0];
+    if (!task || task.status_code !== 20000) {
+      throw new Error(`DataForSEO task failed: ${task?.status_code ?? 'no task'} ${task?.status_message ?? ''}`.trim());
+    }
+    return task.result?.[0]?.items || [];
+  };
+
+  let failedCalls = 0;
+  let lastError = '';
   const fetchSerpItems = async (
     current: { keyword: string; depth: number; parentKeyword: string }
   ): Promise<{ current: typeof current; items: any[] }> => {
-    try {
-      const data = await dataforseoRequest(
-        env,
-        '/serp/google/organic/live/advanced',
-        [{
-          keyword: current.keyword,
-          location_code: parseInt(location),
-          language_code: language,
-          device: 'desktop',
-          os: 'windows',
-          people_also_ask_click_depth: 4,
-        }],
-        45_000,
-      );
-      return { current, items: data?.tasks?.[0]?.result?.[0]?.items || [] };
-    } catch {
-      return { current, items: [] };
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return { current, items: await requestSerp(current.keyword) };
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        console.error(`PAA SERP call failed (attempt ${attempt}) for "${current.keyword}":`, lastError);
+      }
     }
+    failedCalls += 1;
+    return { current, items: [] };
   };
 
   // BFS through PAA questions at increasing depth. Each round dispatches up to
@@ -298,6 +318,17 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
     }
   }
 
+  // Every search failed: this is a provider error, not an empty topic. A 5xx
+  // makes withCredit refund the credit.
+  if (apiCallsMade > 0 && failedCalls === apiCallsMade) {
+    console.error(`PAA: all ${apiCallsMade} SERP calls failed for "${keyword}". Last error: ${lastError}`);
+    return json({
+      error: "Our search data provider didn't respond, so no questions could be fetched. Please try again in a few minutes. You were not charged for this search.",
+      failed_calls: failedCalls,
+      api_calls_made: apiCallsMade,
+    }, 502);
+  }
+
   // Build source stats
   const sourceStats: Record<string, number> = {};
   for (const item of allItems) {
@@ -324,6 +355,9 @@ export async function handlePeopleAlsoAsk(request: Request, env: Env): Promise<R
     keywords_searched: Array.from(searchedKeywords),
     iteration_stats: iterationStats,
     content_map: contentMap,
+    failed_calls: failedCalls,
+    // Tells withCredit to refund: a credit pays for a result.
+    ...(allItems.length === 0 ? { no_results: true } : {}),
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 
