@@ -21,6 +21,10 @@ import { locationOptions, languageOptions } from "@/lib/dataForSeoLocations";
 import { ExportMenu } from "@/components/export/ExportMenu";
 import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
 
+// DataForSEO ranked_keywords returns at most 1000 rows per call, so "load all"
+// means "load up to 1000".
+const MAX_LIMIT = 1000;
+
 export default function RankedKeywords() {
   const [domain, setDomain] = usePersistentState<string>("competitor:ranked-keywords:domain", "");
   // Seed from the account default (Settings > Default Location & Language). The
@@ -54,8 +58,9 @@ export default function RankedKeywords() {
     { value: "1000", label: "All keywords" }
   ];
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = async (limitOverride?: string) => {
     if (!domain.trim()) return;
+    const requestLimit = limitOverride ?? limit;
     
     setLoading(true);
     setResults([]);
@@ -67,7 +72,7 @@ export default function RankedKeywords() {
         target: domain.trim(),
         location_code: parseInt(location),
         language_code: language,
-        limit: parseInt(limit)
+        limit: parseInt(requestLimit)
       });
 
       if (data?.tasks?.[0]?.result?.[0]?.items) {
@@ -114,6 +119,14 @@ export default function RankedKeywords() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const canLoadMore = totalAvailable > results.length && results.length < MAX_LIMIT;
+
+  const handleLoadAll = () => {
+    if (!canLoadMore || loading) return;
+    setLimit(String(MAX_LIMIT));
+    handleAnalyze(String(MAX_LIMIT));
   };
 
   return (
@@ -200,7 +213,7 @@ export default function RankedKeywords() {
           
           <div className="flex justify-start">
             <Button 
-              onClick={handleAnalyze} 
+              onClick={() => handleAnalyze()}
               disabled={loading || !domain.trim()}
               className="w-full md:w-auto"
             >
@@ -224,12 +237,26 @@ export default function RankedKeywords() {
             </CardContent>
           </Card>
 
-          <Card className="cursor-pointer hover:bg-accent/50 transition-colors" onClick={() => totalAvailable > results.length && setLimit("1000")}>
+          {/* Clicking used to only change the limit dropdown, so nothing
+              visibly happened (bug efdf0bf8). It now re-runs the search. */}
+          <Card
+            className={canLoadMore ? "cursor-pointer hover:bg-accent/50 transition-colors" : undefined}
+            onClick={handleLoadAll}
+            role={canLoadMore ? "button" : undefined}
+            tabIndex={canLoadMore ? 0 : undefined}
+            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleLoadAll()}
+          >
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center justify-between">
                 Total Available
-                {totalAvailable > results.length && (
-                  <span className="text-xs text-primary">Click to load all</span>
+                {canLoadMore && (
+                  <span className="text-xs text-primary">
+                    {loading
+                      ? "Loading..."
+                      : totalAvailable > MAX_LIMIT
+                        ? `Click to load top ${MAX_LIMIT.toLocaleString()}`
+                        : "Click to load all"}
+                  </span>
                 )}
               </CardTitle>
             </CardHeader>
@@ -238,7 +265,11 @@ export default function RankedKeywords() {
                 {totalAvailable?.toLocaleString() || "--"}
               </div>
               <p className="text-xs text-muted-foreground">
-                {totalAvailable > results.length ? "available keywords" : "all loaded"}
+                {canLoadMore
+                  ? "available keywords"
+                  : totalAvailable > results.length
+                    ? `showing the top ${MAX_LIMIT.toLocaleString()} (the most one search returns)`
+                    : "all loaded"}
               </p>
             </CardContent>
           </Card>
