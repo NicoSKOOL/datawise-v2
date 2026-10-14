@@ -98,6 +98,9 @@ export async function refundCredit(env: Env, userId: string, cost = 1): Promise<
 export function shouldRefundCredit(status: number, body: unknown): boolean {
   if (status >= 400) return true;
   if (!body || typeof body !== 'object') return false;
+  // Aggregating handlers (e.g. People Also Ask) don't return a raw DFS shape,
+  // so they flag an empty run explicitly.
+  if ((body as { no_results?: unknown }).no_results === true) return true;
   const tasks = (body as { tasks?: unknown }).tasks;
   if (!Array.isArray(tasks)) return false;
   const task = tasks[0] as { status_code?: number; result?: unknown } | undefined;
