@@ -52,6 +52,10 @@ import {
 type Platform = 'google' | 'chat_gpt';
 type SortKey = 'recent' | 'oldest' | 'sources' | 'alpha';
 
+function stripWww(domain: string): string {
+  return domain.replace(/^www\./, '');
+}
+
 function fmt(n: number | undefined): string {
   if (!n) return '0';
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -425,8 +429,10 @@ export default function BrandTracker() {
   // activeDomain.
   const [activeDomainRaw, setActiveDomain] = usePersistentState<string>('brand-tracker:active-domain', '');
   // Lowercase at read too: persisted values from before the case fix may
-  // still be mixed case, and DFS matches domains case-sensitively.
-  const activeDomain = activeDomainRaw.toLowerCase();
+  // still be mixed case, and DFS matches domains case-sensitively. Strip www
+  // the same way handleAnalyze does, so a persisted www. value never differs
+  // from a re-analyzed one.
+  const activeDomain = stripWww(activeDomainRaw.toLowerCase());
   const [inputDomain, setInputDomain] = useState(activeDomain || defaultDomain || '');
   const [googleActive, setGoogleActive] = usePersistentState<boolean>('brand-tracker:google-active', true);
   const [chatgptActive, setChatgptActive] = usePersistentState<boolean>('brand-tracker:chatgpt-active', false);
@@ -450,7 +456,11 @@ export default function BrandTracker() {
   // still works via the input below; a banner flags it until the user goes
   // back or switches sites. Without a connected property the old behavior
   // (persisted domain, defaults fallback) is unchanged.
-  const selectedSiteDomain = (primaryDomain || '').toLowerCase();
+  // www is stripped because handleAnalyze strips it: a property saved as
+  // www.example.com otherwise never matched the analyzed example.com, so the
+  // "not your selected website" banner stuck on (bug b0da7e01). Queries use
+  // include_subdomains, so the apex still covers www citations.
+  const selectedSiteDomain = stripWww((primaryDomain || '').toLowerCase());
   useEffect(() => {
     if (!selectedSiteDomain) return;
     setActiveDomain(selectedSiteDomain);
