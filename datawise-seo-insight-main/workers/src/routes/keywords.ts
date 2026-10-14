@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequestCached } from '../dataforseo/client';
+import { pickRelevantKeywords } from './keyword-relevance';
 
 // Labs endpoints (keyword volume, ideas, related, suggestions, difficulty, overview)
 // are read-mostly: DataForSEO refreshes the underlying data on a monthly cycle, so a
@@ -23,13 +24,14 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
       depth: 2,
       filters: [['keyword_data.keyword_info.search_volume', '>', 0]],
     }], { ttlSeconds: LABS_TTL_SECONDS }),
+    // No order_by: DFS defaults to relevance. Ordering by volume returned the
+    // biggest keywords in the seed's whole category instead (bug ebb0cef0).
     dataforseoRequestCached(env, '/dataforseo_labs/google/keyword_ideas/live', [{
       keywords: [keyword],
       location_code,
       language_code,
       limit: Math.min(limit, 1000),
       filters: [['keyword_info.search_volume', '>', 0]],
-      order_by: ['keyword_info.search_volume,desc'],
     }], { ttlSeconds: LABS_TTL_SECONDS }),
   ]);
 
@@ -65,8 +67,13 @@ export async function handleRelatedKeywords(request: Request, env: Env): Promise
     search_intent_info: item.search_intent_info ?? null,
   }));
 
-  allKeywords.sort((a, b) => b.search_volume - a.search_volume);
-  const finalKeywords = allKeywords.slice(0, limit);
+  const finalKeywords = pickRelevantKeywords(
+    keyword,
+    allKeywords,
+    limit,
+    (kw) => kw.keyword,
+    (kw) => kw.search_volume,
+  );
 
   // Return in the format the frontend expects
   const response = {
@@ -119,7 +126,8 @@ export async function handleKeywordIdeas(request: Request, env: Env): Promise<Re
     language_code,
     limit: 100,
     filters: [['keyword_info.search_volume', '>', 0]],
-    order_by: ['keyword_info.search_volume,desc'],
+    // No order_by: DFS defaults to relevance. Volume order returned the
+    // category's biggest unrelated terms (bug ebb0cef0).
   }], { ttlSeconds: LABS_TTL_SECONDS });
 
   return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });

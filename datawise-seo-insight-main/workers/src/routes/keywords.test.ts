@@ -8,7 +8,7 @@ vi.mock('../dataforseo/client', () => ({
   },
 }));
 
-import { handleKeywordOverview } from './keywords';
+import { handleKeywordOverview, handleRelatedKeywords } from './keywords';
 
 // Bug 7d3588e0: KD showed a dash on the Overview tab because keyword_overview
 // returns keyword_difficulty: null for seeds DataForSEO has not precomputed.
@@ -59,5 +59,32 @@ describe('handleKeywordOverview keyword difficulty fallback', () => {
     dfs.impl = () => ({ tasks: [{ status_code: 20000, result: [{ items: [] }] }] });
     await handleKeywordOverview(req({ keyword: 'zzz' }), {} as any);
     expect(dfs.calls).toHaveLength(1);
+  });
+});
+
+describe('handleRelatedKeywords relevance (bug ebb0cef0)', () => {
+  const relReq = (body: unknown) => new Request('https://x/api/keywords/related', { method: 'POST', body: JSON.stringify(body) });
+
+  it('asks keyword_ideas for relevance order and caps by seed relevance, not volume', async () => {
+    dfs.impl = (path) => {
+      if (path.includes('related_keywords')) {
+        return { tasks: [{ result: [{ items: [
+          { keyword_data: { keyword: 'wordpress wartung', keyword_info: { search_volume: 590 } } },
+          { keyword_data: { keyword: 'wordpress pflege', keyword_info: { search_volume: 500 } } },
+        ] }] }] };
+      }
+      return { tasks: [{ result: [{ items: [
+        { keyword: '2 bundesliga spiele', keyword_info: { search_volume: 3350000 } },
+        { keyword: 'wordpress wartung kosten', keyword_info: { search_volume: 300 } },
+      ] }] }] };
+    };
+
+    const res = await handleRelatedKeywords(relReq({ keyword: 'wordpress wartung', location_code: 2276, language_code: 'de', limit: 3 }), {} as any);
+    const body = await res.json() as any;
+    const keywords = body.tasks[0].result[0].items.map((i: any) => i.keyword_data.keyword);
+
+    const ideasCall = dfs.calls.find((c) => c.path.includes('keyword_ideas'));
+    expect(ideasCall?.payload[0].order_by).toBeUndefined();
+    expect(keywords).toEqual(['wordpress wartung', 'wordpress pflege', 'wordpress wartung kosten']);
   });
 });
