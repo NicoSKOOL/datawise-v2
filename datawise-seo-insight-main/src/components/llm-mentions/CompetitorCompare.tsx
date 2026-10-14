@@ -19,11 +19,21 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Info, X, Plus, Users } from 'lucide-react';
 import { Tooltip as UiTooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { fetchLlmCrossAggregate, sumDim, type LlmMentionTarget } from '@/lib/llm-mentions';
+import {
+  CHATGPT_LANGUAGE_CODE,
+  CHATGPT_LOCATION_CODE,
+  isChatGptMarket,
+  marketLabel,
+  type LlmMarket,
+} from '@/lib/llm-mentions-locales';
 
 type Platform = 'google' | 'chat_gpt';
 
 interface CompetitorCompareProps {
   userDomain: string;
+  // Market chosen on Brand Tracker. Google AIO compares in it; ChatGPT is
+  // indexed for US English only and always uses that.
+  market: LlmMarket;
   enabled: boolean;
 }
 
@@ -61,7 +71,7 @@ function fmt(n: number): string {
   return String(n);
 }
 
-export function CompetitorCompare({ userDomain, enabled }: CompetitorCompareProps) {
+export function CompetitorCompare({ userDomain, market, enabled }: CompetitorCompareProps) {
   const [draft, setDraft] = useState('');
   const [competitors, setCompetitors] = useState<string[]>([]);
   const [platform, setPlatform] = useState<Platform>('google');
@@ -97,14 +107,31 @@ export function CompetitorCompare({ userDomain, enabled }: CompetitorCompareProp
     [userDomain, activeCompetitors]
   );
 
+  const effectiveMarket: LlmMarket =
+    platform === 'chat_gpt'
+      ? { locationCode: CHATGPT_LOCATION_CODE, languageCode: CHATGPT_LANGUAGE_CODE }
+      : market;
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ['llm-cross-aggregate', userDomain, platform, activeCompetitors.join(',')],
+    queryKey: [
+      'llm-cross-aggregate',
+      userDomain,
+      platform,
+      effectiveMarket.locationCode,
+      effectiveMarket.languageCode,
+      activeCompetitors.join(','),
+    ],
     queryFn: () => {
       const targets = queryDomains.map((d) => ({
         aggregation_key: shortKey(d),
         target: [{ domain: d, include_subdomains: true }] as LlmMentionTarget[],
       }));
-      return fetchLlmCrossAggregate({ targets, platform });
+      return fetchLlmCrossAggregate({
+        targets,
+        platform,
+        location_code: effectiveMarket.locationCode,
+        language_code: effectiveMarket.languageCode,
+      });
     },
     enabled: queryDomains.length >= 2,
     staleTime: 5 * 60 * 1000,
@@ -189,6 +216,10 @@ export function CompetitorCompare({ userDomain, enabled }: CompetitorCompareProp
               >
                 ChatGPT
               </button>
+              <span className="text-xs text-muted-foreground">
+                {marketLabel(effectiveMarket)}
+                {platform === 'chat_gpt' && !isChatGptMarket(market) && ' (ChatGPT is indexed for US English only)'}
+              </span>
             </div>
 
             {/* Competitor input */}

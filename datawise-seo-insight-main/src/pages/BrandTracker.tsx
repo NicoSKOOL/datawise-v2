@@ -39,6 +39,15 @@ import { CompetitorCompare } from '@/components/llm-mentions/CompetitorCompare';
 import { useDefaults } from '@/hooks/use-defaults';
 import { usePersistentState } from '@/hooks/use-persistent-state';
 import { matchesAllTerms, splitFilterTerms } from '@/lib/result-filter';
+import { MarketSelect } from '@/components/llm-mentions/MarketSelect';
+import {
+  CHATGPT_LANGUAGE_CODE,
+  CHATGPT_LOCATION_CODE,
+  isChatGptMarket,
+  marketLabel,
+  normalizeMarket,
+  type LlmMarket,
+} from '@/lib/llm-mentions-locales';
 
 type Platform = 'google' | 'chat_gpt';
 type SortKey = 'recent' | 'oldest' | 'sources' | 'alpha';
@@ -67,18 +76,22 @@ function platformColor(platform: string | undefined): string {
 function TopDomainsCard({
   domain,
   platform,
+  market,
   enabled,
 }: {
   domain: string;
   platform: Platform;
+  market: LlmMarket;
   enabled: boolean;
 }) {
   const { data, isLoading, error } = useQuery({
-    queryKey: ['llm-top-domains', domain, platform],
+    queryKey: ['llm-top-domains', domain, platform, market.locationCode, market.languageCode],
     queryFn: () =>
       fetchLlmTopDomains({
         target: [{ domain, include_subdomains: true }],
         platform,
+        location_code: market.locationCode,
+        language_code: market.languageCode,
         links_scope: 'sources',
         items_list_limit: 10,
       }),
@@ -402,7 +415,7 @@ function AnswersTable({
 }
 
 export default function BrandTracker() {
-  const { defaultDomain } = useDefaults();
+  const { defaultDomain, defaultLocation, defaultLanguage } = useDefaults();
   const { primaryDomain } = useProperty();
   const { toast } = useToast();
   // activeDomain + platform toggles persist so returning to Brand Tracker
@@ -417,6 +430,19 @@ export default function BrandTracker() {
   const [inputDomain, setInputDomain] = useState(activeDomain || defaultDomain || '');
   const [googleActive, setGoogleActive] = usePersistentState<boolean>('brand-tracker:google-active', true);
   const [chatgptActive, setChatgptActive] = usePersistentState<boolean>('brand-tracker:chatgpt-active', false);
+  // Market the Google AIO data is pulled for. Was hardcoded to US English,
+  // so non-US sites showed zero mentions (bug 2c7b1a99: a Spanish site saw
+  // 1 mention for a competitor that has 10 in Spain). Seeds from the user's
+  // Settings defaults; normalized on read so a stale or unsupported pair
+  // never reaches DFS.
+  const [storedMarket, setMarket] = usePersistentState<LlmMarket>(
+    'brand-tracker:market',
+    normalizeMarket(Number(defaultLocation), defaultLanguage),
+  );
+  const market = normalizeMarket(Number(storedMarket?.locationCode), storedMarket?.languageCode ?? '');
+  // ChatGPT is indexed for US English only, so it always queries that market.
+  const chatgptMarket: LlmMarket = { locationCode: CHATGPT_LOCATION_CODE, languageCode: CHATGPT_LANGUAGE_CODE };
+  const chatgptOutsideMarket = chatgptActive && !isChatGptMarket(market);
 
   // The top-left site selector decides which website this tab analyzes: on
   // first load and whenever the selection changes, it overrides whatever
@@ -449,22 +475,26 @@ export default function BrandTracker() {
   ];
 
   const googleAgg = useQuery({
-    queryKey: ['llm-aggregate', activeDomain, 'google'],
+    queryKey: ['llm-aggregate', activeDomain, 'google', market.locationCode, market.languageCode],
     queryFn: () =>
       fetchLlmAggregate({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'google',
+        location_code: market.locationCode,
+        language_code: market.languageCode,
       }),
     enabled: analysisEnabled && googleActive,
     staleTime: 5 * 60 * 1000,
   });
 
   const chatgptAgg = useQuery({
-    queryKey: ['llm-aggregate', activeDomain, 'chat_gpt'],
+    queryKey: ['llm-aggregate', activeDomain, 'chat_gpt', chatgptMarket.locationCode, chatgptMarket.languageCode],
     queryFn: () =>
       fetchLlmAggregate({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'chat_gpt',
+        location_code: chatgptMarket.locationCode,
+        language_code: chatgptMarket.languageCode,
       }),
     enabled: analysisEnabled && chatgptActive,
     staleTime: 5 * 60 * 1000,
@@ -480,11 +510,13 @@ export default function BrandTracker() {
   // query is the unit we cache and paginate against. React Query keys by
   // platform so toggling is race-free.
   const googleSearch = useQuery({
-    queryKey: ['llm-search', activeDomain, 'google'],
+    queryKey: ['llm-search', activeDomain, 'google', market.locationCode, market.languageCode],
     queryFn: () =>
       fetchLlmSearch({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'google',
+        location_code: market.locationCode,
+        language_code: market.languageCode,
         limit: 100,
       }),
     enabled: analysisEnabled && googleActive,
@@ -492,11 +524,13 @@ export default function BrandTracker() {
   });
 
   const chatgptSearch = useQuery({
-    queryKey: ['llm-search', activeDomain, 'chat_gpt'],
+    queryKey: ['llm-search', activeDomain, 'chat_gpt', chatgptMarket.locationCode, chatgptMarket.languageCode],
     queryFn: () =>
       fetchLlmSearch({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'chat_gpt',
+        location_code: chatgptMarket.locationCode,
+        language_code: chatgptMarket.languageCode,
         limit: 100,
       }),
     enabled: analysisEnabled && chatgptActive,
@@ -509,22 +543,26 @@ export default function BrandTracker() {
   // search. Platforms are requested separately because DFS merges them
   // otherwise, which would break the toggles.
   const googleChart = useQuery({
-    queryKey: ['llm-historical', activeDomain, 'google'],
+    queryKey: ['llm-historical', activeDomain, 'google', market.locationCode, market.languageCode],
     queryFn: () =>
       fetchLlmHistorical({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'google',
+        location_code: market.locationCode,
+        language_code: market.languageCode,
       }),
     enabled: analysisEnabled && googleActive,
     staleTime: 5 * 60 * 1000,
   });
 
   const chatgptChart = useQuery({
-    queryKey: ['llm-historical', activeDomain, 'chat_gpt'],
+    queryKey: ['llm-historical', activeDomain, 'chat_gpt', chatgptMarket.locationCode, chatgptMarket.languageCode],
     queryFn: () =>
       fetchLlmHistorical({
         target: [{ domain: activeDomain, include_subdomains: true }],
         platform: 'chat_gpt',
+        location_code: chatgptMarket.locationCode,
+        language_code: chatgptMarket.languageCode,
       }),
     enabled: analysisEnabled && chatgptActive,
     staleTime: 5 * 60 * 1000,
@@ -541,13 +579,13 @@ export default function BrandTracker() {
     setChatgptExtra([]);
     setChatgptToken(chatgptSearch.data?.search_after_token);
   }, [chatgptSearch.data]);
-  // Reset extras when switching domain so stale rows never bleed across analyses.
+  // Reset extras when switching domain or market so stale rows never bleed across analyses.
   useEffect(() => {
     setGoogleExtra([]);
     setGoogleToken(undefined);
     setChatgptExtra([]);
     setChatgptToken(undefined);
-  }, [activeDomain]);
+  }, [activeDomain, market.locationCode, market.languageCode]);
 
   const searchRows = useMemo<LlmSearchRow[]>(() => {
     const g = googleActive ? [...(googleSearch.data?.items || []), ...googleExtra] : [];
@@ -577,6 +615,8 @@ export default function BrandTracker() {
           fetchLlmSearch({
             target: [{ domain: activeDomain, include_subdomains: true }],
             platform: 'google',
+            location_code: market.locationCode,
+            language_code: market.languageCode,
             limit: 100,
             search_after_token: googleToken,
           }).then((result) => {
@@ -591,6 +631,8 @@ export default function BrandTracker() {
           fetchLlmSearch({
             target: [{ domain: activeDomain, include_subdomains: true }],
             platform: 'chat_gpt',
+            location_code: chatgptMarket.locationCode,
+            language_code: chatgptMarket.languageCode,
             limit: 100,
             search_after_token: chatgptToken,
           }).then((result) => {
@@ -672,7 +714,7 @@ export default function BrandTracker() {
 
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row gap-4 items-end">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 sm:items-end">
             <div className="flex-1 space-y-1.5">
               <Label htmlFor="bt-domain">Domain</Label>
               <Input
@@ -683,6 +725,8 @@ export default function BrandTracker() {
                 onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
               />
             </div>
+
+            <MarketSelect value={market} onChange={setMarket} idPrefix="bt" />
 
             <div className="space-y-1.5">
               <Label>Platforms</Label>
@@ -713,7 +757,7 @@ export default function BrandTracker() {
                       <Info className="h-3.5 w-3.5 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-xs text-xs">
-                      ChatGPT data is US + English only (DataForSEO limitation).
+                      ChatGPT data is US + English only (DataForSEO limitation), whatever market you pick.
                     </TooltipContent>
                   </Tooltip>
                 </div>
@@ -725,6 +769,14 @@ export default function BrandTracker() {
               Analyze
             </Button>
           </div>
+          {chatgptOutsideMarket && (
+            <p className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                Google AI Overview shows {marketLabel(market)}. ChatGPT is only indexed for United States · English, so its numbers come from that market.
+              </span>
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -797,6 +849,11 @@ export default function BrandTracker() {
                   accent="orange"
                   help="Unique external domains the LLM cites as sources alongside yours. Shows which sites you are being co-cited with when answering user questions."
                 />
+                {!kpiLoading && totalMentions === 0 && (
+                  <p className="col-span-2 text-xs text-muted-foreground">
+                    No mentions in the AI search index for {marketLabel(market)}. The index samples past AI answers, so smaller sites can be cited live and still be missing here. Check another market above, or use Instant Check for a live answer.
+                  </p>
+                )}
               </div>
             )}
           </CardContent>
@@ -806,6 +863,7 @@ export default function BrandTracker() {
           <TopDomainsCard
             domain={activeDomain}
             platform={topDomainsPlatform}
+            market={topDomainsPlatform === 'chat_gpt' ? chatgptMarket : market}
             enabled={analysisEnabled}
           />
         </div>
@@ -852,7 +910,7 @@ export default function BrandTracker() {
                     last_seen: r.last_response_at ?? '',
                     answer_excerpt: (r.answer || '').replace(/\s+/g, ' ').trim().slice(0, 300),
                   })),
-                  `brand-tracker-${activeDomain}-${new Date().toISOString().slice(0, 10)}`
+                  `brand-tracker-${activeDomain}-${market.locationCode}-${market.languageCode}-${new Date().toISOString().slice(0, 10)}`
                 )
               }
             >
@@ -887,7 +945,7 @@ export default function BrandTracker() {
         }
       />
 
-      <CompetitorCompare userDomain={activeDomain} enabled={analysisEnabled} />
+      <CompetitorCompare userDomain={activeDomain} market={market} enabled={analysisEnabled} />
     </div>
   );
 }
