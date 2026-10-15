@@ -1,5 +1,6 @@
 import type { Env } from '../index';
 import { dataforseoRequest, dataforseoRequestCached, dataforseoGetCached, extractResult } from '../dataforseo/client';
+import { pickRelevantKeywords } from './keyword-relevance';
 
 const json = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
@@ -127,7 +128,7 @@ export async function handleRelatedKeywordsPublic(request: Request, env: Env): P
         language_code,
         limit: 50,
         filters: [['keyword_info.search_volume', '>', 0]],
-        order_by: ['keyword_info.search_volume,desc'],
+        // No order_by: DFS defaults to relevance (bug ebb0cef0).
       }]),
     ]);
 
@@ -164,8 +165,7 @@ export async function handleRelatedKeywordsPublic(request: Request, env: Env): P
       );
     }
 
-    merged.sort((a, b) => b.volume - a.volume);
-    const capped = merged.slice(0, 25);
+    const capped = pickRelevantKeywords(keyword, merged, 25, (r) => r.keyword, (r) => r.volume);
 
     return json({
       keyword,
