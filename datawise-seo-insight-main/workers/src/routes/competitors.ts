@@ -33,14 +33,51 @@ export function sanitizeDomainTarget(raw: string): string {
     .replace(/[/?#].*$/, '');
 }
 
+// Page mode for Ranked Keywords. DFS does accept a full page URL as the
+// target, but matches it exactly: a trailing slash or a missing www. returns
+// zero rows (verified live 2026-10-23). So instead we query the bare domain and
+// filter on relative_url with both slash variants, which absorbs www and slash
+// differences in one call. Path case is preserved; query and fragment dropped.
+// Returns null when the input has no parseable host. Exported for tests.
+export function parsePageTarget(raw: string): { domain: string; paths: string[] } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    return null;
+  }
+  const domain = sanitizeDomainTarget(url.hostname);
+  if (!domain || !domain.includes('.')) return null;
+  const path = url.pathname || '/';
+  if (path === '/') return { domain, paths: ['/'] };
+  const bare = path.replace(/\/+$/, '');
+  return { domain, paths: [bare, `${bare}/`] };
+}
+
 // POST /api/competitors/ranked-keywords
+// scope 'domain' (default): every keyword the domain ranks for.
+// scope 'page': only keywords a single URL ranks for (see parsePageTarget).
 export async function handleRankedKeywords(request: Request, env: Env): Promise<Response> {
-  const { target, location_code = 2840, language_code = 'en', limit = 100 } = await request.json() as any;
-  const cleanTarget = sanitizeDomainTarget(String(target || ''));
-  if (!cleanTarget) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
+  const { target, scope = 'domain', location_code = 2840, language_code = 'en', limit = 100 } = await request.json() as any;
+
+  let task: Record<string, unknown>;
+  if (scope === 'page') {
+    const page = parsePageTarget(String(target || ''));
+    if (!page) return new Response(JSON.stringify({ error: 'A valid page URL is required' }), { status: 400 });
+    task = {
+      target: page.domain,
+      filters: [['ranked_serp_element.serp_item.relative_url', 'in', page.paths]],
+    };
+  } else {
+    const cleanTarget = sanitizeDomainTarget(String(target || ''));
+    if (!cleanTarget) return new Response(JSON.stringify({ error: 'Target domain is required' }), { status: 400 });
+    task = { target: cleanTarget };
+  }
 
   const data = await dataforseoRequestCached(env, '/dataforseo_labs/google/ranked_keywords/live', [{
-    target: cleanTarget,
+    ...task,
     location_code,
     language_code,
     limit,
