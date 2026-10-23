@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget,
+  buildGapAnalysisPrompt, buildTrafficHistorySeries, sanitizeDomainTarget, parsePageTarget,
   resolveGapAnalysisKey,
 } from './competitors';
 
@@ -190,5 +190,38 @@ describe('resolveGapAnalysisKey', () => {
     // which env.OPENROUTER_API_KEY could be threaded into this decision, so a
     // future edit cannot reintroduce platform-paid inference by accident.
     expect(resolveGapAnalysisKey.length).toBe(1);
+  });
+});
+
+describe('parsePageTarget', () => {
+  it('splits a full URL into bare domain plus both slash variants of the path', () => {
+    expect(parsePageTarget('https://www.healthline.com/nutrition/green-tea-and-weight-loss')).toEqual({
+      domain: 'healthline.com',
+      paths: ['/nutrition/green-tea-and-weight-loss', '/nutrition/green-tea-and-weight-loss/'],
+    });
+  });
+
+  it('accepts input without a protocol and a trailing slash', () => {
+    expect(parsePageTarget('example.com/services/plumbing/')).toEqual({
+      domain: 'example.com',
+      paths: ['/services/plumbing', '/services/plumbing/'],
+    });
+  });
+
+  it('keeps path case, lowercases the host, drops query and fragment', () => {
+    expect(parsePageTarget('  HTTPS://En.Wikipedia.org/wiki/Search_engine_optimization?x=1#History ')).toEqual({
+      domain: 'en.wikipedia.org',
+      paths: ['/wiki/Search_engine_optimization', '/wiki/Search_engine_optimization/'],
+    });
+  });
+
+  it('maps a bare host to the homepage', () => {
+    expect(parsePageTarget('https://example.com')).toEqual({ domain: 'example.com', paths: ['/'] });
+  });
+
+  it('returns null for garbage', () => {
+    expect(parsePageTarget('')).toBeNull();
+    expect(parsePageTarget('   ')).toBeNull();
+    expect(parsePageTarget('not a url')).toBeNull();
   });
 });

@@ -25,8 +25,15 @@ import { buildKeywordTableReport } from "@/lib/export/adapters/keywordTable";
 // means "load up to 1000".
 const MAX_LIMIT = 1000;
 
+type RankedScope = "domain" | "page";
+
 export default function RankedKeywords() {
   const [domain, setDomain] = usePersistentState<string>("competitor:ranked-keywords:domain", "");
+  const [scope, setScope] = usePersistentState<RankedScope>("competitor:ranked-keywords:scope", "domain");
+  // Scope the results were fetched with, so labels stay correct if the user
+  // flips the dropdown without re-running.
+  const [resultScope, setResultScope] = usePersistentState<RankedScope>("competitor:ranked-keywords:result-scope", "domain");
+  const isPage = scope === "page";
   // Seed from the account default (Settings > Default Location & Language). The
   // :v2 keys drop values saved before this, which were mostly the old hardcoded US.
   const { defaultLocation, defaultLanguage } = useDefaults();
@@ -70,12 +77,13 @@ export default function RankedKeywords() {
     try {
       const data: any = await fetchRankedKeywords({
         target: domain.trim(),
+        scope,
         location_code: parseInt(location),
         language_code: language,
         limit: parseInt(requestLimit)
       });
 
-      if (data?.tasks?.[0]?.result?.[0]?.items) {
+      if (data?.tasks?.[0]?.result?.[0]?.items?.length) {
         const result = data.tasks[0].result[0];
         const items = result.items || [];
         const totalCount = result.total_count || 0;
@@ -91,6 +99,7 @@ export default function RankedKeywords() {
         }));
         
         setResults(cleanedResults);
+        setResultScope(scope);
         setTotalAvailable(totalCount);
         setMetrics({
           total_keywords: cleanedResults.length,
@@ -106,7 +115,9 @@ export default function RankedKeywords() {
       } else {
         toast({
           title: "No results",
-          description: "No ranked keywords found for this domain",
+          description: isPage
+            ? "No ranked keywords found for this page. Check the URL matches the live page exactly, or try the whole domain. Low-traffic pages often have no data yet."
+            : "No ranked keywords found for this domain",
         });
       }
     } catch (error: any) {
@@ -134,7 +145,7 @@ export default function RankedKeywords() {
       <div>
         <h1 className="text-2xl font-bold text-foreground mb-2">Ranked Keywords</h1>
         <p className="text-muted-foreground">
-          Discover what keywords a domain ranks for in Google search results.
+          Discover what keywords a whole domain, or a single page, ranks for in Google search results.
         </p>
       </div>
 
@@ -142,23 +153,39 @@ export default function RankedKeywords() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5" />
-            Domain Keyword Analysis
+            {isPage ? "Page Keyword Analysis" : "Domain Keyword Analysis"}
           </CardTitle>
           <CardDescription>
-            Enter a domain to see which keywords it ranks for and their positions
+            {isPage
+              ? "Enter a page URL to see only the keywords that page ranks for and their positions"
+              : "Enter a domain to see which keywords it ranks for and their positions"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="domain">Target Domain</Label>
-            <Input
-              id="domain"
-              placeholder="e.g., example.com"
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
-              className="w-full"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-4">
+            <div>
+              <Label htmlFor="scope">Analyze</Label>
+              <Select value={scope} onValueChange={(v) => setScope(v as RankedScope)}>
+                <SelectTrigger id="scope">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border z-50">
+                  <SelectItem value="domain">Whole domain</SelectItem>
+                  <SelectItem value="page">Single page</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="domain">{isPage ? "Page URL" : "Target Domain"}</Label>
+              <Input
+                id="domain"
+                placeholder={isPage ? "e.g., https://example.com/services/plumbing" : "e.g., example.com"}
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
+                className="w-full"
+              />
+            </div>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -331,7 +358,7 @@ export default function RankedKeywords() {
                     { label: 'Total Search Volume', value: Number(metrics.total_search_volume || 0).toLocaleString() },
                   ]
                 : undefined,
-              description: `Keywords ${domain.trim()} ranks for in Google search results${locationLabel ? ` (${locationLabel})` : ''}.`,
+              description: `Keywords ${resultScope === 'page' ? 'the page ' : ''}${domain.trim()} ranks for in Google search results${locationLabel ? ` (${locationLabel})` : ''}.`,
             });
           }}
         />
@@ -340,7 +367,7 @@ export default function RankedKeywords() {
       <KeywordPlannerDataTable
         data={filteredResults}
         title="Ranked Keywords"
-        description="Keywords this domain ranks for in search results"
+        description={resultScope === "page" ? "Keywords this page ranks for in search results" : "Keywords this domain ranks for in search results"}
         loading={loading}
         metricMode="keyword-research"
         source="ranked-keywords"

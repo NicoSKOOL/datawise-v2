@@ -70,6 +70,7 @@ export async function searchSerpLocations(country: string, q: string) {
 
 export async function fetchRankedKeywords(params: {
   target: string;
+  scope?: 'domain' | 'page';
   location_code: number;
   language_code: string;
   limit: number;
