@@ -215,6 +215,14 @@ describe('parsePageTarget', () => {
     });
   });
 
+  it('drops sentence punctuation copied along with the URL', () => {
+    expect(parsePageTarget('healthline.com/nutrition/green-tea-and-weight-loss.')).toEqual({
+      domain: 'healthline.com',
+      paths: ['/nutrition/green-tea-and-weight-loss', '/nutrition/green-tea-and-weight-loss/'],
+    });
+    expect(parsePageTarget('(https://example.com/a/b),')?.paths).toEqual(['/a/b', '/a/b/']);
+  });
+
   it('maps a bare host to the homepage', () => {
     expect(parsePageTarget('https://example.com')).toEqual({ domain: 'example.com', paths: ['/'] });
   });

@@ -40,7 +40,9 @@ export function sanitizeDomainTarget(raw: string): string {
 // differences in one call. Path case is preserved; query and fragment dropped.
 // Returns null when the input has no parseable host. Exported for tests.
 export function parsePageTarget(raw: string): { domain: string; paths: string[] } | null {
-  const trimmed = raw.trim();
+  // Strip sentence punctuation that rides along when a URL is copied from
+  // prose (a user pasted ".../green-tea-and-weight-loss." and got 0 rows).
+  const trimmed = raw.trim().replace(/^[(\['"<]+/, '').replace(/[.,;:!?)\]'">]+$/, '');
   if (!trimmed) return null;
   let url: URL;
   try {

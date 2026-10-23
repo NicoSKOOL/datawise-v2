@@ -70,6 +70,7 @@ export default function RankedKeywords() {
     const requestLimit = limitOverride ?? limit;
     
     setLoading(true);
+    setResultScope(scope);
     setResults([]);
     setMetrics(null);
     setTotalAvailable(0);
@@ -99,7 +100,6 @@ export default function RankedKeywords() {
         }));
         
         setResults(cleanedResults);
-        setResultScope(scope);
         setTotalAvailable(totalCount);
         setMetrics({
           total_keywords: cleanedResults.length,
